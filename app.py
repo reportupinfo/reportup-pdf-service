@@ -901,6 +901,13 @@ def normalizza(data):
 
     # ── occupazione ──────────────────────────────────────────────────────────
     occ_raw = data.get("occupazione", [])
+    if isinstance(occ_raw, dict):
+        occ_raw = list(occ_raw.values())
+    if occ_raw and isinstance(occ_raw[0], dict):
+        # Lista di dizionari → estrai il valore numerico
+        occ_raw = [list(r.values())[0] if len(r) == 1 else 
+                   r.get("occupazione", r.get("valore", r.get("tasso", 50))) 
+                   for r in occ_raw]
     if occ_raw and not isinstance(occ_raw[0], (list, tuple)):
         # Array piatto di numeri → ricostruiamo con mese e stage
         valori = [int(v) for v in occ_raw[:12]]
