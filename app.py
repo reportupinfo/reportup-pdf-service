@@ -1059,6 +1059,41 @@ def generate_pdf():
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-if __name__ == "__main__":
+@app.route("/generate-pdf-binary", methods=["POST"])
+def generate_pdf_binary():
+    try:
+        raw = request.get_json(force=True)
+        if not raw:
+            return jsonify({"error": "JSON body richiesto"}), 400
+
+        if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
+            import json as _json
+            testo = raw["data"].strip()
+            if testo.startswith("```"):
+                testo = testo.split("```")[1]
+                if testo.startswith("json"):
+                    testo = testo[4:]
+            data = _json.loads(testo.strip())
+        elif isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], dict):
+            data = raw["data"]
+        else:
+            data = raw
+
+        data = normalizza(data)
+        pdf_bytes = build_pdf_bytes(data)
+        filename = f"ReportUp_Base_{data.get('comune', 'report').replace(' ', '_')}.pdf"
+
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
+
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
