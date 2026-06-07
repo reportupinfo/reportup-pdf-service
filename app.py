@@ -1062,17 +1062,39 @@ def generate_pdf():
 @app.route("/generate-pdf-binary", methods=["POST"])
 def generate_pdf_binary():
     try:
-        raw = request.get_json(force=True)
+        import json as _json
+
+        body_str = request.get_data().decode("utf-8").strip()
+
+        if "```" in body_str:
+            parts = body_str.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("{"):
+                    body_str = part
+                    break
+
+        try:
+            raw = _json.loads(body_str)
+        except Exception:
+            return jsonify({"error": "JSON non valido", "raw": body_str[:300]}), 400
+
         if not raw:
             return jsonify({"error": "JSON body richiesto"}), 400
 
         if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
-            import json as _json
             testo = raw["data"].strip()
-            if testo.startswith("```"):
-                testo = testo.split("```")[1]
-                if testo.startswith("json"):
-                    testo = testo[4:]
+            if "```" in testo:
+                parts = testo.split("```")
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith("json"):
+                        part = part[4:].strip()
+                    if part.startswith("{"):
+                        testo = part
+                        break
             data = _json.loads(testo.strip())
         elif isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], dict):
             data = raw["data"]
