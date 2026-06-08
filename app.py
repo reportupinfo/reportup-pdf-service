@@ -411,14 +411,13 @@ def page2(c, D):
         rate_clamped = max(min_r, min(max_r, rate))
         py_dot = gy + bottom_margin + ((rate_clamped - min_r) / (max_r - min_r)) * plot_h
         points.append((px_dot, py_dot, row[3], rate))
-    if points:
-        c.setStrokeColor(TEAL)
-        c.setLineWidth(1.5)
-        p_path = c.beginPath()
-        p_path.moveTo(points[0][0], points[0][1])
-        for pt in points[1:]:
-            p_path.lineTo(pt[0], pt[1])
-        c.drawPath(p_path, stroke=1, fill=0)
+    c.setStrokeColor(TEAL)
+    c.setLineWidth(1.5)
+    p = c.beginPath()
+    p.moveTo(points[0][0], points[0][1])
+    for pt in points[1:]:
+        p.lineTo(pt[0], pt[1])
+    c.drawPath(p, stroke=1, fill=0)
     for px_dot, py_dot, stage, rate in points:
         col = stage_color(stage)
         c.setFillColor(col)
@@ -889,171 +888,21 @@ def health():
     return jsonify({"status": "ok", "service": "ReportUp PDF Service"})
 
 
-MESI = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
-STAGE_MAP = {
-    0: "Bassa", 1: "Bassa", 2: "Bassa",
-    3: "Media", 4: "Media", 5: "Alta",
-    6: "Peak", 7: "Peak", 8: "Alta",
-    9: "Media", 10: "Bassa", 11: "Bassa"
-}
-
-def normalizza(data):
-    """Rende i dati AI compatibili con app.py indipendentemente dal formato."""
-
-    # ── occupazione ──────────────────────────────────────────────────────────
-    occ_raw = data.get("occupazione", [])
-    if isinstance(occ_raw, dict):
-        occ_raw = list(occ_raw.values())
-    if occ_raw and isinstance(occ_raw[0], dict):
-        # Lista di dizionari → estrai il valore numerico
-        occ_raw = [list(r.values())[0] if len(r) == 1 else 
-                   r.get("occupazione", r.get("valore", r.get("tasso", 50))) 
-                   for r in occ_raw]
-    if occ_raw and not isinstance(occ_raw[0], (list, tuple)):
-        # Array piatto di numeri → ricostruiamo con mese e stage
-        valori = [int(v) for v in occ_raw[:12]]
-        prezzi_raw = data.get("prezzi_notte_mensili", [])
-        prezzo_base = int(data.get("prezzo_notte_stimato", 60))
-        occ_norm = []
-        for i, val in enumerate(valori):
-            stage = STAGE_MAP.get(i, "Media")
-            if prezzi_raw and i < len(prezzi_raw):
-                p = int(prezzi_raw[i])
-            else:
-                # stima prezzo dal stage
-                mult = {"Bassa": 0.8, "Media": 1.0, "Alta": 1.15, "Peak": 1.35}.get(stage, 1.0)
-                p = int(prezzo_base * mult)
-            occ_norm.append([MESI[i], val, p, stage])
-        data["occupazione"] = occ_norm
-    else:
-        data["occupazione"] = [list(r) for r in occ_raw]
-
-    # Fallback se occupazione ancora vuota
-    if not data.get("occupazione"):
-        MESI_DEF = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"]
-        STAGES_DEF = ["Bassa","Bassa","Media","Media","Alta","Alta","Peak","Peak","Media","Media","Bassa","Media"]
-        OCCI_DEF = [38,42,48,68,75,82,88,85,70,65,45,52]
-        PREZZI_DEF = [55,58,62,72,78,85,92,90,75,70,60,65]
-        data["occupazione"] = [[MESI_DEF[i], OCCI_DEF[i], PREZZI_DEF[i], STAGES_DEF[i]] for i in range(12)]
-
-    # ── poi ──────────────────────────────────────────────────────────────────
-    poi_raw = data.get("poi", [])
-    poi_norm = []
-    for r in poi_raw:
-        if isinstance(r, dict):
-            poi_norm.append([
-                r.get("nome", r.get("name", "")),
-                r.get("a_piedi", r.get("piedi", "—")),
-                r.get("mezzo", r.get("trasporto", "—")),
-                r.get("impatto", r.get("impact", "Medio"))
-            ])
-        else:
-            poi_norm.append(list(r))
-    data["poi"] = poi_norm
-
-    # ── competitor ───────────────────────────────────────────────────────────
-    comp_raw = data.get("competitor", [])
-    comp_norm = []
-    for r in comp_raw:
-        if isinstance(r, dict):
-            comp_norm.append([
-                r.get("nome", r.get("name", r.get("tipologia", ""))),
-                str(r.get("n", r.get("numero", "—"))),
-                f"EUR {r.get('prezzo_notte', r.get('prezzo', 0))}",
-                f"{r.get('occupazione', r.get('occ', 0))}%",
-                str(r.get("voto", r.get("rating", "4.5")))
-            ])
-        else:
-            comp_norm.append(list(r))
-    data["competitor"] = comp_norm
-
-    # ── media_nazionale ───────────────────────────────────────────────────────
-    mn = data.get("media_nazionale", {})
-    if isinstance(mn, dict):
-        data["media_nazionale"] = [
-            "Media nazionale B&B urbani",
-            "—",
-            f"EUR {mn.get('prezzo_notte', 95)}",
-            f"{mn.get('occupazione_percent', 64)}%",
-            str(mn.get('margine_percent', '4.5'))
-        ]
-    elif not mn:
-        data["media_nazionale"] = ["Media nazionale B&B urbani", "—", "EUR 95", "64%", "4.5"]
-
-    # ── valori numerici interi ────────────────────────────────────────────────
-    int_fields = ["prezzo_notte_stimato", "notti_anno", "ricavo_lordo", "bonus_dirette",
-                  "totale_ricavi", "costi_commissioni", "costi_commissioni_pct",
-                  "costi_pulizie", "costi_pulizie_unit", "costi_biancheria",
-                  "costi_utenze", "costi_manutenzione", "totale_costi", "profitto_netto",
-                  "rata_mutuo_mensile", "affitto_ricavo", "affitto_costi", "affitto_profitto",
-                  "kpi_prezzo", "kpi_occupazione", "kpi_potenziale"]
-    for f in int_fields:
-        if f in data:
-            try:
-                data[f] = int(float(data[f]))
-            except (ValueError, TypeError):
-                data[f] = 0
-
-    float_fields = ["occupazione_percent", "margine_percent"]
-    for f in float_fields:
-        if f in data:
-            try:
-                data[f] = round(float(data[f]), 1)
-            except (ValueError, TypeError):
-                data[f] = 0.0
-
-    # ── kpi_prezzo_range e kpi_occ_range: assicura stringhe ──────────────────
-    for f in ["kpi_prezzo_range", "kpi_occ_range", "data_generazione", "competitor_zona"]:
-        if f not in data or not isinstance(data[f], str):
-            data[f] = str(data.get(f, ""))
-
-    # ── affitto_* se assenti o zero ───────────────────────────────────────────
-    if not data.get("affitto_ricavo"):
-        pnotte = data.get("prezzo_notte_stimato", 60)
-        data["affitto_ricavo"] = int(pnotte * 12 * 0.85)
-        data["affitto_costi"] = int(data["affitto_ricavo"] * 0.08)
-        data["affitto_profitto"] = data["affitto_ricavo"] - data["affitto_costi"]
-
-    # ── campi stringa della scheda immobile ──────────────────────────────────
-    str_fields = ["indirizzo", "tipologia", "comune", "zona", "epoca", "stato",
-                  "piano", "descrizione", "competitor_zona", "data_generazione"]
-    for f in str_fields:
-        if f in data:
-            data[f] = str(data[f])
-    # Campi che possono essere int o str
-    for f in ["superficie", "bagni", "camere", "posti_letto"]:
-        if f in data:
-            data[f] = str(data[f])
-
-    return data
-
-
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
-        raw = request.get_json(force=True)
-        if not raw:
+        data = request.get_json(force=True)
+        if not data:
             return jsonify({"error": "JSON body richiesto"}), 400
 
-        # Accetta sia {"data": "..."} (stringa JSON) che oggetto diretto
-        if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
-            import json as _json
-            try:
-                # Rimuove eventuale wrapper ```json ... ```
-                testo = raw["data"].strip()
-                if testo.startswith("```"):
-                    testo = testo.split("```")[1]
-                    if testo.startswith("json"):
-                        testo = testo[4:]
-                data = _json.loads(testo.strip())
-            except Exception as parse_err:
-                return jsonify({"error": f"JSON non valido: {parse_err}", "raw": raw["data"][:200]}), 400
-        elif isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], dict):
-            data = raw["data"]
-        else:
-            data = raw
+        # Normalizza occupazione: accetta sia liste che tuple
+        if "occupazione" in data:
+            data["occupazione"] = [list(row) for row in data["occupazione"]]
+        if "poi" in data:
+            data["poi"] = [list(row) for row in data["poi"]]
+        if "competitor" in data:
+            data["competitor"] = [list(row) for row in data["competitor"]]
 
-        data = normalizza(data)
         pdf_bytes = build_pdf_bytes(data)
         pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
@@ -1064,67 +913,54 @@ def generate_pdf():
         })
 
     except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/generate-pdf-binary", methods=["POST"])
 def generate_pdf_binary():
+    """
+    Accetta il JSON grezzo dell'AI (eventualmente con backtick markdown).
+    Pulisce, parsa, genera il PDF e lo restituisce come base64.
+    Make.com manda nel body la stringa JSON dell'immobile.
+    """
     try:
         import json as _json
 
-        body_str = request.get_data().decode("utf-8").strip()
+        raw = request.get_data(as_text=True)
 
-        if "```" in body_str:
-            parts = body_str.split("```")
-            for part in parts:
-                part = part.strip()
-                if part.startswith("json"):
-                    part = part[4:].strip()
-                if part.startswith("{"):
-                    body_str = part
-                    break
+        # Rimuovi backtick markdown se presenti (```json ... ``` o ``` ... ```)
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            # Rimuovi prima riga (```json o ```) e ultima (```)
+            lines = lines[1:] if lines[0].startswith("```") else lines
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
 
-        try:
-            raw = _json.loads(body_str)
-        except Exception:
-            return jsonify({"error": "JSON non valido", "raw": body_str[:300]}), 400
+        data = _json.loads(cleaned)
 
-        if not raw:
-            return jsonify({"error": "JSON body richiesto"}), 400
+        # Normalizza array
+        if "occupazione" in data:
+            data["occupazione"] = [list(row) for row in data["occupazione"]]
+        if "poi" in data:
+            data["poi"] = [list(row) for row in data["poi"]]
+        if "competitor" in data:
+            data["competitor"] = [list(row) for row in data["competitor"]]
 
-        if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
-            testo = raw["data"].strip()
-            if "```" in testo:
-                parts = testo.split("```")
-                for part in parts:
-                    part = part.strip()
-                    if part.startswith("json"):
-                        part = part[4:].strip()
-                    if part.startswith("{"):
-                        testo = part
-                        break
-            data = _json.loads(testo.strip())
-        elif isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], dict):
-            data = raw["data"]
-        else:
-            data = raw
-
-        data = normalizza(data)
         pdf_bytes = build_pdf_bytes(data)
-        filename = f"ReportUp_Base_{data.get('comune', 'report').replace(' ', '_')}.pdf"
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-        from flask import Response
-        return Response(
-            pdf_bytes,
-            mimetype="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        return jsonify({
+            "success": True,
+            "pdf_base64": pdf_b64,
+            "filename": f"ReportUp_Base_{data.get('comune', 'report').replace(' ', '_')}.pdf"
+        })
 
     except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+        return jsonify({"error": str(e), "raw_preview": raw[:500] if 'raw' in dir() else ""}), 500
 
 
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
