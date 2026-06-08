@@ -414,6 +414,8 @@ def page2(c, D):
     c.setStrokeColor(TEAL)
     c.setLineWidth(1.5)
     p = c.beginPath()
+    if not points:
+        return
     p.moveTo(points[0][0], points[0][1])
     for pt in points[1:]:
         p.lineTo(pt[0], pt[1])
@@ -921,22 +923,25 @@ def generate_pdf_binary():
     """
     Accetta il JSON grezzo dell'AI (eventualmente con backtick markdown).
     Pulisce, parsa, genera il PDF e lo restituisce come base64.
-    Make.com manda nel body la stringa JSON dell'immobile.
     """
+    import json as _json
+    import re as _re
+    raw = ""
     try:
-        import json as _json
-
         raw = request.get_data(as_text=True)
 
-        # Rimuovi backtick markdown se presenti (```json ... ``` o ``` ... ```)
+        # Pulizia backtick robusta: estrai tutto tra { e } più esterni
         cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            # Rimuovi prima riga (```json o ```) e ultima (```)
-            lines = lines[1:] if lines[0].startswith("```") else lines
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            cleaned = "\n".join(lines).strip()
+        # Prova prima con regex per blocco ```json...```
+        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+        else:
+            # Estrai dal primo { all'ultimo }
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end+1]
 
         data = _json.loads(cleaned)
 
