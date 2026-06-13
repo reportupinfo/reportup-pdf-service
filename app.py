@@ -1062,3 +1062,50 @@ def generate_pdf_binary():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+@app.route("/generate-pdf-direct", methods=["POST"])
+def generate_pdf_direct():
+    """
+    Accetta il JSON grezzo dell'AI, genera il PDF e lo restituisce
+    come file binario diretto con Content-Type: application/pdf.
+    """
+    import json as _json
+    import re as _re
+    raw = ""
+    try:
+        raw = request.get_data(as_text=True)
+        cleaned = raw.strip()
+        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+        else:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end+1]
+
+        data = _json.loads(cleaned)
+        data = normalize_data(data)
+
+        if "occupazione" in data:
+            data["occupazione"] = [list(row) for row in data["occupazione"]]
+        if "poi" in data:
+            data["poi"] = [list(row) for row in data["poi"]]
+        if "competitor" in data:
+            data["competitor"] = [list(row) for row in data["competitor"]]
+
+        pdf_bytes = build_pdf_bytes(data)
+        comune = data.get('comune', 'report').replace(' ', '_')
+
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename=ReportUp_Base_{comune}.pdf',
+                'Content-Length': str(len(pdf_bytes))
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
