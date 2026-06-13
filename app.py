@@ -869,6 +869,76 @@ def page5(c, D):
 
 # ── Generatore PDF ────────────────────────────────────────────────────────────
 
+def normalize_data(data):
+    """
+    Appiattisce JSON annidato (struttura report.immobile.*)
+    al formato flat atteso da build_pdf_bytes().
+    Se il JSON è già flat, lo restituisce invariato.
+    """
+    if "tipologia" in data and "indirizzo" in data:
+        return data
+
+    flat = {}
+    report = data.get("report", data)
+    immobile = report.get("immobile", report)
+
+    ident = immobile.get("identificazione", {})
+    flat["indirizzo"] = ident.get("indirizzo", data.get("indirizzo", ""))
+    flat["comune"] = ident.get("comune", data.get("comune", ""))
+    flat["zona"] = ident.get("zona", data.get("zona", ident.get("comune", "")))
+
+    car = immobile.get("caratteristiche", {})
+    flat["tipologia"] = car.get("tipologia", data.get("tipologia", ""))
+    sup = car.get("superficie", data.get("superficie", ""))
+    flat["superficie"] = f"{sup} m\u00b2" if isinstance(sup, (int, float)) else str(sup)
+    flat["piano"] = car.get("piano", data.get("piano", ""))
+    flat["stato"] = car.get("stato", data.get("stato", ""))
+    camere = car.get("numeroStanze", data.get("camere", ""))
+    flat["camere"] = (f"{camere} camera" if isinstance(camere, int) and camere == 1
+                      else (f"{camere} camere" if isinstance(camere, int) else str(camere)))
+    bagni = car.get("numeroBagni", data.get("bagni", ""))
+    flat["bagni"] = (f"{bagni} bagno" if isinstance(bagni, int) and bagni == 1
+                     else (f"{bagni} bagni" if isinstance(bagni, int) else str(bagni)))
+    posti = car.get("postiLetto", data.get("posti_letto", ""))
+    flat["posti_letto"] = f"{posti} posti" if isinstance(posti, int) else str(posti)
+    flat["epoca"] = car.get("epoca", data.get("epoca", ""))
+
+    dot = immobile.get("dotazioni", {})
+    _nomi = {
+        "wifi": "WiFi", "ariaCondizionata": "Aria condizionata", "cucina": "Cucina",
+        "riscaldamento": "Riscaldamento", "televisione": "TV", "ascensore": "Ascensore",
+        "balcone": "Balcone", "terrazza": "Terrazza", "giardino": "Giardino",
+        "garage": "Garage", "cantina": "Cantina", "parcheggio": "Parcheggio"
+    }
+    flat["dotazioni_presenti"] = (data.get("dotazioni_presenti")
+                                   or [_nomi[k] for k, v in dot.items() if v and k in _nomi])
+    flat["dotazioni_assenti"] = (data.get("dotazioni_assenti")
+                                  or [_nomi[k] for k, v in dot.items() if not v and k in _nomi])
+
+    for f in ["situazione_vuoto", "situazione_inquilini", "situazione_bnb", "situazione_mutuo"]:
+        flat[f] = data.get(f, False)
+
+    flat["descrizione"] = immobile.get("descrizioneEstesa", data.get("descrizione", ""))
+
+    for field in [
+        "poi", "occupazione", "prezzo_notte_stimato", "occupazione_percent",
+        "notti_anno", "ricavo_lordo", "bonus_dirette", "bonus_dirette_pct",
+        "totale_ricavi", "costi_commissioni", "costi_commissioni_pct",
+        "costi_pulizie", "costi_pulizie_unit", "costi_biancheria",
+        "costi_utenze", "costi_manutenzione", "totale_costi",
+        "profitto_netto", "margine_percent", "mutuo_attivo", "rata_mutuo_mensile",
+        "affitto_ricavo", "affitto_costi", "affitto_profitto",
+        "competitor", "competitor_zona", "media_nazionale",
+        "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione",
+        "kpi_occ_range", "kpi_potenziale", "data_generazione"
+    ]:
+        val = data.get(field, report.get(field))
+        if val is not None:
+            flat[field] = val
+
+    return flat
+
+
 def build_pdf_bytes(data):
     """Genera il PDF in memoria e restituisce bytes."""
     buf = io.BytesIO()
@@ -896,6 +966,9 @@ def generate_pdf():
         data = request.get_json(force=True)
         if not data:
             return jsonify({"error": "JSON body richiesto"}), 400
+
+        # Normalizza struttura annidata → flat
+        data = normalize_data(data)
 
         # Normalizza occupazione: accetta sia liste che tuple
         if "occupazione" in data:
@@ -944,6 +1017,9 @@ def generate_pdf_binary():
                 cleaned = cleaned[start:end+1]
 
         data = _json.loads(cleaned)
+
+        # Normalizza struttura annidata → flat
+        data = normalize_data(data)
 
         # Normalizza array
         if "occupazione" in data:
