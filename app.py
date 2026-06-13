@@ -871,54 +871,71 @@ def page5(c, D):
 
 def normalize_data(data):
     """
-    Appiattisce JSON annidato (struttura report.immobile.*)
-    al formato flat atteso da build_pdf_bytes().
-    Se il JSON è già flat, lo restituisce invariato.
+    Gestisce 3 formati possibili di output AI:
+    1. Flat: {"tipologia": ..., "indirizzo": ..., "occupazione": [...]}
+    2. Annidato report.*: {"report": {"immobile": {"caratteristiche": {...}}}}
+    3. Annidato immobile.*: {"immobile": {"tipologia": ..., "dotazioni": [...]}}
     """
-    if "tipologia" in data and "indirizzo" in data:
+    if "tipologia" in data and "indirizzo" in data and "occupazione" in data:
         return data
 
     flat = {}
-    report = data.get("report", data)
-    immobile = report.get("immobile", report)
 
-    ident = immobile.get("identificazione", {})
-    flat["indirizzo"] = ident.get("indirizzo", data.get("indirizzo", ""))
-    flat["comune"] = ident.get("comune", data.get("comune", ""))
-    flat["zona"] = ident.get("zona", data.get("zona", ident.get("comune", "")))
+    report = data.get("report", {})
+    immobile_nested = report.get("immobile", {})
+    immobile_flat   = data.get("immobile", {})
+    imm = immobile_nested if immobile_nested else immobile_flat
 
-    car = immobile.get("caratteristiche", {})
-    flat["tipologia"] = car.get("tipologia", data.get("tipologia", ""))
-    sup = car.get("superficie", data.get("superficie", ""))
+    ident = imm.get("identificazione", {})
+    car   = imm.get("caratteristiche", {})
+
+    flat["indirizzo"] = (ident.get("indirizzo") or imm.get("indirizzo") or data.get("indirizzo", ""))
+    flat["comune"]    = (ident.get("comune") or imm.get("comune") or data.get("comune", ""))
+    flat["zona"]      = (ident.get("zona") or imm.get("zona") or flat["comune"])
+
+    flat["tipologia"] = (car.get("tipologia") or imm.get("tipologia") or data.get("tipologia", ""))
+    sup = (car.get("superficie") or imm.get("superficie") or data.get("superficie", ""))
     flat["superficie"] = f"{sup} m\u00b2" if isinstance(sup, (int, float)) else str(sup)
-    flat["piano"] = car.get("piano", data.get("piano", ""))
-    flat["stato"] = car.get("stato", data.get("stato", ""))
-    camere = car.get("numeroStanze", data.get("camere", ""))
-    flat["camere"] = (f"{camere} camera" if isinstance(camere, int) and camere == 1
-                      else (f"{camere} camere" if isinstance(camere, int) else str(camere)))
-    bagni = car.get("numeroBagni", data.get("bagni", ""))
-    flat["bagni"] = (f"{bagni} bagno" if isinstance(bagni, int) and bagni == 1
-                     else (f"{bagni} bagni" if isinstance(bagni, int) else str(bagni)))
-    posti = car.get("postiLetto", data.get("posti_letto", ""))
-    flat["posti_letto"] = f"{posti} posti" if isinstance(posti, int) else str(posti)
-    flat["epoca"] = car.get("epoca", data.get("epoca", ""))
+    flat["piano"]     = (car.get("piano") or imm.get("piano") or data.get("piano", ""))
+    flat["stato"]     = (car.get("stato") or imm.get("stato") or data.get("stato", ""))
+    flat["epoca"]     = (car.get("epoca") or imm.get("epoca") or data.get("epoca", ""))
 
-    dot = immobile.get("dotazioni", {})
+    camere = (car.get("numeroStanze") or imm.get("camere") or imm.get("numeroStanze") or data.get("camere", ""))
+    flat["camere"] = (f"{camere} camera" if isinstance(camere, int) and camere == 1
+                      else f"{camere} camere" if isinstance(camere, int) else str(camere))
+
+    bagni = (car.get("numeroBagni") or imm.get("bagni") or imm.get("numeroBagni") or data.get("bagni", ""))
+    flat["bagni"] = (f"{bagni} bagno" if isinstance(bagni, int) and bagni == 1
+                     else f"{bagni} bagni" if isinstance(bagni, int) else str(bagni))
+
+    posti = (car.get("postiLetto") or imm.get("posti_letto") or imm.get("postiLetto") or data.get("posti_letto", ""))
+    flat["posti_letto"] = f"{posti} posti" if isinstance(posti, int) else str(posti)
+
+    dot_raw = (imm.get("dotazioni") or data.get("dotazioni") or {})
     _nomi = {
-        "wifi": "WiFi", "ariaCondizionata": "Aria condizionata", "cucina": "Cucina",
-        "riscaldamento": "Riscaldamento", "televisione": "TV", "ascensore": "Ascensore",
-        "balcone": "Balcone", "terrazza": "Terrazza", "giardino": "Giardino",
-        "garage": "Garage", "cantina": "Cantina", "parcheggio": "Parcheggio"
+        "wifi": "WiFi", "aria_condizionata": "Aria condizionata",
+        "ariaCondizionata": "Aria condizionata", "cucina": "Cucina",
+        "riscaldamento": "Riscaldamento", "televisione": "TV", "tv": "TV",
+        "ascensore": "Ascensore", "balcone": "Balcone", "terrazza": "Terrazza",
+        "giardino": "Giardino", "garage": "Garage", "cantina": "Cantina",
+        "parcheggio": "Parcheggio"
     }
-    flat["dotazioni_presenti"] = (data.get("dotazioni_presenti")
-                                   or [_nomi[k] for k, v in dot.items() if v and k in _nomi])
-    flat["dotazioni_assenti"] = (data.get("dotazioni_assenti")
-                                  or [_nomi[k] for k, v in dot.items() if not v and k in _nomi])
+    if isinstance(dot_raw, dict):
+        flat["dotazioni_presenti"] = (data.get("dotazioni_presenti")
+                                       or [_nomi.get(k, k) for k, v in dot_raw.items() if v])
+        flat["dotazioni_assenti"]  = (data.get("dotazioni_assenti")
+                                       or [_nomi.get(k, k) for k, v in dot_raw.items() if not v])
+    elif isinstance(dot_raw, list):
+        flat["dotazioni_presenti"] = [_nomi.get(d, d) for d in dot_raw]
+        flat["dotazioni_assenti"]  = []
+    else:
+        flat["dotazioni_presenti"] = data.get("dotazioni_presenti", [])
+        flat["dotazioni_assenti"]  = data.get("dotazioni_assenti", [])
 
     for f in ["situazione_vuoto", "situazione_inquilini", "situazione_bnb", "situazione_mutuo"]:
-        flat[f] = data.get(f, False)
+        flat[f] = data.get(f, imm.get(f, False))
 
-    flat["descrizione"] = immobile.get("descrizioneEstesa", data.get("descrizione", ""))
+    flat["descrizione"] = (imm.get("descrizioneEstesa") or imm.get("descrizione") or data.get("descrizione", ""))
 
     for field in [
         "poi", "occupazione", "prezzo_notte_stimato", "occupazione_percent",
@@ -932,7 +949,7 @@ def normalize_data(data):
         "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione",
         "kpi_occ_range", "kpi_potenziale", "data_generazione"
     ]:
-        val = data.get(field, report.get(field))
+        val = data.get(field, report.get(field, imm.get(field)))
         if val is not None:
             flat[field] = val
 
