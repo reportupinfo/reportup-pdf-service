@@ -1126,6 +1126,20 @@ def generate_pdf_direct():
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
 
+        # Ricalcolo totale_costi e profitto_netto includendo rata mutuo annua
+        if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
+            rata_annua = int(data["rata_mutuo_mensile"]) * 12
+            costi_base = (
+                data.get("costi_commissioni", 0) +
+                data.get("costi_pulizie", 0) +
+                data.get("costi_biancheria", 0) +
+                data.get("costi_utenze", 0) +
+                data.get("costi_manutenzione", 0)
+            )
+            data["totale_costi"] = costi_base + rata_annua
+            data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
+            data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+
         pdf_bytes = build_pdf_bytes(data)
         comune = data.get('comune', 'report').replace(' ', '_')
 
