@@ -248,8 +248,17 @@ def page1(c, D):
     y -= 5 * mm
     pill_h = 5.5 * mm
     px = 14 * mm
-    presenti = D.get("dotazioni_presenti", [])
-    assenti = D.get("dotazioni_assenti", [])
+    DOTAZIONI_AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina",
+                         "Terrazzo/Giardino", "Riscaldamento", "Ascensore", "Balcone",
+                         "Giardino", "Garage", "Piscina"]
+    def _norm(d):
+        return d.strip().replace(" / ", "/").replace("Wi-Fi", "WiFi").replace("Wi Fi", "WiFi")
+    presenti = [_norm(d) for d in D.get("dotazioni_presenti", []) if _norm(d) in DOTAZIONI_AMMESSE]
+    assenti  = [_norm(d) for d in D.get("dotazioni_assenti", [])  if _norm(d) in DOTAZIONI_AMMESSE]
+    tutte = set(presenti + assenti)
+    for d in DOTAZIONI_AMMESSE:
+        if d not in tutte:
+            assenti.append(d)
     for d in presenti + assenti:
         presente = d in presenti
         fn = "Helvetica-Bold" if presente else "Helvetica"
@@ -457,7 +466,14 @@ def page3(c, D):
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
     mutuo_annuo = rata_mutuo * 12
 
-    sit_label = "Immobile vuoto" if D.get("situazione_vuoto") else ("B&B attivo" if D.get("situazione_bnb") else "Con inquilini")
+    if D.get("situazione_vuoto"):
+        sit_label = "Immobile vuoto"
+    elif D.get("situazione_bnb"):
+        sit_label = "B&B attivo"
+    elif D.get("situazione_inquilini"):
+        sit_label = "Con inquilini"
+    else:
+        sit_label = "Disponibile"
     sit_cards = [
         ("Situazione", sit_label, BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}", TEAL, TEAL_LIGHT),
