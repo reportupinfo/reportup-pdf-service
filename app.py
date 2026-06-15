@@ -1114,6 +1114,10 @@ def generate_pdf_direct():
 
         data = _json.loads(cleaned)
         data = normalize_data(data)
+        # Normalizza campi stringa
+        for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
+            if campo in data and not isinstance(data[campo], str):
+                data[campo] = str(data[campo])
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
