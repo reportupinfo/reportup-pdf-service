@@ -248,11 +248,23 @@ def page1(c, D):
     y -= 5 * mm
     pill_h = 5.5 * mm
     px = 14 * mm
-    DOTAZIONI_AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina",
-                         "Terrazzo/Giardino", "Riscaldamento", "Ascensore", "Balcone",
-                         "Giardino", "Garage", "Piscina"]
+    DOTAZIONI_AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina attrezzata",
+                         "Terrazzo", "Giardino", "Riscaldamento", "Ascensore", "Piscina"]
     def _norm(d):
-        return d.strip().replace(" / ", "/").replace("Wi-Fi", "WiFi").replace("Wi Fi", "WiFi")
+        d = d.strip()
+        mapping = {
+            "wifi": "WiFi", "wi-fi": "WiFi", "wi fi": "WiFi",
+            "parcheggio": "Parcheggio",
+            "aria_condizionata": "Aria condizionata", "aria condizionata": "Aria condizionata",
+            "lavatrice": "Lavatrice",
+            "cucina": "Cucina attrezzata", "cucina attrezzata": "Cucina attrezzata",
+            "terrazzo": "Terrazzo", "terrazzo / giardino": "Terrazzo", "terrazzo/giardino": "Terrazzo",
+            "giardino": "Giardino",
+            "riscaldamento": "Riscaldamento",
+            "ascensore": "Ascensore",
+            "piscina": "Piscina",
+        }
+        return mapping.get(d.lower(), d)
     presenti = [_norm(d) for d in D.get("dotazioni_presenti", []) if _norm(d) in DOTAZIONI_AMMESSE]
     assenti  = [_norm(d) for d in D.get("dotazioni_assenti", [])  if _norm(d) in DOTAZIONI_AMMESSE]
     tutte = set(presenti + assenti)
