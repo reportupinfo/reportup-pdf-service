@@ -1119,6 +1119,24 @@ def generate_pdf_direct():
             if campo in data and not isinstance(data[campo], str):
                 data[campo] = str(data[campo])
 
+        # Capitalizza comune e zona
+        if "comune" in data:
+            data["comune"] = data["comune"].title()
+        if "zona" in data:
+            data["zona"] = data["zona"].title()
+
+        # Formatta indirizzo: capitalizza e aggiungi virgole attorno al CAP
+        if "indirizzo" in data:
+            import re as _re2
+            addr = data["indirizzo"].strip()
+            # Trova CAP (5 cifre) e aggiunge virgole attorno
+            addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
+            # Rimuovi virgole doppie e spazi multipli
+            addr = _re2.sub(r',\s*,', ',', addr)
+            addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
+            # Capitalizza ogni parola
+            data["indirizzo"] = addr.title()
+
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
