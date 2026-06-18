@@ -1173,3 +1173,95 @@ def generate_pdf_direct():
 
     except Exception as e:
         return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
+# ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
+from strategico import build_strategico_pdf_bytes
+
+@app.route("/generate-strategico", methods=["POST"])
+def generate_strategico():
+    """
+    Accetta il JSON grezzo dell'AI (Strategico), genera il PDF 13 pagine
+    e lo restituisce come file binario diretto con Content-Type: application/pdf.
+    Pattern identico a /generate-pdf-direct.
+    """
+    import json as _json
+    import re as _re
+    raw = ""
+    try:
+        raw = request.get_data(as_text=True)
+        cleaned = raw.strip()
+        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+        else:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end+1]
+
+        data = _json.loads(cleaned)
+        data = normalize_data(data)
+
+        # Normalizza campi stringa
+        for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
+            if campo in data and not isinstance(data[campo], str):
+                data[campo] = str(data[campo])
+
+        # Capitalizza comune e zona
+        if "comune" in data:
+            data["comune"] = data["comune"].title()
+        if "zona" in data:
+            data["zona"] = data["zona"].title()
+
+        # Formatta indirizzo
+        if "indirizzo" in data:
+            import re as _re2
+            addr = data["indirizzo"].strip()
+            addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
+            addr = _re2.sub(r',\s*,', ',', addr)
+            addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
+            data["indirizzo"] = addr.title()
+
+        if "occupazione" in data:
+            data["occupazione"] = [list(row) for row in data["occupazione"]]
+        if "poi" in data:
+            data["poi"] = [list(row) for row in data["poi"]]
+        if "competitor" in data:
+            data["competitor"] = [list(row) for row in data["competitor"]]
+        if "pricing_mensile" in data:
+            data["pricing_mensile"] = [list(row) for row in data["pricing_mensile"]]
+        if "normativa_extra" in data:
+            data["normativa_extra"] = [list(row) for row in data["normativa_extra"]]
+        if "piano_90" in data:
+            for item in data["piano_90"]:
+                if isinstance(item, dict) and "azioni" in item:
+                    item["azioni"] = list(item["azioni"])
+
+        # Ricalcolo mutuo se attivo
+        if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
+            rata_annua = int(data["rata_mutuo_mensile"]) * 12
+            costi_base = (
+                data.get("costi_commissioni", 0) +
+                data.get("costi_pulizie", 0) +
+                data.get("costi_biancheria", 0) +
+                data.get("costi_utenze", 0) +
+                data.get("costi_manutenzione", 0)
+            )
+            data["totale_costi"] = costi_base + rata_annua
+            data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
+            data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+
+        pdf_bytes = build_strategico_pdf_bytes(data)
+        comune = data.get('comune', 'report').replace(' ', '_')
+
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename=ReportUp_Strategico_{comune}.pdf',
+                'Content-Length': str(len(pdf_bytes))
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
