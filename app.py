@@ -13,7 +13,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.colors import HexColor
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
+from reportlab.platypus import Table, TableStyle, Paragraph
+from reportlab.lib.styles import ParagraphStyle
 
 app = Flask(__name__)
 
@@ -322,24 +323,55 @@ def page2(c, D):
     draw_footer(c, 2)
     y = H - 22 * mm
 
-    # POI
+    # POI — STRUTTURA A 5 SLOT FISSI (25/06/2026)
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Posizione e punti di interesse")
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Distanze e impatto sulla domanda di prenotazioni")
     y -= 6 * mm
-    poi_data = [["Punto di interesse", "A piedi", "Mezzo pubblico", "Impatto"]]
-    for row in D.get("poi", []):
-        poi_data.append(list(row))
-    col_w_poi = [(W - 28 * mm) * 0.35, (W - 28 * mm) * 0.13, (W - 28 * mm) * 0.33, (W - 28 * mm) * 0.19]
+
+    # Etichette di slot FISSE, scritte qui in Python: non arrivano mai da Make/AI.
+    # Garantisce ordine e numero di righe sempre identici, per qualsiasi comune.
+    SLOT_LABELS = [
+        "Trasporto pubblico",
+        "Comune di riferimento",
+        "Elemento caratteristico",
+        "Servizi essenziali",
+        "Aeroporto",
+    ]
+
+    poi_rows_raw = [list(row) for row in D.get("poi", [])]
+    # Sicurezza: se Make invia meno di 5 righe, le mancanti si completano con trattini
+    # (mai una riga inventata); se ne invia più di 5, le eccedenti vengono ignorate.
+    while len(poi_rows_raw) < 5:
+        poi_rows_raw.append(["\u2014", "\u2014", "\u2014"])
+    poi_rows_raw = poi_rows_raw[:5]
+
+    # Celle come Paragraph: il testo va sempre a capo dentro la propria colonna,
+    # non invade mai quella vicina anche con nomi/distanze molto lunghi.
+    style_cell_bold = ParagraphStyle("poiCellBold", fontName="Helvetica-Bold", fontSize=8, textColor=BLUE_NIGHT, leading=10)
+    style_cell_reg  = ParagraphStyle("poiCellReg",  fontName="Helvetica",      fontSize=8, textColor=BLUE_NIGHT, leading=10)
+    style_header    = ParagraphStyle("poiHeader",   fontName="Helvetica-Bold", fontSize=8, textColor=WHITE,      leading=10)
+
+    header_labels = ["Categoria", "Distanza", "Punto di riferimento", "Impatto"]
+    poi_data = [[Paragraph(h, style_header) for h in header_labels]]
+    for label, row in zip(SLOT_LABELS, poi_rows_raw):
+        mezzo_distanza, nome, impatto = (row + ["\u2014", "\u2014", "\u2014"])[:3]
+        poi_data.append([
+            Paragraph(label, style_cell_bold),
+            Paragraph(str(mezzo_distanza), style_cell_reg),
+            Paragraph(str(nome), style_cell_reg),
+            Paragraph(str(impatto), style_cell_reg),
+        ])
+
+    col_w_poi = [(W - 28 * mm) * 0.20, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.42, (W - 28 * mm) * 0.16]
     tbl = Table(poi_data, colWidths=col_w_poi)
     tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -1), BLUE_NIGHT),
+        ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, CREAM]),
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     tbl.wrapOn(c, W - 28 * mm, 200)
     tbl.drawOn(c, 14 * mm, y - tbl._height)
