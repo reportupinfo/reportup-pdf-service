@@ -36,6 +36,92 @@ DARK_TEXT    = HexColor("#1A1A2E")
 
 W, H = A4
 
+# ── Aeroporti italiani — lista fissa con coordinate (25/06/2026) ──────────────
+# Calcolo distanza/aeroporto di riferimento fatto qui in Python, non da Make/AI:
+# zero invenzioni, zero chiamata API aggiuntiva. Aggiornare solo se aprono/chiudono
+# scali commerciali (evento raro).
+AEROPORTI_ITALIA = [
+    ("Aeroporto di Roma Fiumicino", 41.8003, 12.2389),
+    ("Aeroporto di Roma Ciampino", 41.7994, 12.5949),
+    ("Aeroporto di Milano Malpensa", 45.6306, 8.7281),
+    ("Aeroporto di Milano Linate", 45.4451, 9.2767),
+    ("Aeroporto di Bergamo Orio al Serio", 45.6739, 9.7042),
+    ("Aeroporto di Venezia Marco Polo", 45.5053, 12.3519),
+    ("Aeroporto di Treviso", 45.6484, 12.1944),
+    ("Aeroporto di Bologna Marconi", 44.5354, 11.2887),
+    ("Aeroporto di Firenze Peretola", 43.8100, 11.2051),
+    ("Aeroporto di Pisa Galileo Galilei", 43.6839, 10.3927),
+    ("Aeroporto di Napoli Capodichino", 40.8860, 14.2908),
+    ("Aeroporto di Bari Palese", 41.1389, 16.7606),
+    ("Aeroporto di Brindisi", 40.6576, 17.9470),
+    ("Aeroporto di Catania Fontanarossa", 37.4668, 15.0664),
+    ("Aeroporto di Palermo Falcone Borsellino", 38.1760, 13.0910),
+    ("Aeroporto di Trapani Birgi", 37.9116, 12.4880),
+    ("Aeroporto di Cagliari Elmas", 39.2515, 9.0543),
+    ("Aeroporto di Olbia Costa Smeralda", 40.8987, 9.5176),
+    ("Aeroporto di Alghero Fertilia", 40.6321, 8.2908),
+    ("Aeroporto di Genova Sestri", 44.4133, 8.8375),
+    ("Aeroporto di Torino Caselle", 45.2008, 7.6496),
+    ("Aeroporto di Verona Villafranca", 45.3957, 10.8885),
+    ("Aeroporto di Trieste Ronchi dei Legionari", 45.8275, 13.4722),
+    ("Aeroporto di Ancona Falconara", 43.6163, 13.3623),
+    ("Aeroporto di Pescara", 42.4316, 14.1810),
+    ("Aeroporto di Lamezia Terme", 38.9054, 16.2423),
+    ("Aeroporto di Reggio Calabria", 38.0712, 15.6516),
+    ("Aeroporto di Comiso", 36.9948, 14.6071),
+    ("Aeroporto di Perugia San Francesco d'Assisi", 43.0959, 12.5132),
+    ("Aeroporto di Parma", 44.8245, 10.2964),
+    ("Aeroporto di Rimini Federico Fellini", 44.0203, 12.6117),
+    ("Aeroporto di Forli", 44.1944, 12.0701),
+    ("Aeroporto di Salerno Costa d'Amalfi", 40.6204, 14.9114),
+    ("Aeroporto di Foggia Gino Lisa", 41.4324, 15.5350),
+    ("Aeroporto di Crotone", 39.0019, 17.0801),
+    ("Aeroporto di Albenga", 44.0506, 8.1270),
+    ("Aeroporto di Pantelleria", 36.8166, 11.9689),
+    ("Aeroporto di Lampedusa", 35.4980, 12.6182),
+]
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Distanza in linea d'aria tra due coordinate, in km."""
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def aeroporto_row(lat, lon, max_km=120):
+    """
+    Restituisce la riga [distanza, nome, impatto] per l'aeroporto piu' vicino,
+    calcolata SEMPRE qui in Python (mai dall'AI). Se le coordinate non sono
+    disponibili o l'aeroporto piu' vicino e' troppo lontano, riga a trattini.
+    """
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return ["\u2014", "\u2014", "\u2014"]
+
+    best_name, best_dist = None, None
+    for nome, alat, alon in AEROPORTI_ITALIA:
+        d = _haversine_km(lat, lon, alat, alon)
+        if best_dist is None or d < best_dist:
+            best_dist, best_name = d, nome
+
+    if best_dist is None or best_dist > max_km:
+        return ["\u2014", "\u2014", "\u2014"]
+
+    dist_km = round(best_dist)
+    if dist_km <= 30:
+        impatto = "Alto"
+    elif dist_km <= 70:
+        impatto = "Medio"
+    else:
+        impatto = "Basso"
+    return [f"{dist_km} km (linea d'aria)", best_name, impatto]
+
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -345,6 +431,9 @@ def page2(c, D):
     while len(poi_rows_raw) < 5:
         poi_rows_raw.append(["\u2014", "\u2014", "\u2014"])
     poi_rows_raw = poi_rows_raw[:5]
+    # Slot 5 (Aeroporto, indice 4) e' SEMPRE calcolato qui in Python, non da Make/AI:
+    # sovrascrive qualsiasi cosa arrivi da fuori per questa riga specifica.
+    poi_rows_raw[4] = aeroporto_row(D.get("lat"), D.get("long"))
 
     # Celle come Paragraph: il testo va sempre a capo dentro la propria colonna,
     # non invade mai quella vicina anche con nomi/distanze molto lunghi.
@@ -1007,7 +1096,7 @@ def normalize_data(data):
         "affitto_ricavo", "affitto_costi", "affitto_profitto",
         "competitor", "competitor_zona", "media_nazionale",
         "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione",
-        "kpi_occ_range", "kpi_potenziale", "data_generazione"
+        "kpi_occ_range", "kpi_potenziale", "data_generazione", "lat", "long"
     ]:
         val = data.get(field, report.get(field, imm.get(field)))
         if val is not None:
