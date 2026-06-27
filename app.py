@@ -1173,14 +1173,17 @@ def genera_descrizione_standard(data):
     except (IndexError, TypeError):
         pass
 
+    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa"])
+    situato = "situata" if genere_femminile else "situato"
+
     zona_inserita = (
-        f", zona {zona}," if categoria in ("capoluogo", "grande_citta")
-        and zona and zona.lower() != comune.lower() else ","
+        f", zona {zona}" if categoria in ("capoluogo", "grande_citta")
+        and zona and zona.lower() != comune.lower() else ""
     )
 
     base = (
-        f"Accogliente {tipologia.lower()} situata in {indirizzo}{zona_inserita} "
-        f"di {superficie} con {camere} camere, {bagni} bagni e {posti_letto} posti letto. "
+        f"Accogliente {tipologia.lower()} di {superficie} {situato} in {indirizzo}{zona_inserita}, "
+        f"con {camere} camere, {bagni} bagni e {posti_letto} posti letto. "
         f"L'immobile dispone di {dotazioni_chiave}, ideale per {target} "
     )
 
