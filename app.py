@@ -1096,13 +1096,121 @@ def normalize_data(data):
         "affitto_ricavo", "affitto_costi", "affitto_profitto",
         "competitor", "competitor_zona", "media_nazionale",
         "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione",
-        "kpi_occ_range", "kpi_potenziale", "data_generazione", "lat", "long"
+        "kpi_occ_range", "kpi_potenziale", "data_generazione", "lat", "long",
+        "categoria"
     ]:
         val = data.get(field, report.get(field, imm.get(field)))
         if val is not None:
             flat[field] = val
 
     return flat
+
+
+# ── Descrizione standard per categoria (Sessione 41) ─────────────────────────
+# File madre dei template: RU_09_Descrizioni_Standard.docx
+# Sovrascrive sempre il campo "descrizione" dell'AI: zero invenzioni geografiche,
+# coerenza garantita con la tabella POI gia' verificata.
+# Per oggi: capoluogo / grande_citta usano il template dedicato con zona; tutto
+# il resto (comune_minore) usa il template residenziale, in attesa della
+# sotto-classificazione costiero/lacuale/montano (sessione dedicata).
+
+def _join_lista_e(items):
+    items = [i for i in items if i]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " e " + items[-1]
+
+
+def _target_da_posti_letto(posti_letto):
+    try:
+        n = int(str(posti_letto).rstrip("+").strip())
+    except (ValueError, TypeError):
+        n = 4
+    if n <= 2:
+        return "coppie"
+    if n <= 4:
+        return "famiglie e piccoli gruppi"
+    return "famiglie numerose e gruppi di amici"
+
+
+def _poi_riga_frase(poi, idx):
+    """Frase pronta dalla riga POI all'indice idx, o stringa vuota se assente."""
+    try:
+        distanza, nome, _impatto = (list(poi[idx]) + ["\u2014", "\u2014", "\u2014"])[:3]
+    except (IndexError, TypeError):
+        return ""
+    if nome in ("\u2014", "", None):
+        return ""
+    return f"{nome} si trova a {distanza}."
+
+
+def genera_descrizione_standard(data):
+    categoria = str(data.get("categoria") or "comune_minore").strip().lower()
+
+    tipologia   = str(data.get("tipologia", "Immobile"))
+    indirizzo   = str(data.get("indirizzo", ""))
+    comune      = str(data.get("comune", ""))
+    zona        = str(data.get("zona", comune))
+    superficie  = str(data.get("superficie", ""))
+    camere      = str(data.get("camere", ""))
+    bagni       = str(data.get("bagni", ""))
+    posti_letto = str(data.get("posti_letto", ""))
+    dotazioni   = data.get("dotazioni_presenti", []) or []
+    poi         = data.get("poi", []) or []
+
+    dotazioni_chiave = _join_lista_e(
+        [d if d == "WiFi" else d.lower() for d in dotazioni[:3]]
+    )
+    target = _target_da_posti_letto(posti_letto)
+
+    trasporto_frase = _poi_riga_frase(poi, 0)
+    servizi_frase = _poi_riga_frase(poi, 3)
+    comune_rif_distanza, comune_rif_nome = "", ""
+    try:
+        comune_rif_distanza, comune_rif_nome, _ = (list(poi[1]) + ["\u2014", "\u2014", "\u2014"])[:3]
+    except (IndexError, TypeError):
+        pass
+
+    zona_inserita = (
+        f", zona {zona}," if categoria in ("capoluogo", "grande_citta")
+        and zona and zona.lower() != comune.lower() else ","
+    )
+
+    base = (
+        f"Accogliente {tipologia.lower()} situata in {indirizzo}{zona_inserita} "
+        f"di {superficie} con {camere} camere, {bagni} bagni e {posti_letto} posti letto. "
+        f"L'immobile dispone di {dotazioni_chiave}, ideale per {target} "
+    )
+
+    if categoria == "capoluogo":
+        base += "in cerca di una base comoda nel cuore del capoluogo. "
+        if trasporto_frase:
+            base += trasporto_frase + " "
+        if servizi_frase:
+            base += servizi_frase + " "
+        base += ("La posizione garantisce accesso rapido ai principali punti di interesse della città, "
+                 "mantenendo i vantaggi di una zona vivibile e ben collegata.")
+    elif categoria == "grande_citta":
+        base += "in cerca di una base strategica in una delle principali città italiane. "
+        if trasporto_frase:
+            base += trasporto_frase + " "
+        if servizi_frase:
+            base += servizi_frase + " "
+        base += ("La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ampie "
+                 "del paese, a portata di mano dall'immobile.")
+    else:
+        base += "in cerca di tranquillità lontano dal caos urbano. "
+        if comune_rif_nome and comune_rif_nome != "\u2014":
+            base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                      "punto di riferimento per servizi e collegamenti più ampi. ")
+        if trasporto_frase:
+            base += trasporto_frase + " "
+        base += ("La zona offre un equilibrio tra quiete residenziale e accesso ai servizi essenziali, "
+                 "ideale per un soggiorno autentico fuori dai circuiti turistici principali.")
+
+    return base
 
 
 def build_pdf_bytes(data):
@@ -1257,6 +1365,10 @@ def generate_pdf_direct():
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             # Capitalizza ogni parola
             data["indirizzo"] = addr.title()
+
+        # Descrizione standard per categoria: sovrascrive sempre quella dell'AI
+        # (Sessione 41 — vedi RU_09_Descrizioni_Standard.docx)
+        data["descrizione"] = genera_descrizione_standard(data)
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
