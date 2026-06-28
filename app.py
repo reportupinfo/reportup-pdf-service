@@ -16,6 +16,8 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import ParagraphStyle
 
+import comuni_lookup
+
 app = Flask(__name__)
 
 # ── Colori brand ──────────────────────────────────────────────────────────────
@@ -1357,6 +1359,14 @@ def generate_pdf_direct():
         if "zona" in data:
             data["zona"] = data["zona"].title()
 
+        # Categoria comune — Sessione 42: calcolata qui in modo deterministico
+        # da comuni_lookup.py (CSV 7.904 comuni), gestisce accenti, apostrofi,
+        # maiuscole/minuscole, alias colloquiali e omonimi. Sovrascrive sempre
+        # qualsiasi valore arrivato da Make/AI: zero crediti Make per questo
+        # dato, zero rischio di mismatch case-sensitive come visto con Roma.
+        _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
+        data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
+
         # Formatta indirizzo: capitalizza e aggiungi virgole attorno al CAP
         if "indirizzo" in data:
             import re as _re2
@@ -1447,6 +1457,10 @@ def generate_strategico():
             data["comune"] = data["comune"].title()
         if "zona" in data:
             data["zona"] = data["zona"].title()
+
+        # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
+        _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
+        data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
 
         # Formatta indirizzo
         if "indirizzo" in data:
