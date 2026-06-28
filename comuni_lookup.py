@@ -7,7 +7,7 @@ import csv
 import os
 import unicodedata
 
-CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "comuni.csv")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "comuni.csv")
 
 # Alias per nomi colloquiali diversi dal nome ufficiale del comune.
 # Chiave e valore già in forma normalizzata (vedi _normalizza). Aggiungere
