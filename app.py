@@ -1239,6 +1239,43 @@ def health():
     return jsonify({"status": "ok", "service": "ReportUp PDF Service"})
 
 
+@app.route("/categoria-comune", methods=["GET"])
+def categoria_comune():
+    """
+    Sostituisce il modulo 16 (Data store) su Make — Sessione 42.
+    Usa comuni_lookup.py: gestisce accenti, apostrofi, maiuscole/minuscole,
+    alias colloquiali (es. "Reggio Emilia") e comuni omonimi (via provincia).
+    Chiamata da Make: GET /categoria-comune?comune=...&provincia=... (provincia opzionale)
+    """
+    comune_q = request.args.get("comune", "")
+    provincia_q = request.args.get("provincia")
+
+    record = comuni_lookup.trova_comune(comune_q, provincia_q)
+
+    if not record:
+        # Nessun match: stesso default già usato come fallback in app.py
+        return jsonify({
+            "trovato": False,
+            "categoria": "comune_minore",
+            "comune": comune_q,
+            "provincia": None,
+            "sigla_provincia": None,
+            "capoluogo": False,
+            "grande_citta": False,
+        })
+
+    return jsonify({
+        "trovato": True,
+        "categoria": record["categoria"],
+        "comune": record["comune"],
+        "provincia": record["provincia"],
+        "sigla_provincia": record["sigla_provincia"],
+        "capoluogo": str(record.get("capoluogo", "")).strip().upper() == "TRUE",
+        "grande_citta": str(record.get("grande_citta", "")).strip().upper() == "TRUE",
+        "popolazione": record.get("popolazione"),
+    })
+
+
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
