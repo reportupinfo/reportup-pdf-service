@@ -6,8 +6,10 @@ Deploy su Render.com (piano free).
 
 import os
 import io
+import re
 import base64
 import math
+import requests
 from flask import Flask, request, jsonify
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -403,7 +405,11 @@ def page1(c, D):
     # Descrizione
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Descrizione immobile")
     y -= 5 * mm
-    wrap_text(c, D.get("descrizione", ""), 14 * mm, y, W - 28 * mm, "Helvetica", 8, 5.5 * mm)
+    y = wrap_text(c, D.get("descrizione", ""), 14 * mm, y, W - 28 * mm, "Helvetica", 8, 5.5 * mm)
+    if D.get("_wikipedia_estratto"):
+        c.setFont("Helvetica", 5.5)
+        c.setFillColor(MUTED)
+        c.drawString(14 * mm, y - 2.5 * mm, "Contiene un dato da Wikipedia, licenza CC BY-SA.")
 
 
 def page2(c, D):
@@ -1125,6 +1131,61 @@ def _join_lista_e(items):
     return ", ".join(items[:-1]) + " e " + items[-1]
 
 
+def _concorda_numero(valore, singolare, plurale):
+    """Restituisce 'N singolare' se N==1, altrimenti 'N plurale'. Tollera stringhe/valori non numerici."""
+    try:
+        n = int(str(valore).strip())
+    except (ValueError, TypeError):
+        return f"{valore} {plurale}"
+    return f"{n} {singolare}" if n == 1 else f"{n} {plurale}"
+
+
+_WIKI_CACHE = {}
+
+
+def _estratto_wikipedia(wikipedia_url, timeout=2.5):
+    """
+    Estrae UNA frase fattuale reale dalla pagina Wikipedia del comune
+    (REST summary API ufficiale), pulita da parentesi (pronunce, etimologie).
+    Nessuna invenzione: ritorna None se la pagina non esiste, è una pagina
+    di disambiguazione, o la rete non risponde in tempo — in quel caso la
+    descrizione resta quella di sempre, nessuna regressione.
+    Cache in memoria di processo: stesso comune richiesto più volte nella
+    stessa sessione del server non rifà la chiamata di rete.
+    Nota licenza: testo Wikipedia in CC BY-SA — attribuzione riportata nel
+    footer del PDF (vedi draw_footer/page1), non riprodotto qui per motivi
+    di campo.
+    """
+    if not wikipedia_url:
+        return None
+    if wikipedia_url in _WIKI_CACHE:
+        return _WIKI_CACHE[wikipedia_url]
+
+    risultato = None
+    try:
+        titolo = wikipedia_url.rstrip("/").rsplit("/", 1)[-1]
+        resp = requests.get(
+            f"https://it.wikipedia.org/api/rest_v1/page/summary/{titolo}",
+            timeout=timeout,
+            headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
+        )
+        if resp.status_code == 200:
+            dati = resp.json()
+            if dati.get("type") != "disambiguation":
+                estratto = dati.get("extract", "") or ""
+                estratto = re.sub(r"\([^)]*\)", "", estratto)  # rimuove pronunce/etimologie tra parentesi
+                estratto = re.sub(r"\s+", " ", estratto).strip()
+                if estratto:
+                    prima_frase = estratto.split(". ")[0].rstrip(". ").strip() + "."
+                    if 20 <= len(prima_frase) <= 220:
+                        risultato = prima_frase
+    except Exception:
+        risultato = None  # qualsiasi errore di rete/parsing: degradazione silenziosa
+
+    _WIKI_CACHE[wikipedia_url] = risultato
+    return risultato
+
+
 def _target_da_posti_letto(posti_letto):
     try:
         n = int(str(posti_letto).rstrip("+").strip())
@@ -1175,7 +1236,7 @@ def genera_descrizione_standard(data):
     except (IndexError, TypeError):
         pass
 
-    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa"])
+    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza"])
     situato = "situata" if genere_femminile else "situato"
 
     zona_inserita = (
@@ -1183,14 +1244,25 @@ def genera_descrizione_standard(data):
         and zona and zona.lower() != comune.lower() else ""
     )
 
+    camere_frase = _concorda_numero(camere, "camera", "camere")
+    bagni_frase = _concorda_numero(bagni, "bagno", "bagni")
+    posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
+
+    # Frase fattuale dal comune (Wikipedia, REST API, una sola frase, già
+    # estratta e validata altrove). None se non disponibile: nessun impatto,
+    # il resto del paragrafo resta identico a prima (nessuna regressione).
+    fatto_wiki = data.get("_wikipedia_estratto")
+
     base = (
         f"Accogliente {tipologia.lower()} di {superficie} {situato} in {indirizzo}{zona_inserita}, "
-        f"con {camere} camere, {bagni} bagni e {posti_letto} posti letto. "
+        f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
         f"L'immobile dispone di {dotazioni_chiave}, ideale per {target} "
     )
 
     if categoria == "capoluogo":
         base += "in cerca di una base comoda nel cuore del capoluogo. "
+        if fatto_wiki:
+            base += fatto_wiki + " "
         if trasporto_frase:
             base += trasporto_frase + " "
         if servizi_frase:
@@ -1199,6 +1271,8 @@ def genera_descrizione_standard(data):
                  "mantenendo i vantaggi di una zona vivibile e ben collegata.")
     elif categoria == "grande_citta":
         base += "in cerca di una base strategica in una delle principali città italiane. "
+        if fatto_wiki:
+            base += fatto_wiki + " "
         if trasporto_frase:
             base += trasporto_frase + " "
         if servizi_frase:
@@ -1206,14 +1280,51 @@ def genera_descrizione_standard(data):
         base += ("La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ampie "
                  "del paese, a portata di mano dall'immobile.")
     else:
-        base += "in cerca di tranquillità lontano dal caos urbano. "
-        if comune_rif_nome and comune_rif_nome != "\u2014":
-            base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
-                      "punto di riferimento per servizi e collegamenti più ampi. ")
-        if trasporto_frase:
-            base += trasporto_frase + " "
-        base += ("La zona offre un equilibrio tra quiete residenziale e accesso ai servizi essenziali, "
-                 "ideale per un soggiorno autentico fuori dai circuiti turistici principali.")
+        sottocategoria = str(data.get("sottocategoria") or "residenziale_minore").strip().lower()
+        if sottocategoria == "costiero":
+            base += "in cerca del fascino della costa. "
+            if fatto_wiki:
+                base += fatto_wiki + " "
+            if comune_rif_nome and comune_rif_nome != "\u2014":
+                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                          "punto di riferimento per servizi e collegamenti più ampi. ")
+            if trasporto_frase:
+                base += trasporto_frase + " "
+            base += ("La zona unisce l'atmosfera marittima a un buon equilibrio tra tranquillità "
+                     "e accesso ai servizi essenziali.")
+        elif sottocategoria == "lacuale":
+            base += "in cerca della quiete del lago. "
+            if fatto_wiki:
+                base += fatto_wiki + " "
+            if comune_rif_nome and comune_rif_nome != "\u2014":
+                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                          "punto di riferimento per servizi e collegamenti più ampi. ")
+            if trasporto_frase:
+                base += trasporto_frase + " "
+            base += ("La zona offre l'atmosfera rilassata delle località lacustri, con un buon equilibrio "
+                     "tra tranquillità e servizi essenziali.")
+        elif sottocategoria == "montano":
+            base += "in cerca dell'aria di montagna. "
+            if fatto_wiki:
+                base += fatto_wiki + " "
+            if comune_rif_nome and comune_rif_nome != "\u2014":
+                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                          "punto di riferimento per servizi e collegamenti più ampi. ")
+            if trasporto_frase:
+                base += trasporto_frase + " "
+            base += ("La zona offre la tranquillità tipica delle località montane, con un buon equilibrio "
+                     "tra natura e accesso ai servizi essenziali.")
+        else:
+            base += "in cerca di tranquillità lontano dal caos urbano. "
+            if fatto_wiki:
+                base += fatto_wiki + " "
+            if comune_rif_nome and comune_rif_nome != "\u2014":
+                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                          "punto di riferimento per servizi e collegamenti più ampi. ")
+            if trasporto_frase:
+                base += trasporto_frase + " "
+            base += ("La zona offre un equilibrio tra quiete residenziale e accesso ai servizi essenziali, "
+                     "ideale per un soggiorno autentico fuori dai circuiti turistici principali.")
 
     return base
 
@@ -1403,6 +1514,8 @@ def generate_pdf_direct():
         # dato, zero rischio di mismatch case-sensitive come visto con Roma.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
+        data["_wikipedia_estratto"] = _estratto_wikipedia(_record_comune.get("wikipedia")) if _record_comune else None
+        data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
 
         # Formatta indirizzo: capitalizza e aggiungi virgole attorno al CAP
         if "indirizzo" in data:
@@ -1498,6 +1611,8 @@ def generate_strategico():
         # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
+        data["_wikipedia_estratto"] = _estratto_wikipedia(_record_comune.get("wikipedia")) if _record_comune else None
+        data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
 
         # Formatta indirizzo
         if "indirizzo" in data:
