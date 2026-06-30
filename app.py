@@ -1430,9 +1430,9 @@ def genera_descrizione_standard(data):
     # ── BLOCCO 2: il contesto ─────────────────────────────────────────────────
     if categoria in ("grande_citta", "capoluogo"):
         if trasporto_frase:
-            desc += f"{trasporto_frase}, per muoversi in città senza pensieri. "
+            desc += f"{trasporto_frase.rstrip('.')}, per muoversi in città senza pensieri. "
         if servizi_frase:
-            desc += f"{servizi_frase}, a portata di mano per ogni necessità quotidiana. "
+            desc += f"{servizi_frase.rstrip('.')}, a portata di mano per ogni necessità quotidiana. "
         if elemento_frase:
             desc += f"{elemento_frase} "
     else:
@@ -1440,9 +1440,9 @@ def genera_descrizione_standard(data):
             desc += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
                      f"punto di riferimento per servizi e collegamenti più ampi. ")
         if trasporto_frase:
-            desc += f"{trasporto_frase}. "
+            desc += f"{trasporto_frase} "
         if servizi_frase:
-            desc += f"{servizi_frase} nelle vicinanze per le esigenze quotidiane. "
+            desc += f"{servizi_frase.rstrip('.')} nelle vicinanze per le esigenze quotidiane. "
 
     # ── BLOCCO 3: l'attrattiva (Wikipedia — condizionale) ────────────────────
     if fatto_wiki:
