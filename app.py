@@ -287,13 +287,18 @@ def page1(c, D):
     c.drawCentredString(W / 2, y - sl_h + 1.8 * mm, sub_label)
     y -= sl_h + 5 * mm
 
-    # Box indirizzo
+    # Box indirizzo — font scaling dinamico: riduce fino a 10pt per indirizzi lunghi
     box_h = 16 * mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(14 * mm, y - box_h, W - 28 * mm, box_h, fill=1, stroke=0)
-    c.setFont("Helvetica-Bold", 18)
     c.setFillColor(WHITE)
-    c.drawCentredString(W / 2, y - box_h / 2 - 3.5 * mm, D.get("indirizzo", ""))
+    indirizzo_txt = D.get("indirizzo", "")
+    max_w_ind = W - 36 * mm  # margine interno box
+    for font_size in [18, 16, 14, 12, 10]:
+        c.setFont("Helvetica-Bold", font_size)
+        if c.stringWidth(indirizzo_txt, "Helvetica-Bold", font_size) <= max_w_ind:
+            break
+    c.drawCentredString(W / 2, y - box_h / 2 - font_size * 0.18 * mm, indirizzo_txt)
     y -= box_h + 5 * mm
 
     # Scheda immobile
@@ -1256,7 +1261,31 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
             return None
 
         testo = _pulisci_wikitext(wikitext)
-        if not testo:
+
+        # Se la sezione principale è vuota (es. Roma "Monumenti" è solo gallerie),
+        # prova le sottosezioni immediate cercando testo utile
+        if not testo or len(testo) < 30:
+            subsections = [s for s in sections if
+                           s.get("toclevel", 0) == 2 and
+                           int(s.get("index", 0)) > int(section_index)]
+            for sub in subsections[:4]:
+                resp_sub = requests.get(
+                    "https://it.wikipedia.org/w/api.php",
+                    params={"action": "parse", "page": titolo,
+                            "prop": "wikitext", "section": sub.get("index"),
+                            "format": "json"},
+                    timeout=timeout,
+                    headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
+                )
+                if resp_sub.status_code != 200:
+                    continue
+                sub_wikitext = resp_sub.json().get("parse", {}).get("wikitext", {}).get("*", "")
+                testo_sub = _pulisci_wikitext(sub_wikitext)
+                if testo_sub and len(testo_sub) >= 30:
+                    testo = testo_sub
+                    break
+
+        if not testo or len(testo) < 30:
             return None
 
         # Prendi le prime frasi complete fino a ~300 caratteri
