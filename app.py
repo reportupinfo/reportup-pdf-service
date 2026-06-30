@@ -409,7 +409,7 @@ def page1(c, D):
     if D.get("_wikipedia_estratto"):
         c.setFont("Helvetica", 5.5)
         c.setFillColor(MUTED)
-        c.drawString(14 * mm, y - 2.5 * mm, "Contiene un dato da Wikipedia, licenza CC BY-SA.")
+        c.drawString(14 * mm, y - 2.5 * mm, "Alcune informazioni territoriali sono tratte da fonti enciclopediche aperte (CC BY-SA).")
 
 
 def page2(c, D):
@@ -1168,23 +1168,35 @@ def _pulisci_wikitext(testo):
     Pulisce il wikitext grezzo di Wikipedia rimuovendo markup, template,
     riferimenti e lasciando solo testo leggibile in italiano.
     """
-    # Rimuovi template {{...}}
-    testo = re.sub(r'\{\{[^}]*\}\}', '', testo)
+    # Rimuovi template {{...}} anche annidati
+    for _ in range(5):
+        testo = re.sub(r'\{\{[^{}]*\}\}', '', testo)
+    # Rimuovi gallery <gallery>...</gallery>
+    testo = re.sub(r'<gallery[^>]*>.*?</gallery>', '', testo, flags=re.DOTALL)
+    # Rimuovi tag HTML con contenuto
+    testo = re.sub(r'<ref[^>]*>.*?</ref>', '', testo, flags=re.DOTALL)
+    testo = re.sub(r'<[^>]+>', '', testo)
+    # Rimuovi intestazioni == Titolo == di qualsiasi livello
+    testo = re.sub(r'={2,}.*?={2,}', '', testo)
+    # Rimuovi link a file/immagini [[File:...]] [[Immagine:...]]
+    testo = re.sub(r'\[\[(?:File|Immagine|Image|Media):[^\]]*\]\]', '', testo, flags=re.IGNORECASE)
     # Rimuovi link interni [[Testo|Display]] → Display, [[Testo]] → Testo
     testo = re.sub(r'\[\[(?:[^\]|]*\|)?([^\]]*)\]\]', r'\1', testo)
-    # Rimuovi link esterni [http... testo] → testo
+    # Rimuovi link esterni
     testo = re.sub(r'\[https?://\S+\s+([^\]]+)\]', r'\1', testo)
     testo = re.sub(r'\[https?://\S+\]', '', testo)
     # Rimuovi formattazione '''grassetto''' e ''corsivo''
     testo = re.sub(r"'{2,3}", '', testo)
-    # Rimuovi intestazioni == Titolo ==
-    testo = re.sub(r'={2,}[^=]+=={2,}', '', testo)
-    # Rimuovi tag HTML
-    testo = re.sub(r'<[^>]+>', '', testo)
-    # Rimuovi riferimenti <ref>...</ref>
-    testo = re.sub(r'<ref[^/]*/>', '', testo)
-    # Rimuovi parentesi con codici/coordinate/anni isolati
-    testo = re.sub(r'\([^)]{0,6}\)', '', testo)
+    # Rimuovi righe che contengono nomi di file immagine (.jpg .png .svg ecc)
+    righe = testo.split('\n')
+    righe = [r for r in righe if not re.search(r'\.(jpg|jpeg|png|svg|gif|tiff|webp)', r, re.IGNORECASE)]
+    testo = '\n'.join(righe)
+    # Rimuovi parentesi con codici/coordinate/anni brevi
+    testo = re.sub(r'\([^)]{0,8}\)', '', testo)
+    # Rimuovi righe troppo corte o che iniziano con * # : ; (liste wikitext)
+    righe = testo.split('\n')
+    righe = [r.strip() for r in righe if len(r.strip()) > 30 and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))]
+    testo = ' '.join(righe)
     # Normalizza spazi
     testo = re.sub(r'\s+', ' ', testo).strip()
     return testo
