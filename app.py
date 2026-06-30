@@ -588,6 +588,15 @@ def page2(c, D):
         c.setFillColor(MUTED)
         c.drawCentredString(px_dot, gy + 4 * mm, f"EUR {row[2]}")
 
+    # Disclaimer prezzi sotto grafico
+    disclaimer_prezzi = (
+        "I valori indicati rappresentano medie su base annua. In comuni ad alto impatto turistico i prezzi "
+        "reali in alta stagione possono essere superiori del 5-10% rispetto alle stime qui riportate."
+    )
+    c.setFont("Helvetica-Oblique", 6)
+    c.setFillColor(MUTED)
+    c.drawCentredString(W / 2, gy - 4 * mm, disclaimer_prezzi)
+
 
 def page3(c, D):
     draw_header(c, D)
@@ -1531,6 +1540,30 @@ def generate_pdf_direct():
             # Fix deterministico sigla provincia: forza maiuscolo la sigla tra parentesi
             # es. "(Bs)" → "(BS)" — l'AI non rispetta il vincolo nel prompt (bug storico S38)
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+
+        # Rialzo prezzi deterministico per categoria (Sessione 44)
+        # residenziale_minore +5%, tutto il resto +15%
+        # Applicato PRIMA del ricalcolo economico per propagare su tutti i valori derivati.
+        _cat = data.get("categoria", "comune_minore")
+        _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
+        _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
+        _p = data.get("prezzo_notte_stimato", 0)
+        if _p:
+            _p_new = round(_p * _moltiplicatore)
+            _ratio = _p_new / _p if _p else 1
+            data["prezzo_notte_stimato"] = _p_new
+            # Propaga il rialzo su tutti i valori economici derivati dal prezzo
+            for _k in ["ricavo_lordo", "totale_ricavi", "bonus_dirette",
+                       "costi_commissioni", "costi_pulizie", "profitto_netto",
+                       "kpi_prezzo", "kpi_potenziale", "affitto_ricavo"]:
+                if data.get(_k):
+                    data[_k] = round(data[_k] * _ratio)
+            # Propaga su tabella occupazione (colonna prezzi EUR/notte, indice 2)
+            if "occupazione" in data:
+                data["occupazione"] = [
+                    [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
+                    for row in data["occupazione"]
+                ]
 
         # Descrizione standard per categoria: sovrascrive sempre quella dell'AI
         # (Sessione 41 — vedi RU_09_Descrizioni_Standard.docx)
