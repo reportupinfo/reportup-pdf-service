@@ -1349,123 +1349,134 @@ def _poi_riga_frase(poi, idx):
 
 
 def genera_descrizione_standard(data):
-    categoria = str(data.get("categoria") or "comune_minore").strip().lower()
+    """
+    Descrizione standard a 4 blocchi fissi (Sessione 44 — vedi RU_09_Descrizioni_Standard.docx):
+    Blocco 1: immobile (tipologia, superficie, camere, bagni, posti letto, TUTTE le dotazioni)
+    Blocco 2: contesto (dati verificati tabella POI — trasporto, comune rif, elemento, servizi)
+    Blocco 3: attrattiva (Wikipedia tematico per categoria — condizionale, omesso se assente)
+    Blocco 4: target e chiusura evocativa (deterministica per categoria)
+    Zero invenzioni: ogni frase si basa solo su dati verificati già presenti in data.
+    """
+    categoria   = str(data.get("categoria") or "comune_minore").strip().lower()
+    sottocateg  = str(data.get("sottocategoria") or "residenziale_minore").strip().lower()
 
     tipologia   = str(data.get("tipologia", "Immobile"))
     indirizzo   = str(data.get("indirizzo", ""))
     comune      = str(data.get("comune", ""))
-    zona        = str(data.get("zona", comune))
+    zona        = str(data.get("zona", "") or "")
     superficie  = str(data.get("superficie", ""))
     camere      = str(data.get("camere", ""))
     bagni       = str(data.get("bagni", ""))
     posti_letto = str(data.get("posti_letto", ""))
     dotazioni   = data.get("dotazioni_presenti", []) or []
     poi         = data.get("poi", []) or []
+    fatto_wiki  = data.get("_wikipedia_estratto")
 
-    dotazioni_chiave = _join_lista_e(
-        [d if d == "WiFi" else d.lower() for d in dotazioni[:3]]
-    )
-    target = _target_da_posti_letto(posti_letto)
+    # Concordanza genere
+    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
+    situata = "situata" if genere_femminile else "situato"
 
+    # Camere/bagni/posti letto con concordanza
+    camere_frase      = _concorda_numero(camere, "camera", "camere")
+    bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
+    posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
+
+    # Dotazioni — TUTTE quelle presenti, scritte come frase fluente (non lista tecnica)
+    def _fmt_dotazione(d):
+        return d if d == "WiFi" else d.lower()
+    dotazioni_frase = _join_lista_e([_fmt_dotazione(d) for d in dotazioni]) if dotazioni else ""
+
+    # Zona — solo per capoluogo e grande_citta, solo se diversa dal nome comune
+    zona_inserita = ""
+    if categoria in ("capoluogo", "grande_citta") and zona and zona.lower() not in ("—", "", comune.lower()):
+        zona_inserita = f", zona {zona}"
+
+    # POI — riga 0 trasporto, riga 1 comune rif, riga 2 elemento caratteristico, riga 3 servizi
     trasporto_frase = _poi_riga_frase(poi, 0)
-    servizi_frase = _poi_riga_frase(poi, 3)
-    comune_rif_distanza, comune_rif_nome = "", ""
+    servizi_frase   = _poi_riga_frase(poi, 3)
+    elemento_frase  = _poi_riga_frase(poi, 2)
+
+    comune_rif_nome, comune_rif_distanza = "", ""
     try:
-        comune_rif_distanza, comune_rif_nome, _ = (list(poi[1]) + ["\u2014", "\u2014", "\u2014"])[:3]
+        _r = list(poi[1]) + ["\u2014", "\u2014", "\u2014"]
+        comune_rif_distanza, comune_rif_nome = _r[0], _r[1]
+        if comune_rif_nome in ("\u2014", "", None):
+            comune_rif_nome = ""
     except (IndexError, TypeError):
         pass
 
-    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza"])
-    situato = "situata" if genere_femminile else "situato"
-
-    zona_inserita = (
-        f", zona {zona}" if categoria in ("capoluogo", "grande_citta")
-        and zona and zona.lower() != comune.lower() else ""
-    )
-
-    camere_frase = _concorda_numero(camere, "camera", "camere")
-    bagni_frase = _concorda_numero(bagni, "bagno", "bagni")
-    posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
-
-    # Frase fattuale dal comune (Wikipedia, REST API, una sola frase, già
-    # estratta e validata altrove). None se non disponibile: nessun impatto,
-    # il resto del paragrafo resta identico a prima (nessuna regressione).
-    fatto_wiki = data.get("_wikipedia_estratto")
-
-    base = (
-        f"Accogliente {tipologia.lower()} di {superficie} {situato} in {indirizzo}{zona_inserita}, "
+    # ── BLOCCO 1: l'immobile ──────────────────────────────────────────────────
+    desc = (
+        f"Accogliente {tipologia.lower()} di {superficie} {situata} in {indirizzo}{zona_inserita}, "
         f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
-        f"L'immobile dispone di {dotazioni_chiave}, ideale per {target} "
     )
-
-    if categoria == "capoluogo":
-        base += "in cerca di una base comoda nel cuore del capoluogo. "
-        if fatto_wiki:
-            base += fatto_wiki + " "
-        if trasporto_frase:
-            base += trasporto_frase + " "
-        if servizi_frase:
-            base += servizi_frase + " "
-        base += ("La posizione garantisce accesso rapido ai principali punti di interesse della città, "
-                 "mantenendo i vantaggi di una zona vivibile e ben collegata.")
-    elif categoria == "grande_citta":
-        base += "in cerca di una base strategica in una delle principali città italiane. "
-        if fatto_wiki:
-            base += fatto_wiki + " "
-        if trasporto_frase:
-            base += trasporto_frase + " "
-        if servizi_frase:
-            base += servizi_frase + " "
-        base += ("La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ampie "
-                 "del paese, a portata di mano dall'immobile.")
+    if dotazioni_frase:
+        desc += f"L'immobile è dotato di {dotazioni_frase}: tutto il necessario per un soggiorno confortevole. "
     else:
-        sottocategoria = str(data.get("sottocategoria") or "residenziale_minore").strip().lower()
-        if sottocategoria == "costiero":
-            base += "in cerca del fascino della costa. "
-            if fatto_wiki:
-                base += fatto_wiki + " "
-            if comune_rif_nome and comune_rif_nome != "\u2014":
-                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
-                          "punto di riferimento per servizi e collegamenti più ampi. ")
-            if trasporto_frase:
-                base += trasporto_frase + " "
-            base += ("La zona unisce l'atmosfera marittima a un buon equilibrio tra tranquillità "
-                     "e accesso ai servizi essenziali.")
-        elif sottocategoria == "lacuale":
-            base += "in cerca della quiete del lago. "
-            if fatto_wiki:
-                base += fatto_wiki + " "
-            if comune_rif_nome and comune_rif_nome != "\u2014":
-                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
-                          "punto di riferimento per servizi e collegamenti più ampi. ")
-            if trasporto_frase:
-                base += trasporto_frase + " "
-            base += ("La zona offre l'atmosfera rilassata delle località lacustri, con un buon equilibrio "
-                     "tra tranquillità e servizi essenziali.")
-        elif sottocategoria == "montano":
-            base += "in cerca dell'aria di montagna. "
-            if fatto_wiki:
-                base += fatto_wiki + " "
-            if comune_rif_nome and comune_rif_nome != "\u2014":
-                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
-                          "punto di riferimento per servizi e collegamenti più ampi. ")
-            if trasporto_frase:
-                base += trasporto_frase + " "
-            base += ("La zona offre la tranquillità tipica delle località montane, con un buon equilibrio "
-                     "tra natura e accesso ai servizi essenziali.")
-        else:
-            base += "in cerca di tranquillità lontano dal caos urbano. "
-            if fatto_wiki:
-                base += fatto_wiki + " "
-            if comune_rif_nome and comune_rif_nome != "\u2014":
-                base += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
-                          "punto di riferimento per servizi e collegamenti più ampi. ")
-            if trasporto_frase:
-                base += trasporto_frase + " "
-            base += ("La zona offre un equilibrio tra quiete residenziale e accesso ai servizi essenziali, "
-                     "ideale per un soggiorno autentico fuori dai circuiti turistici principali.")
+        desc += "Un immobile pronto ad accogliere i tuoi ospiti. "
 
-    return base
+    # ── BLOCCO 2: il contesto ─────────────────────────────────────────────────
+    if categoria in ("grande_citta", "capoluogo"):
+        if trasporto_frase:
+            desc += f"{trasporto_frase}, per muoversi in città senza pensieri. "
+        if servizi_frase:
+            desc += f"{servizi_frase}, a portata di mano per ogni necessità quotidiana. "
+        if elemento_frase:
+            desc += f"{elemento_frase} "
+    else:
+        if comune_rif_nome:
+            desc += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+                     f"punto di riferimento per servizi e collegamenti più ampi. ")
+        if trasporto_frase:
+            desc += f"{trasporto_frase}. "
+        if servizi_frase:
+            desc += f"{servizi_frase} nelle vicinanze per le esigenze quotidiane. "
+
+    # ── BLOCCO 3: l'attrattiva (Wikipedia — condizionale) ────────────────────
+    if fatto_wiki:
+        desc += fatto_wiki + " "
+
+    # ── BLOCCO 4: target e chiusura evocativa ────────────────────────────────
+    target = _target_da_posti_letto(posti_letto)
+
+    if categoria == "grande_citta":
+        desc += (
+            f"Ideale per {target} che vogliono vivere la città da dentro, con tutti i comfort di casa. "
+            "La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ricche "
+            "del paese, accessibile a piedi o con i mezzi direttamente dall'immobile."
+        )
+    elif categoria == "capoluogo":
+        desc += (
+            f"Ideale per {target} in cerca di una base comoda nel cuore del capoluogo. "
+            "La posizione garantisce accesso rapido ai principali punti di interesse della città, "
+            "mantenendo i vantaggi di una zona vivibile e ben servita."
+        )
+    elif sottocateg == "costiero":
+        desc += (
+            f"Ideale per {target} in cerca del fascino della costa. "
+            "La zona unisce l'atmosfera marittima a un buon equilibrio tra tranquillità, "
+            "servizi e vita locale, lontano dai ritmi frenetici delle grandi città."
+        )
+    elif sottocateg == "lacuale":
+        desc += (
+            f"Ideale per {target} in cerca della quiete e della bellezza del lago. "
+            "La zona offre l'atmosfera rilassata delle località lacustri, con un equilibrio "
+            "tra natura, attività all'aperto e accesso ai servizi essenziali."
+        )
+    elif sottocateg == "montano":
+        desc += (
+            f"Ideale per {target} in cerca dell'aria di montagna e del silenzio che solo la quota sa dare. "
+            "La zona offre la tranquillità tipica delle località montane, con un equilibrio "
+            "tra natura, attività all'aperto e i comfort della vita moderna."
+        )
+    else:
+        desc += (
+            f"Ideale per {target} in cerca di tranquillità autentica, lontano dal caos urbano. "
+            "La zona offre un ritmo di vita più lento, a contatto con la cultura e le tradizioni locali, "
+            "con tutti i servizi essenziali a portata di mano."
+        )
+
+    return desc
 
 
 def build_pdf_bytes(data):
