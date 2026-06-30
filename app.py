@@ -1151,47 +1151,177 @@ def _concorda_numero(valore, singolare, plurale):
 
 _WIKI_CACHE = {}
 
+# Sezioni Wikipedia da cercare per categoria, in ordine di priorità.
+# Per ogni categoria: prima sezione trovata con testo utile vince.
+_WIKI_SEZIONI_PER_CATEGORIA = {
+    "grande_citta":        ["Monumenti e luoghi d'interesse", "Luoghi di interesse", "Arte e cultura", "Patrimonio"],
+    "capoluogo":           ["Monumenti e luoghi d'interesse", "Luoghi di interesse", "Arte e cultura", "Patrimonio"],
+    "costiero":            ["Spiagge", "Territorio", "Turismo", "Sagre", "Tradizioni", "Cultura"],
+    "lacuale":             ["Turismo", "Sport", "Territorio", "Sagre", "Tradizioni", "Cultura"],
+    "montano":             ["Sport", "Turismo", "Sci", "Trekking", "Territorio", "Sagre", "Tradizioni"],
+    "residenziale_minore": ["Sagre", "Tradizioni", "Cultura", "Economia", "Prodotti tipici", "Gastronomia"],
+}
 
-def _estratto_wikipedia(wikipedia_url, timeout=2.5):
+
+def _pulisci_wikitext(testo):
     """
-    Estrae UNA frase fattuale reale dalla pagina Wikipedia del comune
-    (REST summary API ufficiale), pulita da parentesi (pronunce, etimologie).
-    Nessuna invenzione: ritorna None se la pagina non esiste, è una pagina
-    di disambiguazione, o la rete non risponde in tempo — in quel caso la
-    descrizione resta quella di sempre, nessuna regressione.
-    Cache in memoria di processo: stesso comune richiesto più volte nella
-    stessa sessione del server non rifà la chiamata di rete.
-    Nota licenza: testo Wikipedia in CC BY-SA — attribuzione riportata nel
-    footer del PDF (vedi draw_footer/page1), non riprodotto qui per motivi
-    di campo.
+    Pulisce il wikitext grezzo di Wikipedia rimuovendo markup, template,
+    riferimenti e lasciando solo testo leggibile in italiano.
+    """
+    # Rimuovi template {{...}}
+    testo = re.sub(r'\{\{[^}]*\}\}', '', testo)
+    # Rimuovi link interni [[Testo|Display]] → Display, [[Testo]] → Testo
+    testo = re.sub(r'\[\[(?:[^\]|]*\|)?([^\]]*)\]\]', r'\1', testo)
+    # Rimuovi link esterni [http... testo] → testo
+    testo = re.sub(r'\[https?://\S+\s+([^\]]+)\]', r'\1', testo)
+    testo = re.sub(r'\[https?://\S+\]', '', testo)
+    # Rimuovi formattazione '''grassetto''' e ''corsivo''
+    testo = re.sub(r"'{2,3}", '', testo)
+    # Rimuovi intestazioni == Titolo ==
+    testo = re.sub(r'={2,}[^=]+=={2,}', '', testo)
+    # Rimuovi tag HTML
+    testo = re.sub(r'<[^>]+>', '', testo)
+    # Rimuovi riferimenti <ref>...</ref>
+    testo = re.sub(r'<ref[^/]*/>', '', testo)
+    # Rimuovi parentesi con codici/coordinate/anni isolati
+    testo = re.sub(r'\([^)]{0,6}\)', '', testo)
+    # Normalizza spazi
+    testo = re.sub(r'\s+', ' ', testo).strip()
+    return testo
+
+
+def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
+    """
+    Cerca una sezione specifica nella pagina Wikipedia e ne restituisce
+    le prime 2-3 frasi utili, pulite dal wikitext.
+    Ritorna None se la sezione non esiste o non contiene testo utile.
+    """
+    try:
+        # Prima: ottieni l'indice delle sezioni
+        resp_sections = requests.get(
+            "https://it.wikipedia.org/w/api.php",
+            params={
+                "action": "parse",
+                "page": titolo,
+                "prop": "sections",
+                "format": "json",
+            },
+            timeout=timeout,
+            headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
+        )
+        if resp_sections.status_code != 200:
+            return None
+        dati_sections = resp_sections.json()
+        sections = dati_sections.get("parse", {}).get("sections", [])
+
+        # Trova il numero della sezione cercata (confronto case-insensitive, parziale)
+        section_index = None
+        nome_lower = nome_sezione.lower()
+        for s in sections:
+            if nome_lower in s.get("line", "").lower():
+                section_index = s.get("index")
+                break
+        if section_index is None:
+            return None
+
+        # Seconda: scarica il wikitext di quella sezione
+        resp_text = requests.get(
+            "https://it.wikipedia.org/w/api.php",
+            params={
+                "action": "parse",
+                "page": titolo,
+                "prop": "wikitext",
+                "section": section_index,
+                "format": "json",
+            },
+            timeout=timeout,
+            headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
+        )
+        if resp_text.status_code != 200:
+            return None
+        wikitext = resp_text.json().get("parse", {}).get("wikitext", {}).get("*", "")
+        if not wikitext:
+            return None
+
+        testo = _pulisci_wikitext(wikitext)
+        if not testo:
+            return None
+
+        # Prendi le prime frasi complete fino a ~300 caratteri
+        frasi = [f.strip() for f in testo.split(". ") if len(f.strip()) > 20]
+        risultato = ""
+        for frase in frasi[:4]:
+            candidato = risultato + frase + ". "
+            if len(candidato) > 320:
+                break
+            risultato = candidato
+            if len(risultato) >= 80:
+                break
+
+        risultato = risultato.strip()
+        return risultato if len(risultato) >= 30 else None
+
+    except Exception:
+        return None
+
+
+def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocategoria=None, timeout=3):
+    """
+    Estrae testo fattuale dalla pagina Wikipedia del comune, cercando
+    sezioni tematiche specifiche per categoria (monumenti per grandi città,
+    sagre/tradizioni per comuni minori, spiagge per costieri, ecc.).
+    Fallback sulla prima frase introduttiva se nessuna sezione è trovata.
+    Cache in memoria: stessa URL non rifà chiamate di rete nella stessa sessione.
+    Licenza: Wikipedia CC BY-SA — attribuzione nel footer PDF (pagina 1).
     """
     if not wikipedia_url:
         return None
-    if wikipedia_url in _WIKI_CACHE:
-        return _WIKI_CACHE[wikipedia_url]
+
+    cache_key = f"{wikipedia_url}|{categoria}|{sottocategoria}"
+    if cache_key in _WIKI_CACHE:
+        return _WIKI_CACHE[cache_key]
 
     risultato = None
     try:
         titolo = wikipedia_url.rstrip("/").rsplit("/", 1)[-1]
-        resp = requests.get(
-            f"https://it.wikipedia.org/api/rest_v1/page/summary/{titolo}",
-            timeout=timeout,
-            headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
-        )
-        if resp.status_code == 200:
-            dati = resp.json()
-            if dati.get("type") != "disambiguation":
-                estratto = dati.get("extract", "") or ""
-                estratto = re.sub(r"\([^)]*\)", "", estratto)  # rimuove pronunce/etimologie tra parentesi
-                estratto = re.sub(r"\s+", " ", estratto).strip()
-                if estratto:
-                    prima_frase = estratto.split(". ")[0].rstrip(". ").strip() + "."
-                    if 20 <= len(prima_frase) <= 220:
-                        risultato = prima_frase
-    except Exception:
-        risultato = None  # qualsiasi errore di rete/parsing: degradazione silenziosa
 
-    _WIKI_CACHE[wikipedia_url] = risultato
+        # Determina quale lista di sezioni usare
+        if categoria in ("grande_citta", "capoluogo"):
+            sezioni_da_cercare = _WIKI_SEZIONI_PER_CATEGORIA.get(categoria, [])
+        else:
+            cat_key = sottocategoria if sottocategoria else "residenziale_minore"
+            sezioni_da_cercare = _WIKI_SEZIONI_PER_CATEGORIA.get(cat_key, _WIKI_SEZIONI_PER_CATEGORIA["residenziale_minore"])
+
+        # Prova ogni sezione in ordine finché una funziona
+        for nome_sezione in sezioni_da_cercare:
+            testo = _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=timeout)
+            if testo:
+                risultato = testo
+                break
+
+        # Fallback: prima frase introduttiva (come prima)
+        if not risultato:
+            resp = requests.get(
+                f"https://it.wikipedia.org/api/rest_v1/page/summary/{titolo}",
+                timeout=timeout,
+                headers={"User-Agent": "ReportUp/1.0 (https://reportup.it)"},
+            )
+            if resp.status_code == 200:
+                dati = resp.json()
+                if dati.get("type") != "disambiguation":
+                    estratto = dati.get("extract", "") or ""
+                    estratto = re.sub(r"\([^)]*\)", "", estratto)
+                    estratto = re.sub(r"\s+", " ", estratto).strip()
+                    if estratto:
+                        prima_frase = estratto.split(". ")[0].rstrip(". ").strip() + "."
+                        # Scarta frasi puramente amministrative ("X è un comune italiano...")
+                        if 30 <= len(prima_frase) <= 220 and "comune italiano" not in prima_frase:
+                            risultato = prima_frase
+
+    except Exception:
+        risultato = None
+
+    _WIKI_CACHE[cache_key] = risultato
     return risultato
 
 
@@ -1523,8 +1653,12 @@ def generate_pdf_direct():
         # dato, zero rischio di mismatch case-sensitive come visto con Roma.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["_wikipedia_estratto"] = _estratto_wikipedia(_record_comune.get("wikipedia")) if _record_comune else None
         data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
+        data["_wikipedia_estratto"] = _estratto_wikipedia(
+            _record_comune.get("wikipedia") if _record_comune else None,
+            categoria=data["categoria"],
+            sottocategoria=data["sottocategoria"],
+        )
 
         # Formatta indirizzo: capitalizza e aggiungi virgole attorno al CAP
         if "indirizzo" in data:
@@ -1647,8 +1781,12 @@ def generate_strategico():
         # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["_wikipedia_estratto"] = _estratto_wikipedia(_record_comune.get("wikipedia")) if _record_comune else None
         data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
+        data["_wikipedia_estratto"] = _estratto_wikipedia(
+            _record_comune.get("wikipedia") if _record_comune else None,
+            categoria=data["categoria"],
+            sottocategoria=data["sottocategoria"],
+        )
 
         # Formatta indirizzo
         if "indirizzo" in data:
