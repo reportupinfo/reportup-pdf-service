@@ -1528,6 +1528,9 @@ def generate_pdf_direct():
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             # Capitalizza ogni parola
             data["indirizzo"] = addr.title()
+            # Fix deterministico sigla provincia: forza maiuscolo la sigla tra parentesi
+            # es. "(Bs)" → "(BS)" — l'AI non rispetta il vincolo nel prompt (bug storico S38)
+            data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         # Descrizione standard per categoria: sovrascrive sempre quella dell'AI
         # (Sessione 41 — vedi RU_09_Descrizioni_Standard.docx)
@@ -1622,6 +1625,8 @@ def generate_strategico():
             addr = _re2.sub(r',\s*,', ',', addr)
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             data["indirizzo"] = addr.title()
+            # Fix deterministico sigla provincia (stesso fix di generate_pdf_direct)
+            data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
