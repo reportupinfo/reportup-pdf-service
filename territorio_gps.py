@@ -174,7 +174,55 @@ def elevazione_metri(lat, lon, timeout=3):
     return quota
 
 
-SOGLIA_MONTANO_METRI = 600
+_DISTANCE_MATRIX_CACHE = {}
+
+
+def distanza_e_tempo_auto(lat1, lon1, lat2, lon2, timeout=4):
+    """
+    Distanza e tempo di percorrenza IN AUTO tra due punti, via Google Distance
+    Matrix API (stessa chiave GOOGLE_MAPS_API_KEY già in uso per l'elevazione).
+    Ritorna (km_auto, minuti_auto) oppure None se la chiave manca, l'API non
+    risponde, o la rotta non è disponibile (es. isole senza collegamento auto) —
+    in quel caso chi chiama ricade sulla distanza in linea d'aria.
+    """
+    try:
+        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+    except (TypeError, ValueError):
+        return None
+
+    cache_key = f"{round(lat1,4)},{round(lon1,4)}|{round(lat2,4)},{round(lon2,4)}"
+    if cache_key in _DISTANCE_MATRIX_CACHE:
+        return _DISTANCE_MATRIX_CACHE[cache_key]
+
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        return None
+
+    risultato = None
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/distancematrix/json",
+            params={
+                "origins": f"{lat1},{lon1}",
+                "destinations": f"{lat2},{lon2}",
+                "mode": "driving",
+                "key": api_key,
+            },
+            timeout=timeout,
+        )
+        if resp.status_code == 200:
+            dati = resp.json()
+            if dati.get("status") == "OK":
+                elemento = dati["rows"][0]["elements"][0]
+                if elemento.get("status") == "OK":
+                    km = round(elemento["distance"]["value"] / 1000)
+                    minuti = round(elemento["duration"]["value"] / 60)
+                    risultato = (km, minuti)
+    except Exception:
+        risultato = None
+
+    _DISTANCE_MATRIX_CACHE[cache_key] = risultato
+    return risultato
 
 
 def classifica_sottocategoria(lat, lon):
