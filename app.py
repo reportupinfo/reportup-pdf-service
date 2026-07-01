@@ -1714,6 +1714,14 @@ def generate_pdf_direct():
 
         data = _json.loads(cleaned)
         data = normalize_data(data)
+        # Override lat/long con i valori VERI del geocode Make (Sessione 45):
+        # quelli scritti dall'AI nel JSON possono essere leggermente imprecisi
+        # (va bene per l'aeroporto, soglia larga; non va bene per costa/lago/
+        # quota, soglie strette in km). Se Make passa ?lat=...&long=... in
+        # query string, questi vincono sempre su quanto scritto dall'AI.
+        if request.args.get("lat") and request.args.get("long"):
+            data["lat"] = request.args.get("lat")
+            data["long"] = request.args.get("long")
         # Normalizza campi stringa
         for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
             if campo in data and not isinstance(data[campo], str):
@@ -1849,6 +1857,9 @@ def generate_strategico():
 
         data = _json.loads(cleaned)
         data = normalize_data(data)
+        if request.args.get("lat") and request.args.get("long"):
+            data["lat"] = request.args.get("lat")
+            data["long"] = request.args.get("long")
 
         # Normalizza campi stringa
         for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
