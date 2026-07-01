@@ -19,6 +19,7 @@ from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import ParagraphStyle
 
 import comuni_lookup
+import territorio_gps
 
 app = Flask(__name__)
 
@@ -1326,9 +1327,15 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
     try:
         titolo = wikipedia_url.rstrip("/").rsplit("/", 1)[-1]
 
-        # Determina quale lista di sezioni usare
+        # Determina quale lista di sezioni usare.
+        # Un capoluogo/grande_citta può essere ANCHE costiero/lacuale/montano (es. Cagliari,
+        # Napoli, Trieste): in quel caso si uniscono le sezioni tema-città con quelle
+        # tema-territorio, provando prima le seconde perché più distintive del posto.
         if categoria in ("grande_citta", "capoluogo"):
-            sezioni_da_cercare = _WIKI_SEZIONI_PER_CATEGORIA.get(categoria, [])
+            sezioni_da_cercare = list(_WIKI_SEZIONI_PER_CATEGORIA.get(categoria, []))
+            if sottocategoria and sottocategoria in _WIKI_SEZIONI_PER_CATEGORIA:
+                extra = _WIKI_SEZIONI_PER_CATEGORIA[sottocategoria]
+                sezioni_da_cercare = extra + [s for s in sezioni_da_cercare if s not in extra]
         else:
             cat_key = sottocategoria if sottocategoria else "residenziale_minore"
             sezioni_da_cercare = _WIKI_SEZIONI_PER_CATEGORIA.get(cat_key, _WIKI_SEZIONI_PER_CATEGORIA["residenziale_minore"])
@@ -1480,15 +1487,23 @@ def genera_descrizione_standard(data):
     # ── BLOCCO 4: target e chiusura evocativa ────────────────────────────────
     target = _target_da_posti_letto(posti_letto)
 
+    _chiusura_territorio = {
+        "costiero": "affacciata sul mare",
+        "lacuale":  "affacciata sul lago",
+        "montano":  "immersa nella cornice delle montagne",
+    }
+
     if categoria == "grande_citta":
+        extra_territorio = f", {_chiusura_territorio[sottocateg]}," if sottocateg in _chiusura_territorio else ""
         desc += (
-            f"Ideale per {target} che vogliono vivere la città da dentro, con tutti i comfort di casa. "
+            f"Ideale per {target} che vogliono vivere la città{extra_territorio} da dentro, con tutti i comfort di casa. "
             "La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ricche "
             "del paese, accessibile a piedi o con i mezzi direttamente dall'immobile."
         )
     elif categoria == "capoluogo":
+        extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
         desc += (
-            f"Ideale per {target} in cerca di una base comoda nel cuore del capoluogo. "
+            f"Ideale per {target} in cerca di una base comoda nel cuore del capoluogo{extra_territorio}. "
             "La posizione garantisce accesso rapido ai principali punti di interesse della città, "
             "mantenendo i vantaggi di una zona vivibile e ben servita."
         )
@@ -1705,7 +1720,11 @@ def generate_pdf_direct():
         # dato, zero rischio di mismatch case-sensitive come visto con Roma.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
+        # Sottocategoria (costiero/lacuale/montano) — GPS del punto esatto, non del
+        # comune (Sessione 45): risolve i comuni estesi (es. Giugliano centro vs
+        # Varcaturo) dove la vecchia sottocategoria statica per comune era sbagliata
+        # per metà degli indirizzi reali.
+        data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
         data["_wikipedia_estratto"] = _estratto_wikipedia(
             _record_comune.get("wikipedia") if _record_comune else None,
             categoria=data["categoria"],
@@ -1833,7 +1852,7 @@ def generate_strategico():
         # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["sottocategoria"] = _record_comune.get("sottocategoria") if _record_comune else None
+        data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
         data["_wikipedia_estratto"] = _estratto_wikipedia(
             _record_comune.get("wikipedia") if _record_comune else None,
             categoria=data["categoria"],
