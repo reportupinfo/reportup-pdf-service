@@ -99,9 +99,13 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 def aeroporto_row(lat, lon, max_km=120):
     """
-    Restituisce la riga [distanza, nome, impatto] per l'aeroporto piu' vicino,
-    calcolata SEMPRE qui in Python (mai dall'AI). Se le coordinate non sono
-    disponibili o l'aeroporto piu' vicino e' troppo lontano, riga a trattini.
+    Restituisce la riga [distanza, nome, impatto] per l'aeroporto piu' vicino.
+    L'aeroporto piu' vicino si individua SEMPRE con la linea d'aria (calcolo
+    Python, zero costo) — ma la distanza mostrata all'utente e' quella REALE
+    in auto (km + minuti), via Google Distance Matrix, perche' e' il dato che
+    conta per chi deve arrivarci (Sessione 45, feedback Salvatore). Se l'API
+    non risponde (rete, chiave assente, isole senza strada), si ricade sulla
+    linea d'aria come prima — nessun errore visibile nel PDF.
     """
     try:
         lat = float(lat)
@@ -109,11 +113,11 @@ def aeroporto_row(lat, lon, max_km=120):
     except (TypeError, ValueError):
         return ["\u2014", "\u2014", "\u2014"]
 
-    best_name, best_dist = None, None
+    best_name, best_dist, best_lat, best_lon = None, None, None, None
     for nome, alat, alon in AEROPORTI_ITALIA:
         d = _haversine_km(lat, lon, alat, alon)
         if best_dist is None or d < best_dist:
-            best_dist, best_name = d, nome
+            best_dist, best_name, best_lat, best_lon = d, nome, alat, alon
 
     if best_dist is None or best_dist > max_km:
         return ["\u2014", "\u2014", "\u2014"]
@@ -125,7 +129,15 @@ def aeroporto_row(lat, lon, max_km=120):
         impatto = "Medio"
     else:
         impatto = "Basso"
-    return [f"{dist_km} km (linea d'aria)", best_name, impatto]
+
+    auto = territorio_gps.distanza_e_tempo_auto(lat, lon, best_lat, best_lon)
+    if auto:
+        km_auto, min_auto = auto
+        distanza_str = f"{km_auto} km · {min_auto} min in auto"
+    else:
+        distanza_str = f"{dist_km} km (linea d'aria)"
+
+    return [distanza_str, best_name, impatto]
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
