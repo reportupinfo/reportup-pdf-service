@@ -225,6 +225,9 @@ def distanza_e_tempo_auto(lat1, lon1, lat2, lon2, timeout=4):
     return risultato
 
 
+SOGLIA_MONTANO_METRI = 600
+
+
 def classifica_sottocategoria(lat, lon):
     """
     Ritorna 'costiero' / 'lacuale' / 'montano' / None in base al punto GPS esatto
