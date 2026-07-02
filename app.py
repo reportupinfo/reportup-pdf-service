@@ -23,6 +23,88 @@ import territorio_gps
 
 app = Flask(__name__)
 
+# ── AirROI: dato di mercato reale per il prezzo/notte ───────────────────────────
+# Sessione 46 — sostituisce, dove esiste un mercato reale, il prezzo/notte
+# generato dall'AI con un dato osservato (AirROI). Dove il mercato non esiste
+# (comuni piccoli senza annunci attivi), resta invariato il metodo precedente:
+# stima AI + moltiplicatore fisso per categoria.
+#
+# Config: la chiave va impostata come variabile d'ambiente AIRROI_API_KEY su
+# Render (Settings > Environment). Se manca, il sistema si comporta come oggi
+# (nessuna chiamata, fallback automatico su AI) — mai un errore per l'utente.
+AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
+AIRROI_BASE = "https://api.airroi.com"
+
+
+def _numero_da_stringa(valore, default=1):
+    """Estrae il primo intero da stringhe tipo '2 camere' o '4 posti'. Tollera None/errori."""
+    try:
+        m = re.search(r"\d+", str(valore))
+        return int(m.group()) if m else default
+    except Exception:
+        return default
+
+
+def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, timeout_lookup=4, timeout_stima=6):
+    """
+    Due chiamate in sequenza:
+    1) /markets/lookup ($0.01) — verifica se esiste un mercato reale su queste coordinate.
+    2) /calculator/estimate ($0.20) — solo se il mercato esiste, stima prezzo/notte e occupazione.
+
+    Ritorna un dict {prezzo_notte_stimato, occupazione_percent} se il dato reale
+    esiste ed è valido, altrimenti None. Qualsiasi problema (chiave mancante,
+    coordinate assenti, timeout, rate limit, risposta malformata) ricade su None
+    senza mai sollevare eccezioni: chi chiama questa funzione deve poter sempre
+    fare fallback silenzioso sul metodo AI esistente.
+    """
+    if not AIRROI_API_KEY or lat in (None, "") or lon in (None, ""):
+        return None
+    headers = {"X-API-KEY": AIRROI_API_KEY}
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        r1 = requests.get(
+            f"{AIRROI_BASE}/markets/lookup",
+            params={"lat": lat_f, "lng": lon_f},
+            headers=headers, timeout=timeout_lookup,
+        )
+        if r1.status_code != 200:
+            return None
+        mercato = r1.json()
+        if not mercato or not mercato.get("market_id"):
+            return None
+
+        bedrooms = _numero_da_stringa(camere_raw, default=1)
+        guests = _numero_da_stringa(posti_letto_raw, default=2)
+
+        r2 = requests.get(
+            f"{AIRROI_BASE}/calculator/estimate",
+            params={
+                "lat": lat_f, "lng": lon_f,
+                "bedrooms": bedrooms, "guests": guests,
+                "currency": "eur",
+            },
+            headers=headers, timeout=timeout_stima,
+        )
+        if r2.status_code != 200:
+            return None
+        stima = r2.json()
+        adr = stima.get("average_daily_rate")
+        occ = stima.get("occupancy")
+        if not adr or occ is None:
+            return None
+
+        return {
+            "prezzo_notte_stimato": round(float(adr)),
+            "occupazione_percent": round(float(occ) * 100),
+        }
+    except Exception:
+        return None
+
+
 # ── Colori brand ──────────────────────────────────────────────────────────────
 BLUE_NIGHT   = HexColor("#0D1F2D")
 BLUE_PRIMARY = HexColor("#2196C4")
@@ -1766,18 +1848,36 @@ def generate_pdf_direct():
             # es. "(Bs)" → "(BS)" — l'AI non rispetta il vincolo nel prompt (bug storico S38)
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
-        # Rialzo prezzi deterministico per categoria (Sessione 44)
-        # residenziale_minore +5%, tutto il resto +15%
-        # Applicato PRIMA del ricalcolo economico per propagare su tutti i valori derivati.
+        # Prezzo/notte — doppio binario (Sessione 46)
+        # 1) Se esiste un mercato reale AirROI su queste coordinate: si usa quel dato
+        #    osservato (prezzo/notte + occupazione reali), non la stima dell'AI.
+        # 2) Se il mercato non esiste (comune piccolo, nessun annuncio attivo):
+        #    resta il metodo precedente, invariato — stima AI + moltiplicatore fisso
+        #    per categoria (Sessione 44: residenziale_minore +5%, tutto il resto +15%).
+        # In entrambi i casi il rialzo/sostituzione è applicato PRIMA del ricalcolo
+        # economico, per propagare coerentemente su tutti i valori derivati.
         _cat = data.get("categoria", "comune_minore")
         _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
-        _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p = data.get("prezzo_notte_stimato", 0)
+
+        _airroi = _airroi_lookup_e_stima(
+            data.get("lat"), data.get("long"),
+            camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
+        )
+
+        if _airroi:
+            _p_new = _airroi["prezzo_notte_stimato"]
+            data["occupazione_percent"] = _airroi["occupazione_percent"]
+            data["fonte_prezzo"] = "airroi"
+        else:
+            _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
+            _p_new = round(_p * _moltiplicatore) if _p else _p
+            data["fonte_prezzo"] = "ai_stima"
+
         if _p:
-            _p_new = round(_p * _moltiplicatore)
             _ratio = _p_new / _p if _p else 1
             data["prezzo_notte_stimato"] = _p_new
-            # Propaga il rialzo su tutti i valori economici derivati dal prezzo
+            # Propaga il nuovo prezzo su tutti i valori economici derivati
             for _k in ["ricavo_lordo", "totale_ricavi", "bonus_dirette",
                        "costi_commissioni", "costi_pulizie", "profitto_netto",
                        "kpi_prezzo", "kpi_potenziale", "affitto_ricavo"]:
