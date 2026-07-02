@@ -97,12 +97,65 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
         if not adr or occ is None:
             return None
 
+        # La risposta include già, senza costo aggiuntivo, la distribuzione mensile
+        # dei ricavi (12 valori, Gen->Dic) — è il segnale reale di stagionalità che
+        # usiamo per sostituire la curva prezzo/notte generata dall'AI (Sessione 46,
+        # seconda parte). Se il campo manca o non ha 12 valori validi, si ignora e
+        # si tiene solo il dato annuale — nessun errore, solo meno dettaglio.
+        distribuzione_mensile = stima.get("monthly_revenue_distributions")
+        if not (isinstance(distribuzione_mensile, list) and len(distribuzione_mensile) == 12
+                and all(isinstance(v, (int, float)) and v > 0 for v in distribuzione_mensile)):
+            distribuzione_mensile = None
+
         return {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
+            "distribuzione_mensile": distribuzione_mensile,
         }
     except Exception:
         return None
+
+
+def _mesi_affidabili(oggi=None):
+    """
+    Restituisce gli indici (0=Gen...11=Dic) dei 3 mesi piu' affidabili rispetto
+    alla data di generazione del report: i dati AirROI riflettono le condizioni
+    di mercato *di adesso*, quindi i mesi immediatamente successivi al report
+    sono quelli in cui la stima e' piu' vicina alla realta' (oltre, e' proiezione
+    stagionale). Regola: se si genera entro il giorno 15 del mese, si parte dal
+    mese corrente; dopo il 15, si parte dal mese successivo (il mese in corso e'
+    ormai troppo avanzato per essere "il prossimo periodo prenotabile").
+    """
+    import datetime
+    oggi = oggi or datetime.date.today()
+    mese_partenza = (oggi.month - 1) if oggi.day <= 15 else oggi.month  # 0-based, con wrap sotto
+    return [(mese_partenza + i) % 12 for i in range(3)]
+
+
+def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale):
+    """
+    Sostituisce la colonna prezzo/notte della tabella 12 mesi con valori derivati
+    dalla stagionalita' reale di AirROI, mantenendo la media annua coerente con
+    l'ADR restituito da /calculator/estimate. Non tocca occupazione ne' stage:
+    quelli restano la lettura qualitativa dell'AI (alta/bassa stagione), coerente
+    con la descrizione testuale del report — qui cambiano solo i numeri di prezzo.
+
+    Approssimazione dichiarata: monthly_revenue_distributions mescola prezzo e
+    occupazione (ricavo = prezzo x notti prenotate), non e' un ADR mensile puro.
+    Usarlo per pesare il prezzo e' la lettura piu' onesta possibile senza un
+    endpoint di ADR mensile dedicato — va verificato contro l'API viva.
+    """
+    if not occ or not distribuzione_mensile or len(occ) != 12:
+        return occ
+    media = sum(distribuzione_mensile) / 12
+    if media <= 0:
+        return occ
+    nuova = []
+    for i, row in enumerate(occ):
+        peso = distribuzione_mensile[i] / media
+        prezzo_mese = max(1, round(adr_annuale * peso))
+        nuova.append([row[0], row[1], prezzo_mese] + list(row[3:]))
+    return nuova
 
 
 # ── Colori brand ──────────────────────────────────────────────────────────────
@@ -580,12 +633,15 @@ def page2(c, D):
     draw_section_subtitle(c, 14 * mm, y, "Andamento mensile stimato - prezzi e tassi di riempimento")
     y -= 6 * mm
     occ = D.get("occupazione", [])
+    mesi_affidabili_idx = set(D.get("mesi_affidabili_idx", []))
+    VERDE_AFFIDABILE = HexColor("#D4F1DE")
+    VERDE_DATO_REALE = HexColor("#2E9E4F")
     header_half = ["Mese", "Occup.", "EUR/notte", "Stage"]
     gap = 5 * mm
     half = (W - 28 * mm - gap) / 2
     col_w_half = [half * 0.20, half * 0.24, half * 0.32, half * 0.24]
 
-    def make_half_style(rows):
+    def make_half_style(rows, idx_offset):
         style = [
             ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7.5),
@@ -604,15 +660,23 @@ def page2(c, D):
             if row[3] in ("Peak", "Alta"):
                 style.append(("TEXTCOLOR", (1, ri + 1), (1, ri + 1), sc))
                 style.append(("FONTNAME", (1, ri + 1), (1, ri + 1), "Helvetica-Bold"))
+            if (ri + idx_offset) in mesi_affidabili_idx:
+                style.append(("BACKGROUND", (0, ri + 1), (2, ri + 1), VERDE_AFFIDABILE))
+                style.append(("BOX", (0, ri + 1), (2, ri + 1), 1.3, VERDE_DATO_REALE))
+                style.append(("FONTSIZE", (0, ri + 1), (2, ri + 1), 9))
+                style.append(("FONTNAME", (0, ri + 1), (2, ri + 1), "Helvetica-Bold"))
+                style.append(("TEXTCOLOR", (1, ri + 1), (1, ri + 1), BLUE_NIGHT))
+                style.append(("TOPPADDING", (0, ri + 1), (2, ri + 1), 5))
+                style.append(("BOTTOMPADDING", (0, ri + 1), (2, ri + 1), 5))
         return style
 
     data_sx = [[o[0], f"{o[1]}%", f"EUR {o[2]}", o[3]] for o in occ[:6]]
     data_dx = [[o[0], f"{o[1]}%", f"EUR {o[2]}", o[3]] for o in occ[6:]]
     tbl_sx = Table([header_half] + data_sx, colWidths=col_w_half)
-    tbl_sx.setStyle(TableStyle(make_half_style(data_sx)))
+    tbl_sx.setStyle(TableStyle(make_half_style(data_sx, 0)))
     tbl_sx.wrapOn(c, half, 300)
     tbl_dx = Table([header_half] + data_dx, colWidths=col_w_half)
-    tbl_dx.setStyle(TableStyle(make_half_style(data_dx)))
+    tbl_dx.setStyle(TableStyle(make_half_style(data_dx, 6)))
     tbl_dx.wrapOn(c, half, 300)
     tbl_h = max(tbl_sx._height, tbl_dx._height)
     tbl_sx.drawOn(c, 14 * mm, y - tbl_h)
@@ -628,7 +692,7 @@ def page2(c, D):
     c.setStrokeColor(BORDER)
     c.setLineWidth(0.3)
     c.rect(gx, gy, graph_w, graph_h, fill=0, stroke=1)
-    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD)]
+    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD), ("Dato reale attuale", HexColor("#2E9E4F"))]
     lx = gx + 3 * mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -670,28 +734,50 @@ def page2(c, D):
     for pt in points[1:]:
         p.lineTo(pt[0], pt[1])
     c.drawPath(p, stroke=1, fill=0)
-    for px_dot, py_dot, stage, rate in points:
+    for i, (px_dot, py_dot, stage, rate) in enumerate(points):
         col = stage_color(stage)
-        c.setFillColor(col)
+        affidabile = i in mesi_affidabili_idx
         r = 2.5 * mm if stage == "Peak" else 1.8 * mm
+        if affidabile:
+            r += 0.7 * mm  # punto leggermente ingrandito rispetto agli altri 9 mesi
+        c.setFillColor(col)
         c.circle(px_dot, py_dot, r, fill=1, stroke=0)
-        c.setFont("Helvetica-Bold", 6)
-        c.setFillColor(BLUE_NIGHT)
-        c.drawCentredString(px_dot, py_dot + 3 * mm, f"{rate}%")
+        if affidabile:
+            c.setStrokeColor(VERDE_DATO_REALE)
+            c.setLineWidth(1.2)
+            c.circle(px_dot, py_dot, r + 1 * mm, fill=0, stroke=1)
+            # Badge "sollevato": piccolo rettangolo arrotondato verde dietro l'etichetta,
+            # con un filo d'ombra sotto per dare l'effetto di rilievo (il PDF e' statico,
+            # non puo' pulsare davvero — questo simula visivamente lo stesso richiamo).
+            badge_w, badge_h = 8.5 * mm, 4.2 * mm
+            bx, by = px_dot - badge_w / 2, py_dot + 2.2 * mm
+            c.setFillColor(HexColor("#B9C7BE"))
+            c.roundRect(bx + 0.3 * mm, by - 0.3 * mm, badge_w, badge_h, 1.2 * mm, fill=1, stroke=0)
+            c.setFillColor(VERDE_DATO_REALE)
+            c.roundRect(bx, by, badge_w, badge_h, 1.2 * mm, fill=1, stroke=0)
+            c.setFont("Helvetica-Bold", 6.5)
+            c.setFillColor(WHITE)
+            c.drawCentredString(px_dot, by + 1.3 * mm, f"{rate}%")
+        else:
+            c.setFont("Helvetica-Bold", 6)
+            c.setFillColor(BLUE_NIGHT)
+            c.drawCentredString(px_dot, py_dot + 3 * mm, f"{rate}%")
     # Label mese e EUR sotto la linea del grafico — sempre fuori dalla zona pallini
     for i, row in enumerate(occ):
         px_dot = gx + side_margin + i * step
-        c.setFont("Helvetica", 6)
-        c.setFillColor(BLUE_NIGHT)
+        affidabile = i in mesi_affidabili_idx
+        c.setFont("Helvetica-Bold" if affidabile else "Helvetica", 7 if affidabile else 6)
+        c.setFillColor(VERDE_DATO_REALE if affidabile else BLUE_NIGHT)
         c.drawCentredString(px_dot, gy + 8 * mm, row[0])
-        c.setFont("Helvetica", 5.5)
-        c.setFillColor(MUTED)
+        c.setFont("Helvetica-Bold" if affidabile else "Helvetica", 6 if affidabile else 5.5)
+        c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
         c.drawCentredString(px_dot, gy + 4 * mm, f"EUR {row[2]}")
 
     # Disclaimer prezzi sotto grafico
     disclaimer_prezzi = (
-        "I valori indicati rappresentano medie su base annua. In comuni ad alto impatto turistico i prezzi "
-        "reali in alta stagione possono essere superiori del 5-10% rispetto alle stime qui riportate."
+        "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
+        "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
+        "(tipicamente al rialzo) avvicinandosi al periodo di riferimento."
     )
     c.setFont("Helvetica-Oblique", 6)
     c.setFillColor(MUTED)
@@ -1883,12 +1969,25 @@ def generate_pdf_direct():
                        "kpi_prezzo", "kpi_potenziale", "affitto_ricavo"]:
                 if data.get(_k):
                     data[_k] = round(data[_k] * _ratio)
-            # Propaga su tabella occupazione (colonna prezzi EUR/notte, indice 2)
+            # Tabella 12 mesi: se AirROI ha restituito la distribuzione mensile reale,
+            # la usiamo per la colonna prezzo (stagionalita' vera, non scalata dall'AI).
+            # Altrimenti resta lo scaling proporzionale per rapporto come prima.
             if "occupazione" in data:
-                data["occupazione"] = [
-                    [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
-                    for row in data["occupazione"]
-                ]
+                if _airroi and _airroi.get("distribuzione_mensile"):
+                    data["occupazione"] = _applica_stagionalita_airroi(
+                        data["occupazione"], _airroi["distribuzione_mensile"], _p_new
+                    )
+                else:
+                    data["occupazione"] = [
+                        [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
+                        for row in data["occupazione"]
+                    ]
+
+        # I 3 mesi piu' affidabili rispetto alla data di generazione (Sessione 46,
+        # seconda parte) — evidenziati nel PDF a prescindere dal fatto che AirROI
+        # abbia trovato un mercato: se non l'ha trovato, indicano comunque a quali
+        # mesi la stima AI e' temporalmente piu' vicina.
+        data["mesi_affidabili_idx"] = _mesi_affidabili()
 
         # Descrizione standard per categoria: sovrascrive sempre quella dell'AI
         # (Sessione 41 — vedi RU_09_Descrizioni_Standard.docx)
