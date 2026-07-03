@@ -58,11 +58,13 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
     fare fallback silenzioso sul metodo AI esistente.
     """
     if not AIRROI_API_KEY or lat in (None, "") or lon in (None, ""):
+        print(f"[AIRROI] skip — chiave assente o coordinate mancanti (lat={lat!r}, lon={lon!r})")
         return None
     headers = {"X-API-KEY": AIRROI_API_KEY}
     try:
         lat_f, lon_f = float(lat), float(lon)
     except (TypeError, ValueError):
+        print(f"[AIRROI] skip — coordinate non convertibili in float (lat={lat!r}, lon={lon!r})")
         return None
 
     try:
@@ -71,10 +73,12 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
             params={"lat": lat_f, "lng": lon_f},
             headers=headers, timeout=timeout_lookup,
         )
+        print(f"[AIRROI] lookup lat={lat_f} lon={lon_f} -> status={r1.status_code} body={r1.text[:300]}")
         if r1.status_code != 200:
             return None
         mercato = r1.json()
         if not mercato or not mercato.get("market_id"):
+            print(f"[AIRROI] nessun market_id nella risposta: {mercato}")
             return None
 
         bedrooms = _numero_da_stringa(camere_raw, default=1)
@@ -89,12 +93,14 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
             },
             headers=headers, timeout=timeout_stima,
         )
+        print(f"[AIRROI] estimate market_id={mercato.get('market_id')} -> status={r2.status_code} body={r2.text[:300]}")
         if r2.status_code != 200:
             return None
         stima = r2.json()
         adr = stima.get("average_daily_rate")
         occ = stima.get("occupancy")
         if not adr or occ is None:
+            print(f"[AIRROI] adr/occupancy mancanti nella risposta: {stima}")
             return None
 
         # La risposta include già, senza costo aggiuntivo, la distribuzione mensile
@@ -107,12 +113,14 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
                 and all(isinstance(v, (int, float)) and v > 0 for v in distribuzione_mensile)):
             distribuzione_mensile = None
 
+        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'}")
         return {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
             "distribuzione_mensile": distribuzione_mensile,
         }
-    except Exception:
+    except Exception as e:
+        print(f"[AIRROI] eccezione: {e}")
         return None
 
 
@@ -1945,6 +1953,8 @@ def generate_pdf_direct():
         _cat = data.get("categoria", "comune_minore")
         _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
         _p = data.get("prezzo_notte_stimato", 0)
+
+        print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
 
         _airroi = _airroi_lookup_e_stima(
             data.get("lat"), data.get("long"),
