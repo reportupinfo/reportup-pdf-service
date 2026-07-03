@@ -17,6 +17,7 @@ from reportlab.lib.colors import HexColor
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 
 import comuni_lookup
 import territorio_gps
@@ -77,8 +78,15 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
         if r1.status_code != 200:
             return None
         mercato = r1.json()
-        if not mercato or not mercato.get("market_id"):
-            print(f"[AIRROI] nessun market_id nella risposta: {mercato}")
+        # Bug trovato il 3 luglio (test Cortina): la risposta reale di /markets/lookup
+        # non contiene MAI una chiave "market_id" — conteneva solo full_name/country/
+        # region/locality/district. Il vecchio controllo su "market_id" era sempre
+        # falso, quindi ci si fermava qui su OGNI indirizzo, sempre e comunque prima
+        # di spendere i 0.20$ della stima. Il market_id non serve nemmeno alla
+        # chiamata successiva (/calculator/estimate usa lat/lon diretti). Nuovo
+        # criterio: procedi se il lookup ha risolto una localita' reale.
+        if not mercato or not (mercato.get("locality") or mercato.get("region") or mercato.get("country")):
+            print(f"[AIRROI] lookup non ha risolto nessuna localita': {mercato}")
             return None
 
         bedrooms = _numero_da_stringa(camere_raw, default=1)
@@ -93,7 +101,7 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
             },
             headers=headers, timeout=timeout_stima,
         )
-        print(f"[AIRROI] estimate market_id={mercato.get('market_id')} -> status={r2.status_code} body={r2.text[:300]}")
+        print(f"[AIRROI] estimate locality={mercato.get('locality')} district={mercato.get('district')} -> status={r2.status_code} body={r2.text[:300]}")
         if r2.status_code != 200:
             return None
         stima = r2.json()
@@ -781,15 +789,22 @@ def page2(c, D):
         c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
         c.drawCentredString(px_dot, gy + 4 * mm, f"EUR {row[2]}")
 
-    # Disclaimer prezzi sotto grafico
+    # Disclaimer prezzi sotto grafico — con a-capo automatico (bug: prima usciva
+    # dai bordi pagina su una sola riga con drawCentredString, senza vincolo di
+    # larghezza). Ora è un Paragraph centrato, wrappato entro la larghezza utile.
     disclaimer_prezzi = (
         "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
         "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
         "(tipicamente al rialzo) avvicinandosi al periodo di riferimento."
     )
-    c.setFont("Helvetica-Oblique", 6)
-    c.setFillColor(MUTED)
-    c.drawCentredString(W / 2, gy - 4 * mm, disclaimer_prezzi)
+    style_disclaimer = ParagraphStyle(
+        "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
+        textColor=MUTED, leading=7.5, alignment=TA_CENTER,
+    )
+    larghezza_utile = W - 28 * mm
+    p_disclaimer = Paragraph(disclaimer_prezzi, style_disclaimer)
+    _, h_disclaimer = p_disclaimer.wrap(larghezza_utile, 20 * mm)
+    p_disclaimer.drawOn(c, 14 * mm, gy - 4 * mm - h_disclaimer)
 
 
 def page3(c, D):
@@ -1938,9 +1953,20 @@ def generate_pdf_direct():
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             # Capitalizza ogni parola
             data["indirizzo"] = addr.title()
-            # Fix deterministico sigla provincia: forza maiuscolo la sigla tra parentesi
-            # es. "(Bs)" → "(BS)" — l'AI non rispetta il vincolo nel prompt (bug storico S38)
-            data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+            # Fix deterministico sigla provincia: sostituisce SEMPRE la sigla tra
+            # parentesi con quella vera da comuni_lookup.py, non solo maiuscolizza
+            # quella scritta dall'AI. Bug scoperto su Cortina d'Ampezzo: l'AI aveva
+            # scritto "(BZ)" invece di "(BL)" — la vecchia versione del fix (solo
+            # uppercase, Sessione 44) non lo intercettava perché "BZ" è già
+            # maiuscolo, semplicemente sbagliato nelle lettere.
+            if _record_comune and _record_comune.get("sigla_provincia"):
+                _sigla_corretta = _record_comune["sigla_provincia"].upper()
+                if _re.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
+                    data["indirizzo"] = _re.sub(r'\([A-Za-z]{2}\)', f"({_sigla_corretta})", data["indirizzo"])
+                else:
+                    data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
+            else:
+                data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         # Prezzo/notte — doppio binario (Sessione 46)
         # 1) Se esiste un mercato reale AirROI su queste coordinate: si usa quel dato
@@ -2099,8 +2125,16 @@ def generate_strategico():
             addr = _re2.sub(r',\s*,', ',', addr)
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             data["indirizzo"] = addr.title()
-            # Fix deterministico sigla provincia (stesso fix di generate_pdf_direct)
-            data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+            # Fix deterministico sigla provincia (stesso fix di generate_pdf_direct,
+            # ora sostituisce col dato vero, non solo maiuscolizza — vedi Base)
+            if _record_comune and _record_comune.get("sigla_provincia"):
+                _sigla_corretta = _record_comune["sigla_provincia"].upper()
+                if _re2.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
+                    data["indirizzo"] = _re2.sub(r'\([A-Za-z]{2}\)', f"({_sigla_corretta})", data["indirizzo"])
+                else:
+                    data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
+            else:
+                data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
