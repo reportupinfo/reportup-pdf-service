@@ -46,7 +46,7 @@ def _numero_da_stringa(valore, default=1):
         return default
 
 
-def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, timeout_lookup=4, timeout_stima=6):
+def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagni_raw=None, timeout_lookup=4, timeout_stima=6):
     """
     Due chiamate in sequenza:
     1) /markets/lookup ($0.01) — verifica se esiste un mercato reale su queste coordinate.
@@ -91,12 +91,13 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, time
 
         bedrooms = _numero_da_stringa(camere_raw, default=1)
         guests = _numero_da_stringa(posti_letto_raw, default=2)
+        baths = _numero_da_stringa(bagni_raw, default=1)
 
         r2 = requests.get(
             f"{AIRROI_BASE}/calculator/estimate",
             params={
                 "lat": lat_f, "lng": lon_f,
-                "bedrooms": bedrooms, "guests": guests,
+                "bedrooms": bedrooms, "baths": baths, "guests": guests,
                 "currency": "eur",
             },
             headers=headers, timeout=timeout_stima,
@@ -1985,6 +1986,7 @@ def generate_pdf_direct():
         _airroi = _airroi_lookup_e_stima(
             data.get("lat"), data.get("long"),
             camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
+            bagni_raw=data.get("bagni"),
         )
 
         if _airroi:
