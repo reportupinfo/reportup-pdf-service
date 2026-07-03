@@ -1704,6 +1704,8 @@ def genera_descrizione_standard(data):
                      f"punto di riferimento per servizi e collegamenti più ampi. ")
         if trasporto_frase:
             desc += f"{trasporto_frase} "
+        if elemento_frase:
+            desc += f"{elemento_frase} "
         if servizi_frase:
             desc += f"{servizi_frase.rstrip('.')} nelle vicinanze per le esigenze quotidiane. "
 
