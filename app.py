@@ -1983,6 +1983,8 @@ def generate_pdf_direct():
 
         print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
 
+        _occ_old = data.get("occupazione_percent", 0)
+
         _airroi = _airroi_lookup_e_stima(
             data.get("lat"), data.get("long"),
             camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
@@ -1991,22 +1993,65 @@ def generate_pdf_direct():
 
         if _airroi:
             _p_new = _airroi["prezzo_notte_stimato"]
-            data["occupazione_percent"] = _airroi["occupazione_percent"]
+            _occ_new = _airroi["occupazione_percent"]
             data["fonte_prezzo"] = "airroi"
         else:
             _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
             _p_new = round(_p * _moltiplicatore) if _p else _p
+            _occ_new = _occ_old
             data["fonte_prezzo"] = "ai_stima"
 
         if _p:
-            _ratio = _p_new / _p if _p else 1
             data["prezzo_notte_stimato"] = _p_new
-            # Propaga il nuovo prezzo su tutti i valori economici derivati
-            for _k in ["ricavo_lordo", "totale_ricavi", "bonus_dirette",
-                       "costi_commissioni", "costi_pulizie", "profitto_netto",
-                       "kpi_prezzo", "kpi_potenziale", "affitto_ricavo"]:
-                if data.get(_k):
-                    data[_k] = round(data[_k] * _ratio)
+            data["occupazione_percent"] = _occ_new
+
+            # Ricalcolo completo della cascata economica, non piu' un semplice
+            # rapporto sul prezzo: quando cambia anche l'occupazione (caso AirROI,
+            # Sessione del 3 luglio: bug scoperto su Cortina, "50% occ. x 365gg"
+            # ma "223 notti" nello stesso PDF — numeri incoerenti perche' notti_anno
+            # e kpi_occupazione non venivano mai risincronizzati). Ora tutto deriva
+            # dalle stesse formule mostrate in tabella, sempre coerenti tra loro.
+            _notti_new = round(_occ_new / 100 * 365) if _occ_new else 0
+            data["notti_anno"] = _notti_new
+            data["kpi_occupazione"] = _occ_new
+
+            _ricavo_lordo_new = round(_p_new * _notti_new)
+            _ricavo_lordo_old = data.get("ricavo_lordo", 0)
+            # Il bonus prenotazioni dirette mantiene la stessa % che aveva scelto
+            # l'AI dentro il proprio range dichiarato (es. "5-10%"): non lo
+            # riscopriamo, lo scaliamo in proporzione al nuovo ricavo lordo.
+            _bonus_old = data.get("bonus_dirette", 0)
+            _bonus_new = round(_bonus_old * (_ricavo_lordo_new / _ricavo_lordo_old)) if _ricavo_lordo_old else _bonus_old
+            _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
+
+            _comm_pct = data.get("costi_commissioni_pct", 15)
+            _pulizia_unit = data.get("costi_pulizie_unit", 35)
+            _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
+            _costi_pulizie_new = round(_pulizia_unit * _notti_new)
+            # Costi fissi (biancheria, utenze, manutenzione, mutuo): indipendenti
+            # da prezzo/occupazione, restano quelli originali dell'AI, invariati.
+            _costi_biancheria = data.get("costi_biancheria", 0)
+            _costi_utenze = data.get("costi_utenze", 0)
+            _costi_manutenzione = data.get("costi_manutenzione", 0)
+            _mutuo_annuo = data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0
+
+            _totale_costi_new = (_costi_commissioni_new + _costi_pulizie_new
+                                  + _costi_biancheria + _costi_utenze
+                                  + _costi_manutenzione + _mutuo_annuo)
+            _profitto_netto_new = _totale_ricavi_new - _totale_costi_new
+
+            data["ricavo_lordo"] = _ricavo_lordo_new
+            data["bonus_dirette"] = _bonus_new
+            data["totale_ricavi"] = _totale_ricavi_new
+            data["costi_commissioni"] = _costi_commissioni_new
+            data["costi_pulizie"] = _costi_pulizie_new
+            data["totale_costi"] = _totale_costi_new
+            data["profitto_netto"] = _profitto_netto_new
+            data["margine_percent"] = round(_profitto_netto_new / _totale_ricavi_new * 100) if _totale_ricavi_new else 0
+            data["kpi_prezzo"] = _p_new
+            data["kpi_potenziale"] = _ricavo_lordo_new
+
+            _ratio = _p_new / _p if _p else 1
             # Tabella 12 mesi: se AirROI ha restituito la distribuzione mensile reale,
             # la usiamo per la colonna prezzo (stagionalita' vera, non scalata dall'AI).
             # Altrimenti resta lo scaling proporzionale per rapporto come prima.
