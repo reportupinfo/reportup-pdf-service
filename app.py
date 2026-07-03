@@ -98,7 +98,7 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
             params={
                 "lat": lat_f, "lng": lon_f,
                 "bedrooms": bedrooms, "baths": baths, "guests": guests,
-                "currency": "eur",
+                "currency": "native",
             },
             headers=headers, timeout=timeout_stima,
         )
