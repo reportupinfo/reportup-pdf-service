@@ -1589,6 +1589,29 @@ def _target_da_posti_letto(posti_letto):
     return "famiglie numerose e gruppi di amici"
 
 
+def _pulisci_distanza_per_frase(distanza):
+    """
+    Ripulisce il testo 'distanza' prima di infilarlo in una frase che gia'
+    inizia con 'a'/'A ' (es. 'X si trova a {distanza}'). L'AI a volte scrive
+    la distanza con una propria 'A' iniziale e ordine invertito ('A piedi 5
+    min' invece di '5 min a piedi'), generando frasi rotte tipo 'si trova a A
+    piedi 5 min'. Qui si toglie la 'A' iniziale duplicata e, quando possibile,
+    si riordina in una forma naturale ('X min a piedi', 'X km in auto').
+    """
+    if not distanza or distanza in ("\u2014", "-"):
+        return distanza
+    t = str(distanza).strip()
+    if t[:2].lower() == "a ":
+        t = t[2:].strip()
+    m = re.match(r'^piedi\s+(.+)$', t, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} a piedi"
+    m = re.match(r'^auto\s+(.+)$', t, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} in auto"
+    return t
+
+
 def _poi_riga_frase(poi, idx):
     """Frase pronta dalla riga POI all'indice idx, o stringa vuota se assente."""
     try:
@@ -1597,7 +1620,7 @@ def _poi_riga_frase(poi, idx):
         return ""
     if nome in ("\u2014", "", None):
         return ""
-    return f"{nome} si trova a {distanza}."
+    return f"{nome} si trova a {_pulisci_distanza_per_frase(distanza)}."
 
 
 def genera_descrizione_standard(data):
@@ -1677,7 +1700,7 @@ def genera_descrizione_standard(data):
             desc += f"{elemento_frase} "
     else:
         if comune_rif_nome:
-            desc += (f"A {comune_rif_distanza} si trova {comune_rif_nome}, "
+            desc += (f"A {_pulisci_distanza_per_frase(comune_rif_distanza)} si trova {comune_rif_nome}, "
                      f"punto di riferimento per servizi e collegamenti più ampi. ")
         if trasporto_frase:
             desc += f"{trasporto_frase} "
