@@ -823,6 +823,10 @@ def page3(c, D):
     notti = D.get("notti_anno", 0)
     comm_pct = D.get("costi_commissioni_pct", 15)
     pulizia_unit = D.get("costi_pulizie_unit", 35)
+    _tipologia_costi = D.get("tipologia", "immobile")
+    _mq_costi = D.get("_costi_mq_usati", 0)
+    _mq_costi_nota = "stimati per tipologia" if D.get("_costi_mq_e_stimata") else f"{_mq_costi} m\u00b2 dichiarati"
+    _nota_costi_variabili = f"Voci calcolate su: {_tipologia_costi} ({_mq_costi_nota})"
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
     mutuo_annuo = rata_mutuo * 12
 
@@ -869,7 +873,7 @@ def page3(c, D):
         ["TOTALE RICAVI",
          f"EUR {D.get('ricavo_lordo',0):,} + EUR {D.get('bonus_dirette',0):,} = EUR {D.get('totale_ricavi',0):,}".replace(",", "."),
          fmt_eur(D.get("totale_ricavi", 0))],
-        ["COSTI VARIABILI", "", ""],
+        ["COSTI VARIABILI", _nota_costi_variabili, ""],
         ["Commissioni piattaforma Airbnb",
          f"EUR {D.get('ricavo_lordo',0):,} x {comm_pct}% = EUR {D.get('costi_commissioni',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_commissioni', 0))}"],
@@ -877,13 +881,13 @@ def page3(c, D):
          f"EUR {pulizia_unit}/cambio x {notti} notti = EUR {D.get('costi_pulizie',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         f"Range EUR 300-700/anno | conv. adottata: EUR {D.get('costi_biancheria',0):,}".replace(",", "."),
+         f"Range EUR {_range_attorno_al_valore(D.get('costi_biancheria',0))}/anno | conv. adottata: EUR {D.get('costi_biancheria',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_biancheria', 0))}"],
         ["Utenze aggiuntive stimate",
-         f"Range EUR 500-1.000/anno | conv. adottata: EUR {D.get('costi_utenze',0):,}".replace(",", "."),
+         f"Range EUR {_range_attorno_al_valore(D.get('costi_utenze',0))}/anno | conv. adottata: EUR {D.get('costi_utenze',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         f"Range EUR 200-600/anno | conv. adottata: EUR {D.get('costi_manutenzione',0):,}".replace(",", "."),
+         f"Range EUR {_range_attorno_al_valore(D.get('costi_manutenzione',0))}/anno | conv. adottata: EUR {D.get('costi_manutenzione',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_manutenzione', 0))}"],
         ["Rata mutuo (se presente)",
          "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"EUR {rata_mutuo}/mese x 12 = EUR {mutuo_annuo:,}".replace(",", "."),
@@ -1612,6 +1616,77 @@ def _pulisci_distanza_per_frase(distanza):
     return t
 
 
+_MQ_DEFAULT_PER_TIPOLOGIA = [
+    # (frammento da cercare nella tipologia, mq tipico) — ordine dal piu' specifico
+    ("villa", 200), ("casa indipendente", 200),
+    ("appartamento", 110), ("4+", 110), ("grande", 110),
+    ("trilocale", 75),
+    ("bilocale", 55),
+    ("doppia", 20),
+    ("singola", 15), ("stanza", 15),
+]
+
+
+def _mq_da_tipologia(tipologia):
+    """Superficie tipica di riferimento quando l'utente non inserisce i m²
+    (campo opzionale nel form). Basata sulla tipologia, che invece e' sempre
+    obbligatoria — quindi un dato che abbiamo sempre, a differenza dei m²."""
+    t = str(tipologia or "").strip().lower()
+    for frammento, mq in _MQ_DEFAULT_PER_TIPOLOGIA:
+        if frammento in t:
+            return mq
+    return 50  # fallback finale se la tipologia non e' riconoscibile
+
+
+def _calcola_costi_fissi_deterministici(data):
+    """
+    Biancheria, utenze e manutenzione — scoperto il 3 luglio (Sessione con
+    Salvatore): erano generati liberamente dall'AI dentro un range fisso
+    identico per qualsiasi immobile (es. manutenzione 200-600€/anno anche per
+    una villa con piscina da 250mq), quindi non scalavano con la dimensione
+    reale della proprietà. Ora calcolati deterministicamente da superficie,
+    posti letto e dotazioni dichiarate — mai dall'AI, stesso principio già
+    usato per categoria/prezzo/descrizione. Necessario anche in vista
+    dell'Europa: non potremo calibrare a mano ogni mercato/paese.
+    """
+    mq_dichiarata = _numero_da_stringa(data.get("superficie"), default=0)
+    mq = mq_dichiarata if mq_dichiarata > 0 else _mq_da_tipologia(data.get("tipologia"))
+    posti = _numero_da_stringa(data.get("posti_letto"), default=2)
+    dotazioni = set(data.get("dotazioni_presenti") or [])
+    ha_piscina = "Piscina" in dotazioni
+    ha_giardino = "Giardino" in dotazioni
+
+    data["costi_biancheria"] = round(max(300, posti * 60))
+    data["costi_utenze"] = round(max(500, mq * 4))
+    data["costi_manutenzione"] = round(
+        max(200, mq * 2) + (400 if ha_piscina else 0) + (150 if ha_giardino else 0)
+    )
+    # Per trasparenza in tabella (pagina 3): su cosa sono calibrati questi costi.
+    data["_costi_mq_usati"] = mq
+    data["_costi_mq_e_stimata"] = mq_dichiarata <= 0
+
+
+def _range_attorno_al_valore(valore, pct=0.3, arrotonda=50):
+    """
+    Genera un range EUR intorno al valore realmente adottato, arrotondato a
+    multipli di `arrotonda` per leggibilita'. A differenza di un range fisso
+    scritto a mano (bug scoperto il 3 luglio: "Range EUR 500-1.000/anno" ma
+    valore adottato 1.200, fuori range, contraddizione visibile nel PDF), il
+    valore adottato e' matematicamente SEMPRE dentro questo range, qualunque
+    sia la dimensione dell'immobile — necessario anche in vista dell'Europa,
+    dove non potremo verificare a occhio ogni singolo range per ogni paese.
+    """
+    try:
+        v = float(valore)
+    except (TypeError, ValueError):
+        return "0-0"
+    basso = max(0, int((v * (1 - pct)) // arrotonda * arrotonda))
+    alto = int(-(-int(v * (1 + pct)) // arrotonda) * arrotonda)  # arrotonda per eccesso
+    if alto <= basso:
+        alto = basso + arrotonda
+    return f"{basso:,}-{alto:,}".replace(",", ".")
+
+
 def _poi_riga_frase(poi, idx):
     """Frase pronta dalla riga POI all'indice idx, o stringa vuota se assente."""
     try:
@@ -1994,6 +2069,11 @@ def generate_pdf_direct():
             else:
                 data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
+        # Costi fissi (biancheria/utenze/manutenzione) — deterministici da
+        # superficie/posti letto/dotazioni, non piu' generati dall'AI (vedi
+        # commento della funzione per il bug che ha portato a questo fix).
+        _calcola_costi_fissi_deterministici(data)
+
         # Prezzo/notte — doppio binario (Sessione 46)
         # 1) Se esiste un mercato reale AirROI su queste coordinate: si usa quel dato
         #    osservato (prezzo/notte + occupazione reali), non la stima dell'AI.
@@ -2207,6 +2287,9 @@ def generate_strategico():
                     data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
             else:
                 data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+
+        # Costi fissi deterministici (stesso fix del Base)
+        _calcola_costi_fissi_deterministici(data)
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
