@@ -818,6 +818,14 @@ def page3(c, D):
     draw_section_subtitle(c, 14 * mm, y, "Proiezione costi e ricavi basata sulla situazione dichiarata")
     y -= 6 * mm
 
+    style_media_mercato = ParagraphStyle(
+        "mediaMercato", fontName="Helvetica", fontSize=7.5, textColor=BLUE_NIGHT, leading=9,
+    )
+
+    def _cella_media_mercato(valore_annuo, extra=""):
+        nota = f' <font size="6" color="#7A8A96">(media di mercato per la tipologia{extra})</font>'
+        return Paragraph(f"EUR {valore_annuo:,}/anno{nota}".replace(",", "."), style_media_mercato)
+
     p = D.get("prezzo_notte_stimato", 0)
     occ_pct = D.get("occupazione_percent", 0)
     notti = D.get("notti_anno", 0)
@@ -879,17 +887,17 @@ def page3(c, D):
          f"EUR {pulizia_unit}/cambio x {notti} notti = EUR {D.get('costi_pulizie',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         "Media di mercato per la tipologia dichiarata",
+         _cella_media_mercato(D.get('costi_biancheria', 0)),
          f"- {fmt_eur(D.get('costi_biancheria', 0))}"],
         ["Utenze aggiuntive stimate",
-         "Media di mercato per la tipologia dichiarata",
+         _cella_media_mercato(D.get('costi_utenze', 0)),
          f"- {fmt_eur(D.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         "Media di mercato per la tipologia" + (
-             " (include piscina e giardino)" if D.get("_costi_ha_piscina") and D.get("_costi_ha_giardino")
-             else " (include piscina)" if D.get("_costi_ha_piscina")
-             else " (include giardino)" if D.get("_costi_ha_giardino")
-             else ""),
+         _cella_media_mercato(D.get('costi_manutenzione', 0), extra=(
+             ", include piscina e giardino" if D.get("_costi_ha_piscina") and D.get("_costi_ha_giardino")
+             else ", include piscina" if D.get("_costi_ha_piscina")
+             else ", include giardino" if D.get("_costi_ha_giardino")
+             else "")),
          f"- {fmt_eur(D.get('costi_manutenzione', 0))}"],
         ["Rata mutuo (se presente)",
          "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"EUR {rata_mutuo}/mese x 12 = EUR {mutuo_annuo:,}".replace(",", "."),
@@ -1678,7 +1686,10 @@ def _poi_riga_frase(poi, idx):
         return ""
     if nome in ("\u2014", "", None):
         return ""
-    return f"{nome} si trova a {_pulisci_distanza_per_frase(distanza)}."
+    distanza_pulita = _pulisci_distanza_per_frase(distanza)
+    if str(distanza_pulita).strip().lower().startswith("in loco"):
+        return f"{nome} si trova in loco."
+    return f"{nome} si trova a {distanza_pulita}."
 
 
 def genera_descrizione_standard(data):
@@ -1758,8 +1769,12 @@ def genera_descrizione_standard(data):
             desc += f"{elemento_frase} "
     else:
         if comune_rif_nome:
-            desc += (f"A {_pulisci_distanza_per_frase(comune_rif_distanza)} si trova {comune_rif_nome}, "
-                     f"punto di riferimento per servizi e collegamenti più ampi. ")
+            _dist_comune_rif = _pulisci_distanza_per_frase(comune_rif_distanza)
+            if str(_dist_comune_rif).strip().lower().startswith("in loco"):
+                desc += f"{comune_rif_nome} è in loco, punto di riferimento per servizi e collegamenti più ampi. "
+            else:
+                desc += (f"A {_dist_comune_rif} si trova {comune_rif_nome}, "
+                         f"punto di riferimento per servizi e collegamenti più ampi. ")
         if trasporto_frase:
             desc += f"{trasporto_frase} "
         if elemento_frase:
