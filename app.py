@@ -2145,6 +2145,203 @@ def categoria_comune():
     })
 
 
+# ── QUICK REPORT — dati reali, senza AI (Sessione 50) ────────────────────────
+# Sostituisce la vecchia logica del Quick (100% inventata da Claude via
+# Netlify Function ai-proxy.js) con una pipeline deterministica: geocode
+# reale, categoria comune da database, prezzo/occupazione da AirROI dove
+# esiste un mercato osservato, fallback su una tabella fissa (mai su un
+# numero inventato da un modello linguistico) dove il mercato non c'e'.
+# Distanze POI reali (aeroporto via Distance Matrix, centro comune via
+# coordinate note in comuni.csv, zero costo). Nessuna chiamata ad Anthropic
+# in questo endpoint: il Quick non "immagina" piu' nulla.
+
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+# Prezzo/notte di riferimento quando AirROI non ha un mercato osservato sulle
+# coordinate (comuni piccoli, zero annunci attivi). Valori di partenza
+# ragionevoli ma ARBITRARI — Salvatore li puo' correggere qui in qualsiasi
+# momento sulla base della sua esperienza; sono comunque sempre etichettati
+# nella risposta come fonte_prezzo="stima_deterministica", mai spacciati per
+# dato di mercato osservato.
+PREZZO_BASE_CATEGORIA = {
+    "capoluogo": 75,
+    "grande_citta": 65,
+    "comune_minore": 45,
+}
+OCCUPAZIONE_BASE_FALLBACK = 50  # percento, stima prudenziale quando manca AirROI
+
+MOLTIPLICATORE_SOTTOCATEGORIA = {
+    "costiero": 1.30,
+    "lacuale": 1.20,
+    "montano": 1.15,
+}
+
+# Media nazionale di riferimento per categoria comune, usata solo per il
+# posizionamento mostrato nel Quick ("sei sopra/sotto la media"). Valore di
+# configurazione fisso, non generato ad ogni richiesta: va aggiornato a mano
+# se e quando Salvatore ottiene un dato di mercato nazionale più solido.
+MEDIA_NAZIONALE_CATEGORIA = {
+    "capoluogo": 95,
+    "grande_citta": 78,
+    "comune_minore": 58,
+}
+
+
+def _moltiplicatore_capacita(posti_letto_raw):
+    """Aggiustamento prezzo in funzione dei posti letto dichiarati, rispetto
+    a una base di riferimento di 2 posti letto (bilocale/monolocale tipico)."""
+    posti = _numero_da_stringa(posti_letto_raw, default=2)
+    extra = max(0, posti - 2)
+    return round(1.0 + extra * 0.13, 3)
+
+
+def _geocode_indirizzo(indirizzo, timeout=5):
+    """
+    Geocodifica reale via Google Geocoding API (stessa GOOGLE_MAPS_API_KEY già
+    in uso per elevazione/distance matrix). Ritorna dict con lat, lon,
+    formatted_address, comune, provincia, cap — oppure None se l'indirizzo
+    non risolve o la chiave manca. Nessun fallback "inventato": se il geocode
+    fallisce, il Quick deve dirlo chiaramente all'utente, non stimare a caso.
+    """
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key or not indirizzo:
+        return None
+    try:
+        resp = requests.get(
+            GOOGLE_GEOCODE_URL,
+            params={"address": f"{indirizzo}, Italia", "region": "it",
+                    "language": "it", "key": api_key},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return None
+        dati = resp.json()
+        if dati.get("status") != "OK" or not dati.get("results"):
+            print(f"[QUICK] geocode status non OK: {dati.get('status')}")
+            return None
+        risultato = dati["results"][0]
+        loc = risultato["geometry"]["location"]
+
+        comune, provincia, cap = None, None, None
+        for comp in risultato.get("address_components", []):
+            tipi = comp.get("types", [])
+            if "administrative_area_level_3" in tipi or "locality" in tipi:
+                comune = comune or comp.get("long_name")
+            if "administrative_area_level_2" in tipi:
+                provincia = comp.get("short_name") or comp.get("long_name")
+            if "postal_code" in tipi:
+                cap = comp.get("long_name")
+
+        return {
+            "lat": loc["lat"], "lon": loc["lng"],
+            "formatted_address": risultato.get("formatted_address"),
+            "comune": comune, "provincia": provincia, "cap": cap,
+        }
+    except Exception as e:
+        print(f"[QUICK] geocode eccezione: {e}")
+        return None
+
+
+@app.route("/quick-estimate", methods=["POST", "OPTIONS"])
+def quick_estimate():
+    """
+    Endpoint del Quick Report — Sessione 50. Chiamato DIRETTAMENTE dal
+    browser (reportup.it), senza passare da Make.com né da Anthropic: il
+    Quick non è mai stato negli scenari Make ed è pensato per restare così
+    (risposta immediata a video, zero attesa). Nessuna chiave segreta è
+    coinvolta qui (solo AIRROI_API_KEY e GOOGLE_MAPS_API_KEY, entrambe lato
+    server), quindi questo endpoint può avere CORS aperto — a differenza
+    degli endpoint /generate-pdf*, che restano riservati a Make.com.
+
+    Input JSON atteso:
+      { "indirizzo": "Via Roma 1, Milano",
+        "tipologia": "Bilocale", "camere": "2", "posti_letto": "4", "bagni": "1" }
+
+    Output: dati reali (AirROI dove disponibile) o stima dichiarata come
+    tale in fonte_prezzo — mai un numero generato da un modello linguistico.
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    def _risposta(payload, status=200):
+        resp = jsonify(payload)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, status
+
+    body = request.get_json(force=True, silent=True) or {}
+    indirizzo = (body.get("indirizzo") or "").strip()
+    if not indirizzo:
+        return _risposta({"error": "indirizzo_mancante"}, 400)
+
+    geo = _geocode_indirizzo(indirizzo)
+    if not geo:
+        return _risposta({
+            "error": "indirizzo_non_trovato",
+            "message": "Non riusciamo a localizzare questo indirizzo. Controlla via, città e CAP."
+        }, 422)
+
+    lat, lon = geo["lat"], geo["lon"]
+    record_comune = comuni_lookup.trova_comune(geo.get("comune") or "", geo.get("provincia"))
+    categoria = record_comune["categoria"] if record_comune else "comune_minore"
+    sottocategoria = territorio_gps.classifica_sottocategoria(lat, lon)
+
+    # ── Prezzo e occupazione: AirROI prima, fallback deterministico dopo ──
+    airroi = _airroi_lookup_e_stima(
+        lat, lon,
+        camere_raw=body.get("camere"),
+        posti_letto_raw=body.get("posti_letto"),
+        bagni_raw=body.get("bagni"),
+    )
+
+    if airroi:
+        prezzo_notte = airroi["prezzo_notte_stimato"]
+        occupazione_percent = airroi["occupazione_percent"]
+        fonte_prezzo = "airroi"
+        n_comparabili = len(airroi["comparable_listings"]) if airroi.get("comparable_listings") else 0
+    else:
+        base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
+        mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
+        mult_capacita = _moltiplicatore_capacita(body.get("posti_letto"))
+        prezzo_notte = round(base * mult_zona * mult_capacita)
+        occupazione_percent = OCCUPAZIONE_BASE_FALLBACK
+        fonte_prezzo = "stima_deterministica"
+        n_comparabili = 0
+
+    notti_anno = round(365 * occupazione_percent / 100)
+    potenziale_lordo = prezzo_notte * notti_anno
+
+    media_nazionale = MEDIA_NAZIONALE_CATEGORIA.get(categoria, MEDIA_NAZIONALE_CATEGORIA["comune_minore"])
+    posizionamento_percent = round((prezzo_notte - media_nazionale) / media_nazionale * 100)
+
+    aero = aeroporto_row(lat, lon)  # [distanza_str, nome, impatto]
+
+    return _risposta({
+        "indirizzo": geo["formatted_address"],
+        "comune": record_comune["comune"] if record_comune else geo.get("comune"),
+        "categoria": categoria,
+        "sottocategoria": sottocategoria,
+
+        "fonte_prezzo": fonte_prezzo,
+        "comparabili_airroi": n_comparabili,
+
+        "prezzo_notte": prezzo_notte,
+        "occupazione_percent": occupazione_percent,
+        "notti_anno": notti_anno,
+        "potenziale_lordo": potenziale_lordo,
+
+        "media_nazionale_categoria": media_nazionale,
+        "posizionamento_percent": posizionamento_percent,
+        "posizionamento_label": "sopra" if posizionamento_percent >= 0 else "sotto",
+
+        "aeroporto_nome": aero[1],
+        "aeroporto_distanza": aero[0],
+    })
+
+
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     """
