@@ -2176,16 +2176,6 @@ MOLTIPLICATORE_SOTTOCATEGORIA = {
     "montano": 1.15,
 }
 
-# Media nazionale di riferimento per categoria comune, usata solo per il
-# posizionamento mostrato nel Quick ("sei sopra/sotto la media"). Valore di
-# configurazione fisso, non generato ad ogni richiesta: va aggiornato a mano
-# se e quando Salvatore ottiene un dato di mercato nazionale più solido.
-MEDIA_NAZIONALE_CATEGORIA = {
-    "capoluogo": 95,
-    "grande_citta": 78,
-    "comune_minore": 58,
-}
-
 
 def _moltiplicatore_capacita(posti_letto_raw):
     """Aggiustamento prezzo in funzione dei posti letto dichiarati, rispetto
@@ -2314,8 +2304,36 @@ def quick_estimate():
     notti_anno = round(365 * occupazione_percent / 100)
     potenziale_lordo = prezzo_notte * notti_anno
 
-    media_nazionale = MEDIA_NAZIONALE_CATEGORIA.get(categoria, MEDIA_NAZIONALE_CATEGORIA["comune_minore"])
-    posizionamento_percent = round((prezzo_notte - media_nazionale) / media_nazionale * 100)
+    if airroi and airroi.get("comparable_listings"):
+        # Confronto onesto: prezzo stimato vs media dei comparabili REALI
+        # restituiti da AirROI nella stessa chiamata — stesso mercato, stesso
+        # momento. Sostituisce il vecchio confronto con una "media nazionale"
+        # scritta a mano nel codice (mele con pere: dato osservato contro
+        # numero inventato — trovato e corretto il 5 luglio dopo il test su
+        # Cortina, +359% assurdo contro un benchmark arbitrario).
+        prezzi_comparabili = [
+            _numero_da(a, "average_daily_rate", "adr", "price", "daily_rate")
+            for a in airroi["comparable_listings"] if isinstance(a, dict)
+        ]
+        prezzi_comparabili = [p for p in prezzi_comparabili if p]
+        media_locale = round(sum(prezzi_comparabili) / len(prezzi_comparabili)) if prezzi_comparabili else None
+    else:
+        media_locale = None
+
+    if media_locale:
+        _delta_percent_log = round((prezzo_notte - media_locale) / media_locale * 100)  # solo per log interni
+        print(f"[QUICK] posizionamento reale vs comparabili locali: {_delta_percent_log}%")
+        sopra_media = prezzo_notte >= media_locale
+    else:
+        sopra_media = None  # nessun dato reale per confrontare
+
+    if sopra_media is True:
+        posizionamento_messaggio = "Il tuo immobile è già posizionato sopra la media della zona: un ottimo punto di partenza."
+    else:
+        # Sia "sotto media" reale sia "nessun dato" (fallback): mai un'invenzione,
+        # ma nemmeno un tono demoralizzante sulla prima chiamata gratuita — si
+        # trasforma in leva verso il Base, che è il prodotto che spiega il "come".
+        posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
 
     aero = aeroporto_row(lat, lon)  # [distanza_str, nome, impatto]
 
@@ -2333,9 +2351,7 @@ def quick_estimate():
         "notti_anno": notti_anno,
         "potenziale_lordo": potenziale_lordo,
 
-        "media_nazionale_categoria": media_nazionale,
-        "posizionamento_percent": posizionamento_percent,
-        "posizionamento_label": "sopra" if posizionamento_percent >= 0 else "sotto",
+        "posizionamento_messaggio": posizionamento_messaggio,
 
         "aeroporto_nome": aero[1],
         "aeroporto_distanza": aero[0],
