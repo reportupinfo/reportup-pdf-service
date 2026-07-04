@@ -635,6 +635,15 @@ def page2(c, D):
     # Slot 5 (Aeroporto, indice 4) e' SEMPRE calcolato qui in Python, non da Make/AI:
     # sovrascrive qualsiasi cosa arrivi da fuori per questa riga specifica.
     poi_rows_raw[4] = aeroporto_row(D.get("lat"), D.get("long"))
+    # Slot 2 (Comune di riferimento, indice 1) forzato a "—" per capoluogo/grande_citta:
+    # per queste due categorie il concetto non ha senso (l'immobile e' gia' nella
+    # citta' di riferimento). La regola 8 del prompt lo chiede gia' all'AI dalla
+    # Sessione 42, ma continua a fallire in modo intermittente (visto di nuovo su
+    # Napoli il 4 luglio: e' uscita "Basilica di Santa Chiara" invece di "—") —
+    # stessa logica gia' applicata all'Aeroporto: mai lasciare all'AI una decisione
+    # che Python puo' prendere in modo deterministico al 100% delle volte.
+    if str(D.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
+        poi_rows_raw[1] = ["\u2014", "\u2014", "\u2014"]
 
     # Celle come Paragraph: il testo va sempre a capo dentro la propria colonna,
     # non invade mai quella vicina anche con nomi/distanze molto lunghi.
@@ -1701,6 +1710,50 @@ def _calcola_costi_fissi_deterministici(data):
     data["_costi_ha_giardino"] = ha_giardino
 
 
+_ETICHETTE_SLOT_POI = {
+    "trasporto pubblico", "comune di riferimento", "elemento caratteristico",
+    "servizi essenziali", "aeroporto",
+}
+
+
+def _sembra_etichetta_categoria(testo):
+    """True se il testo è un'etichetta di categoria (es. 'Servizi essenziali',
+    'Metro e trasporto pubblico') invece del nome proprio di un luogo — segnale
+    che l'AI ha invertito per errore i campi distanza/nome nella riga POI."""
+    t = str(testo or "").strip().lower()
+    if not t:
+        return False
+    if t in _ETICHETTE_SLOT_POI:
+        return True
+    return any(p in t for p in ("essenziali", "caratteristico", "trasporto pubblico", "di riferimento"))
+
+
+def _sembra_distanza(testo):
+    """True se il testo somiglia a una distanza/tempo di percorrenza reale
+    (cifre, o parole tipiche 'piedi'/'auto'/'min'/'km'/'in loco')."""
+    t = str(testo or "").strip().lower()
+    if any(ch.isdigit() for ch in t):
+        return True
+    return any(p in t for p in ("piedi", "auto", "min", "km", "in loco"))
+
+
+def _correggi_poi_invertiti(poi):
+    """Ripara righe POI dove l'AI ha invertito distanza e nome — es. Napoli,
+    4 luglio: riga 'Elemento caratteristico' arrivata come
+    distanza='Fermata Umberto I - Duomo', nome='Metro e trasporto pubblico'
+    (esattamente al contrario). Senza questa correzione sia la tabella che la
+    descrizione mostrano il dato scambiato in modo plausibile ma sbagliato.
+    Se il pattern non è chiaramente riconoscibile la riga resta invariata —
+    mai indovinare quando il segnale non è netto."""
+    corrette = []
+    for row in poi:
+        distanza, nome, impatto = (list(row) + ["\u2014", "\u2014", "\u2014"])[:3]
+        if _sembra_etichetta_categoria(nome) and not _sembra_distanza(distanza):
+            distanza, nome = nome, distanza
+        corrette.append([distanza, nome, impatto])
+    return corrette
+
+
 def _e_distanza_numerica(testo):
     """True se il testo contiene almeno una cifra (distanza vera, es. '2,3 km',
     '5 min a piedi'). False se l'AI ha scritto una frase descrittiva al posto
@@ -1939,6 +1992,15 @@ def categoria_comune():
 
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
+    """
+    ATTENZIONE — endpoint LEGACY, non usato dallo scenario Make.com attuale
+    (quello vero e' /generate-pdf-direct). Qui NON ci sono: formattazione CAP/
+    sigla provincia, override categoria da comuni_lookup, integrazione AirROI,
+    costi deterministici, descrizione standard. Se Make punta qui per errore,
+    il PDF esce con tutti i bug delle sessioni passate. Tenuto solo per
+    compatibilita' con eventuali chiamate esterne gia' esistenti — non
+    estendere, non usare per nuovi flussi.
+    """
     try:
         data = request.get_json(force=True)
         if not data:
@@ -1951,7 +2013,7 @@ def generate_pdf():
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
-            data["poi"] = [list(row) for row in data["poi"]]
+            data["poi"] = _correggi_poi_invertiti(data["poi"])
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
 
@@ -1971,6 +2033,9 @@ def generate_pdf():
 @app.route("/generate-pdf-binary", methods=["POST"])
 def generate_pdf_binary():
     """
+    ATTENZIONE — endpoint LEGACY, stessa nota di /generate-pdf: nessuno dei fix
+    successivi (CAP/sigla, AirROI, categoria, costi, descrizione standard) e'
+    applicato qui. Lo scenario Make.com attivo usa /generate-pdf-direct.
     Accetta il JSON grezzo dell'AI (eventualmente con backtick markdown).
     Pulisce, parsa, genera il PDF e lo restituisce come base64.
     """
@@ -2002,7 +2067,7 @@ def generate_pdf_binary():
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
-            data["poi"] = [list(row) for row in data["poi"]]
+            data["poi"] = _correggi_poi_invertiti(data["poi"])
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
 
@@ -2018,10 +2083,6 @@ def generate_pdf_binary():
     except Exception as e:
         return jsonify({"error": str(e), "raw_preview": raw[:500] if 'raw' in dir() else ""}), 500
 
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
 
 @app.route("/generate-pdf-direct", methods=["POST"])
 def generate_pdf_direct():
@@ -2238,7 +2299,7 @@ def generate_pdf_direct():
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
-            data["poi"] = [list(row) for row in data["poi"]]
+            data["poi"] = _correggi_poi_invertiti(data["poi"])
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
 
@@ -2348,7 +2409,7 @@ def generate_strategico():
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
-            data["poi"] = [list(row) for row in data["poi"]]
+            data["poi"] = _correggi_poi_invertiti(data["poi"])
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
         if "pricing_mensile" in data:
@@ -2389,3 +2450,8 @@ def generate_strategico():
 
     except Exception as e:
         return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
