@@ -1800,6 +1800,16 @@ def _pulisci_distanza_per_frase(distanza):
     m = re.match(r'^auto\s+(.+)$', t, flags=re.IGNORECASE)
     if m:
         return f"{m.group(1)} in auto"
+    # Caso generico: l'AI a volte antepone un'etichetta descrittiva prima della
+    # misura vera — es. "Negozi essenziali 400 m", "Monumento storico 1 km"
+    # (trovato nel test di Roma, 4 luglio: uscito "si trova a Negozi essenziali
+    # 400 m"). Se il testo non inizia gia' con una cifra ma finisce con un
+    # pattern numero+unita' riconoscibile, si tiene solo quella parte,
+    # scartando l'etichetta iniziale invece di infilarla intera nella frase.
+    if not t[:1].isdigit():
+        m2 = re.search(r'(\d[\d.,]*\s*(?:km|m|min\.?|ore|h))\s*$', t, flags=re.IGNORECASE)
+        if m2 and m2.group(1).strip() != t:
+            return m2.group(1).strip()
     return t
 
 
