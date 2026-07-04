@@ -149,18 +149,25 @@ def _mesi_affidabili(oggi=None):
     return [(mese_partenza + i) % 12 for i in range(3)]
 
 
-def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale):
+def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_annuale=None):
     """
-    Sostituisce la colonna prezzo/notte della tabella 12 mesi con valori derivati
-    dalla stagionalita' reale di AirROI, mantenendo la media annua coerente con
-    l'ADR restituito da /calculator/estimate. Non tocca occupazione ne' stage:
-    quelli restano la lettura qualitativa dell'AI (alta/bassa stagione), coerente
-    con la descrizione testuale del report — qui cambiano solo i numeri di prezzo.
+    Sostituisce la colonna prezzo/notte E la colonna occupazione della tabella
+    12 mesi con valori derivati dalla stagionalita' reale di AirROI (stesso peso
+    mensile per entrambe le colonne), mantenendo la media annua coerente con
+    l'ADR e l'occupazione restituiti da /calculator/estimate.
+
+    Fix del 4 luglio (test Pozzuoli/Napoli): prima si toccava solo il prezzo, e
+    l'occupazione restava quella "qualitativa" generata liberamente dall'AI —
+    risultato, il grafico mensile mostrava una media (~65-68%) sistematicamente
+    diversa dal KPI annuale che pagavamo per avere corretto (42-53% da AirROI).
+    Decisione: quando esiste un dato AirROI reale, ha sempre ragione lui, mai
+    l'AI — stessa logica gia' applicata al prezzo, ora estesa all'occupazione.
 
     Approssimazione dichiarata: monthly_revenue_distributions mescola prezzo e
-    occupazione (ricavo = prezzo x notti prenotate), non e' un ADR mensile puro.
-    Usarlo per pesare il prezzo e' la lettura piu' onesta possibile senza un
-    endpoint di ADR mensile dedicato — va verificato contro l'API viva.
+    occupazione (ricavo = prezzo x notti prenotate), non e' un ADR mensile puro
+    ne' una distribuzione di occupazione pura. Usarlo per pesare entrambe le
+    colonne e' la lettura piu' onesta possibile senza due endpoint mensili
+    dedicati — va verificato contro l'API viva.
     """
     if not occ or not distribuzione_mensile or len(occ) != 12:
         return occ
@@ -171,7 +178,10 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale):
     for i, row in enumerate(occ):
         peso = distribuzione_mensile[i] / media
         prezzo_mese = max(1, round(adr_annuale * peso))
-        nuova.append([row[0], row[1], prezzo_mese] + list(row[3:]))
+        nuova_row = [row[0], row[1], prezzo_mese] + list(row[3:])
+        if occ_annuale is not None:
+            nuova_row[1] = max(5, min(100, round(occ_annuale * peso)))
+        nuova.append(nuova_row)
     return nuova
 
 
@@ -2188,13 +2198,27 @@ def generate_pdf_direct():
 
             _ratio = _p_new / _p if _p else 1
             # Tabella 12 mesi: se AirROI ha restituito la distribuzione mensile reale,
-            # la usiamo per la colonna prezzo (stagionalita' vera, non scalata dall'AI).
-            # Altrimenti resta lo scaling proporzionale per rapporto come prima.
+            # la usiamo per prezzo E occupazione (stagionalita' vera, non scalata
+            # dall'AI). Se AirROI ha dato solo il dato annuale, ricalibriamo comunque
+            # la media dei 12 mesi di occupazione su quel valore, mantenendo la forma
+            # stagionale dell'AI ma correggendone il livello assoluto — mai lasciare
+            # che grafico e KPI raccontino due storie diverse quando paghiamo per un
+            # dato reale (fix 4 luglio, vedi _applica_stagionalita_airroi). Solo in
+            # totale assenza di AirROI resta lo scaling proporzionale di prima.
             if "occupazione" in data:
                 if _airroi and _airroi.get("distribuzione_mensile"):
                     data["occupazione"] = _applica_stagionalita_airroi(
-                        data["occupazione"], _airroi["distribuzione_mensile"], _p_new
+                        data["occupazione"], _airroi["distribuzione_mensile"], _p_new,
+                        occ_annuale=_occ_new,
                     )
+                elif _airroi:
+                    _occ_medio_ai = (sum(row[1] for row in data["occupazione"]) / 12) or 1
+                    _occ_ratio = _occ_new / _occ_medio_ai
+                    data["occupazione"] = [
+                        [row[0], max(5, min(100, round(row[1] * _occ_ratio))),
+                         round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
+                        for row in data["occupazione"]
+                    ]
                 else:
                     data["occupazione"] = [
                         [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
