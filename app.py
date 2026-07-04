@@ -279,6 +279,18 @@ def _norm_dotazione(d):
     return _DOTAZIONI_SINONIMI.get(str(d or "").strip().lower(), str(d or "").strip())
 
 
+def _zona_sembra_valida(testo):
+    """False se il testo sembra un nome di zona in inglese invece che italiano
+    (bug trovato a Milano il 4 luglio: il reverse geocode ha restituito
+    'Zone 1 of Milan' invece di un quartiere reale tipo 'Brera' o 'Navigli' —
+    probabile mancanza del parametro lingua=it a monte, su Make.com). Meglio
+    mostrare '—' che un pezzo di inglese in un report italiano."""
+    t = str(testo or "").strip()
+    if not t:
+        return True
+    return re.search(r'\b(of|the|zone|district|area)\b', t, re.IGNORECASE) is None
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     """Distanza in linea d'aria tra due coordinate, in km."""
     R = 6371.0
@@ -1434,10 +1446,27 @@ def _pulisci_wikitext(testo):
     testo = re.sub(r'<[^>]+>', '', testo)
     # Rimuovi intestazioni == Titolo == di qualsiasi livello
     testo = re.sub(r'={2,}.*?={2,}', '', testo)
-    # Rimuovi link a file/immagini [[File:...]] [[Immagine:...]]
-    testo = re.sub(r'\[\[(?:File|Immagine|Image|Media):[^\]]*\]\]', '', testo, flags=re.IGNORECASE)
-    # Rimuovi link interni [[Testo|Display]] → Display, [[Testo]] → Testo
-    testo = re.sub(r'\[\[(?:[^\]|]*\|)?([^\]]*)\]\]', r'\1', testo)
+    # Rimuovi link a file/immagini [[File:...]] [[Immagine:...]] — iterativo,
+    # dall'interno verso l'esterno (come i template sopra). Necessario per
+    # didascalie con link annidati, es. [[File:Duomo.jpg|thumb|patrimonio
+    # dell'umanità UNESCO assieme al [[Cenacolo vinciano]]]] — un singolo
+    # passaggio con [^\]]* si fermava alla PRIMA ']]' trovata (quella del link
+    # annidato), lasciando la ']]' esterna come residuo nel testo finale
+    # (bug trovato nel test di Milano, 4 luglio: comparso testo con "]]" crudo
+    # nella descrizione del cliente). [^\[\]]* forza il match sulla coppia più
+    # interna ad ogni passaggio, senza poter scavalcare bracket annidati.
+    for _ in range(5):
+        nuovo = re.sub(r'\[\[(?:File|Immagine|Image|Media):[^\[\]]*\]\]', '', testo, flags=re.IGNORECASE)
+        if nuovo == testo:
+            break
+        testo = nuovo
+    # Rimuovi link interni [[Testo|Display]] → Display, [[Testo]] → Testo —
+    # stesso approccio iterativo, stessa ragione.
+    for _ in range(5):
+        nuovo = re.sub(r'\[\[(?:[^\[\]|]*\|)?([^\[\]]*)\]\]', r'\1', testo)
+        if nuovo == testo:
+            break
+        testo = nuovo
     # Rimuovi link esterni
     testo = re.sub(r'\[https?://\S+\s+([^\]]+)\]', r'\1', testo)
     testo = re.sub(r'\[https?://\S+\]', '', testo)
@@ -1453,8 +1482,27 @@ def _pulisci_wikitext(testo):
     righe = testo.split('\n')
     righe = [r.strip() for r in righe if len(r.strip()) > 30 and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))]
     testo = ' '.join(righe)
+    # Parole chiave tipiche dei parametri di didascalia file (thumb|miniatura|
+    # upright|200px|...) che restano come "parola|" quando un link annidato
+    # dentro la didascalia viene risolto prima del link File esterno — stesso
+    # bug di Milano, residuo minore dopo il fix principale sopra.
+    for _ in range(3):
+        nuovo = re.sub(
+            r'\b(?:thumb|thumbnail|miniatura|riquadro|right|left|center|centro|'
+            r'upright|border|verticale|senza_cornice|\d+\s*px)\b\s*\|',
+            '', testo, flags=re.IGNORECASE)
+        if nuovo == testo:
+            break
+        testo = nuovo
     # Normalizza spazi
     testo = re.sub(r'\s+', ' ', testo).strip()
+    # Rete di sicurezza finale: qualsiasi bracket [[ ]] [ ] sopravvissuto alla
+    # pulizia (pattern imprevisti, non solo quello di Milano) non deve MAI
+    # arrivare nel PDF del cliente — meglio perdere qualche carattere che
+    # mostrare wikitext grezzo in un report che il cliente paga.
+    testo = re.sub(r'\[+|\]+', '', testo)
+    testo = re.sub(r'\s+', ' ', testo).strip()
+    testo = re.sub(r'^[,;.\s]+', '', testo)
     return testo
 
 
@@ -2124,7 +2172,7 @@ def generate_pdf_direct():
         if "comune" in data:
             data["comune"] = data["comune"].title()
         if "zona" in data:
-            data["zona"] = data["zona"].title()
+            data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
 
         # Categoria comune — Sessione 42: calcolata qui in modo deterministico
         # da comuni_lookup.py (CSV 7.904 comuni), gestisce accenti, apostrofi,
@@ -2372,7 +2420,7 @@ def generate_strategico():
         if "comune" in data:
             data["comune"] = data["comune"].title()
         if "zona" in data:
-            data["zona"] = data["zona"].title()
+            data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
 
         # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
