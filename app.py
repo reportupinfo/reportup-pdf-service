@@ -239,6 +239,36 @@ AEROPORTI_ITALIA = [
 ]
 
 
+DOTAZIONI_AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina attrezzata",
+                     "Terrazzo", "Giardino", "Riscaldamento", "Ascensore", "Piscina"]
+
+_DOTAZIONI_SINONIMI = {
+    "wifi": "WiFi", "wi-fi": "WiFi", "wi fi": "WiFi",
+    "parcheggio": "Parcheggio",
+    "aria_condizionata": "Aria condizionata", "aria condizionata": "Aria condizionata",
+    "lavatrice": "Lavatrice",
+    "cucina": "Cucina attrezzata", "cucina attrezzata": "Cucina attrezzata",
+    "terrazzo": "Terrazzo", "terrazza": "Terrazzo",
+    "terrazzo / giardino": "Terrazzo", "terrazzo/giardino": "Terrazzo",
+    "giardino": "Giardino",
+    "riscaldamento": "Riscaldamento",
+    "ascensore": "Ascensore",
+    "piscina": "Piscina",
+}
+
+
+def _norm_dotazione(d):
+    """Nome canonico di una dotazione a partire da una variante scritta
+    dall'AI/form (es. 'cucina'/'terrazza' -> 'Cucina attrezzata'/'Terrazzo').
+    Unica fonte di verita' per pallini (page1) e descrizione testuale
+    (genera_descrizione_standard): prima erano due mappe separate e
+    disallineate — 'terrazza' non era riconosciuta come sinonimo di
+    'Terrazzo' nella mappa dei pallini, che quindi lo mostrava come assente
+    anche quando dichiarato presente (bug trovato nel test di Pozzuoli,
+    4 luglio)."""
+    return _DOTAZIONI_SINONIMI.get(str(d or "").strip().lower(), str(d or "").strip())
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     """Distanza in linea d'aria tra due coordinate, in km."""
     R = 6371.0
@@ -509,25 +539,8 @@ def page1(c, D):
     y -= 5 * mm
     pill_h = 5.5 * mm
     px = 14 * mm
-    DOTAZIONI_AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina attrezzata",
-                         "Terrazzo", "Giardino", "Riscaldamento", "Ascensore", "Piscina"]
-    def _norm(d):
-        d = d.strip()
-        mapping = {
-            "wifi": "WiFi", "wi-fi": "WiFi", "wi fi": "WiFi",
-            "parcheggio": "Parcheggio",
-            "aria_condizionata": "Aria condizionata", "aria condizionata": "Aria condizionata",
-            "lavatrice": "Lavatrice",
-            "cucina": "Cucina attrezzata", "cucina attrezzata": "Cucina attrezzata",
-            "terrazzo": "Terrazzo", "terrazzo / giardino": "Terrazzo", "terrazzo/giardino": "Terrazzo",
-            "giardino": "Giardino",
-            "riscaldamento": "Riscaldamento",
-            "ascensore": "Ascensore",
-            "piscina": "Piscina",
-        }
-        return mapping.get(d.lower(), d)
-    presenti = [_norm(d) for d in D.get("dotazioni_presenti", []) if _norm(d) in DOTAZIONI_AMMESSE]
-    assenti  = [_norm(d) for d in D.get("dotazioni_assenti", [])  if _norm(d) in DOTAZIONI_AMMESSE]
+    presenti = [_norm_dotazione(d) for d in D.get("dotazioni_presenti", []) if _norm_dotazione(d) in DOTAZIONI_AMMESSE]
+    assenti  = [_norm_dotazione(d) for d in D.get("dotazioni_assenti", [])  if _norm_dotazione(d) in DOTAZIONI_AMMESSE]
     tutte = set(presenti + assenti)
     for d in DOTAZIONI_AMMESSE:
         if d not in tutte:
@@ -1742,7 +1755,8 @@ def genera_descrizione_standard(data):
 
     # Dotazioni — TUTTE quelle presenti, scritte come frase fluente (non lista tecnica)
     def _fmt_dotazione(d):
-        return d if d == "WiFi" else d.lower()
+        canonico = _norm_dotazione(d)
+        return canonico if canonico == "WiFi" else canonico.lower()
     dotazioni_frase = _join_lista_e([_fmt_dotazione(d) for d in dotazioni]) if dotazioni else ""
 
     # Zona — solo per capoluogo e grande_citta, solo se diversa dal nome comune
