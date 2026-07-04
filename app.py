@@ -2232,6 +2232,87 @@ def _geocode_indirizzo(indirizzo, timeout=5):
         return None
 
 
+GOOGLE_PLACES_NEARBY_URL = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+
+# Cosa cercare vicino all'immobile in base al tipo di zona — sostituisce la
+# vecchia scelta fissa "sempre l'aeroporto", che a Cortina d'Ampezzo (138 km,
+# 114 min in auto) risultava fuori luogo: chi guarda un B&B in montagna vuole
+# sapere dov'è la seggiovia, non l'aeroporto più vicino (feedback Salvatore,
+# Sessione 50). Icone solo per la UI, mai usate per calcoli.
+POI_KEYWORD_PER_SOTTOCATEGORIA = {
+    "montano": ("impianti sciistici", "⛷️"),
+    "costiero": ("spiaggia", "🏖️"),
+    "lacuale": ("lago", "🚤"),
+}
+
+
+def _cerca_poi_google(lat, lon, keyword, radius_m=15000, max_risultati=2, timeout=5):
+    """
+    Ricerca reale via Google Places Nearby Search (stessa GOOGLE_MAPS_API_KEY
+    già in uso). Ritorna una lista di dict {nome, lat, lon} — mai invenzioni:
+    se l'API non risponde o non trova nulla, ritorna lista vuota e chi chiama
+    passa al fallback successivo (mai un nome di luogo a caso).
+    """
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        return []
+    try:
+        resp = requests.get(
+            GOOGLE_PLACES_NEARBY_URL,
+            params={"location": f"{lat},{lon}", "radius": radius_m, "keyword": keyword,
+                    "language": "it", "key": api_key},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return []
+        dati = resp.json()
+        if dati.get("status") not in ("OK", "ZERO_RESULTS"):
+            print(f"[QUICK] Places status non OK per '{keyword}': {dati.get('status')}")
+            return []
+        risultati = []
+        for r in dati.get("results", [])[:max_risultati]:
+            loc = r.get("geometry", {}).get("location", {})
+            if r.get("name") and loc.get("lat") is not None and loc.get("lng") is not None:
+                risultati.append({"nome": r["name"], "lat": loc["lat"], "lon": loc["lng"]})
+        return risultati
+    except Exception as e:
+        print(f"[QUICK] Places eccezione per '{keyword}': {e}")
+        return []
+
+
+def _punti_interesse_quick(lat, lon, sottocategoria):
+    """
+    Fino a 2 punti di interesse REALI, scelti in base al tipo di zona:
+    - montano/costiero/lacuale: cerca il punto caratteristico della zona
+      (impianti sciistici, spiaggia, lago). Se la ricerca non trova
+      abbastanza risultati, completa con l'aeroporto più vicino.
+    - zona senza sottocategoria (urbana/generica): aeroporto + un'attrazione
+      turistica reale nelle vicinanze.
+    Ogni voce ha distanza in linea d'aria (nessuna chiamata Distance Matrix
+    aggiuntiva per contenere i costi) tranne l'aeroporto, che mantiene la
+    distanza/tempo reali in auto già calcolati altrove.
+    """
+    punti = []
+
+    if sottocategoria in POI_KEYWORD_PER_SOTTOCATEGORIA:
+        keyword, icona = POI_KEYWORD_PER_SOTTOCATEGORIA[sottocategoria]
+        for luogo in _cerca_poi_google(lat, lon, keyword, max_risultati=2):
+            dist_km = round(_haversine_km(float(lat), float(lon), luogo["lat"], luogo["lon"]), 1)
+            punti.append({"nome": luogo["nome"], "distanza": f"{dist_km} km in linea d'aria", "icon": icona})
+
+    if len(punti) < 2:
+        aero = aeroporto_row(lat, lon)
+        if aero[1] != "\u2014":
+            punti.append({"nome": aero[1], "distanza": aero[0], "icon": "✈️"})
+
+    if len(punti) < 2 and sottocategoria not in POI_KEYWORD_PER_SOTTOCATEGORIA:
+        for luogo in _cerca_poi_google(lat, lon, "attrazione turistica", max_risultati=1):
+            dist_km = round(_haversine_km(float(lat), float(lon), luogo["lat"], luogo["lon"]), 1)
+            punti.append({"nome": luogo["nome"], "distanza": f"{dist_km} km in linea d'aria", "icon": "📍"})
+
+    return punti[:2]
+
+
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
 def quick_estimate():
     """
@@ -2335,7 +2416,7 @@ def quick_estimate():
         # trasforma in leva verso il Base, che è il prodotto che spiega il "come".
         posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
 
-    aero = aeroporto_row(lat, lon)  # [distanza_str, nome, impatto]
+    punti_interesse = _punti_interesse_quick(lat, lon, sottocategoria)
 
     return _risposta({
         "indirizzo": geo["formatted_address"],
@@ -2353,8 +2434,7 @@ def quick_estimate():
 
         "posizionamento_messaggio": posizionamento_messaggio,
 
-        "aeroporto_nome": aero[1],
-        "aeroporto_distanza": aero[0],
+        "punti_interesse": punti_interesse,
     })
 
 
