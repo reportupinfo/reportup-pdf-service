@@ -1678,6 +1678,16 @@ def _calcola_costi_fissi_deterministici(data):
     data["_costi_ha_giardino"] = ha_giardino
 
 
+def _e_distanza_numerica(testo):
+    """True se il testo contiene almeno una cifra (distanza vera, es. '2,3 km',
+    '5 min a piedi'). False se l'AI ha scritto una frase descrittiva al posto
+    di un numero (es. 'Raggiungibile con funivie', 'Nessun collegamento diretto').
+    Generalizza il fix del 3 luglio, che copriva solo il caso letterale 'in loco':
+    ora qualsiasi distanza senza cifre viene trattata come frase autonoma invece
+    di aggiungere eccezioni una per una."""
+    return any(ch.isdigit() for ch in str(testo or ""))
+
+
 def _poi_riga_frase(poi, idx):
     """Frase pronta dalla riga POI all'indice idx, o stringa vuota se assente."""
     try:
@@ -1687,9 +1697,14 @@ def _poi_riga_frase(poi, idx):
     if nome in ("\u2014", "", None):
         return ""
     distanza_pulita = _pulisci_distanza_per_frase(distanza)
-    if str(distanza_pulita).strip().lower().startswith("in loco"):
+    dp = str(distanza_pulita).strip()
+    if dp.lower().startswith("in loco"):
         return f"{nome} si trova in loco."
-    return f"{nome} si trova a {distanza_pulita}."
+    if not _e_distanza_numerica(dp):
+        # Distanza descrittiva, non numerica: frase autonoma, senza "a" davanti
+        # (evita rotture tipo "X si trova a Raggiungibile con funivie.")
+        return f"{nome} \u2014 {dp}."
+    return f"{nome} si trova a {dp}."
 
 
 def genera_descrizione_standard(data):
@@ -1769,9 +1784,12 @@ def genera_descrizione_standard(data):
             desc += f"{elemento_frase} "
     else:
         if comune_rif_nome:
-            _dist_comune_rif = _pulisci_distanza_per_frase(comune_rif_distanza)
-            if str(_dist_comune_rif).strip().lower().startswith("in loco"):
+            _dist_comune_rif = str(_pulisci_distanza_per_frase(comune_rif_distanza)).strip()
+            if _dist_comune_rif.lower().startswith("in loco"):
                 desc += f"{comune_rif_nome} è in loco, punto di riferimento per servizi e collegamenti più ampi. "
+            elif not _e_distanza_numerica(_dist_comune_rif):
+                desc += (f"{comune_rif_nome} \u2014 {_dist_comune_rif}, "
+                         f"punto di riferimento per servizi e collegamenti più ampi. ")
             else:
                 desc += (f"A {_dist_comune_rif} si trova {comune_rif_nome}, "
                          f"punto di riferimento per servizi e collegamenti più ampi. ")
