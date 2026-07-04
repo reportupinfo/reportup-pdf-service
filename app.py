@@ -37,6 +37,90 @@ AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
 AIRROI_BASE = "https://api.airroi.com"
 
 
+def _numero_da(d, *chiavi, default=None):
+    """Primo valore numerico trovato tra le chiavi candidate di un dict,
+    tollerando nomi di campo diversi tra provider/versioni API."""
+    for k in chiavi:
+        v = d.get(k)
+        if isinstance(v, (int, float)):
+            return v
+        if isinstance(v, str):
+            try:
+                return float(v.replace(",", "."))
+            except ValueError:
+                continue
+    return default
+
+
+def _tipologia_da_camere(n_camere):
+    if n_camere is None:
+        return "Annunci comparabili"
+    n = int(round(n_camere))
+    return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
+
+
+def _costruisci_competitor_da_airroi(comparable_listings, valuta="EUR"):
+    """
+    Sostituisce la tabella "Analisi competitor" (prima interamente inventata
+    dall'AI) con un'aggregazione degli annunci comparabili reali restituiti
+    da AirROI nella stessa chiamata di /calculator/estimate — dato di mercato
+    vero, zero costo aggiuntivo. Raggruppa per numero di camere, calcola medie
+    di prezzo/occupazione/rating per gruppo più una riga di media generale.
+
+    Parsing difensivo: i nomi dei campi nella risposta reale non sono stati
+    verificati con una chiamata live (solo dalla documentazione pubblica) —
+    si tentano più alias plausibili per ogni campo. Se non si riesce a
+    ricavare un numero minimo di righe valide, si ritorna None e chi chiama
+    ricade sul metodo precedente (AI) senza mai rompere il PDF.
+    """
+    if not comparable_listings:
+        return None
+    gruppi = {}
+    tutti_prezzi, tutte_occ, tutti_rating = [], [], []
+    for ann in comparable_listings:
+        if not isinstance(ann, dict):
+            continue
+        prezzo = _numero_da(ann, "average_daily_rate", "adr", "price", "daily_rate")
+        occ = _numero_da(ann, "occupancy", "occupancy_rate")
+        rating = _numero_da(ann, "rating", "review_rating", "star_rating", "overall_rating")
+        camere = _numero_da(ann, "bedrooms", "beds", "num_bedrooms")
+        if prezzo is None:
+            continue
+        if occ is not None and occ <= 1:
+            occ = occ * 100
+        tipologia = _tipologia_da_camere(camere)
+        g = gruppi.setdefault(tipologia, {"prezzi": [], "occ": [], "rating": []})
+        g["prezzi"].append(prezzo)
+        tutti_prezzi.append(prezzo)
+        if occ is not None:
+            g["occ"].append(occ)
+            tutte_occ.append(occ)
+        if rating is not None:
+            g["rating"].append(rating)
+            tutti_rating.append(rating)
+
+    if len(tutti_prezzi) < 3:
+        return None
+
+    righe = []
+    for tipologia, g in sorted(gruppi.items(), key=lambda kv: -len(kv[1]["prezzi"])):
+        n = len(g["prezzi"])
+        prezzo_medio = round(sum(g["prezzi"]) / n)
+        occ_media = round(sum(g["occ"]) / len(g["occ"])) if g["occ"] else "\u2014"
+        rating_medio = round(sum(g["rating"]) / len(g["rating"]), 1) if g["rating"] else "\u2014"
+        righe.append([tipologia, str(n), f"{valuta} {prezzo_medio}",
+                      f"{occ_media}%" if occ_media != "\u2014" else "\u2014", str(rating_medio)])
+    righe = righe[:4]  # coerente col layout a 4 righe + media, come prima
+
+    media_prezzo = round(sum(tutti_prezzi) / len(tutti_prezzi))
+    media_occ = round(sum(tutte_occ) / len(tutte_occ)) if tutte_occ else "\u2014"
+    media_rating = round(sum(tutti_rating) / len(tutti_rating), 1) if tutti_rating else "\u2014"
+    media_riga = ["Media annunci comparabili AirROI", "\u2014", f"{valuta} {media_prezzo}",
+                  f"{media_occ}%" if media_occ != "\u2014" else "\u2014", str(media_rating)]
+
+    return righe, media_riga
+
+
 def _numero_da_stringa(valore, default=1):
     """Estrae il primo intero da stringhe tipo '2 camere' o '4 posti'. Tollera None/errori."""
     try:
@@ -122,11 +206,24 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
                 and all(isinstance(v, (int, float)) and v > 0 for v in distribuzione_mensile)):
             distribuzione_mensile = None
 
-        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'}")
+        # La risposta include gia', senza costo aggiuntivo, fino a 50 annunci
+        # comparabili reali usati per calcolare la stima (comparable_listings).
+        # Da oggi (4 luglio) li usiamo per costruire la tabella "Analisi
+        # competitor" del PDF, che prima era interamente inventata dall'AI —
+        # mai collegata ne' ad AirROI ne' a Google, unica tabella rimasta
+        # senza una fonte reale. Se il campo manca/e' vuoto/malformato: nessun
+        # errore, si ricade sul metodo AI precedente (fallback silenzioso,
+        # stesso principio di distribuzione_mensile sopra).
+        comparable_listings = stima.get("comparable_listings")
+        if not (isinstance(comparable_listings, list) and len(comparable_listings) >= 3):
+            comparable_listings = None
+
+        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0}")
         return {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
             "distribuzione_mensile": distribuzione_mensile,
+            "comparable_listings": comparable_listings,
         }
     except Exception as e:
         print(f"[AIRROI] eccezione: {e}")
@@ -2254,6 +2351,24 @@ def generate_pdf_direct():
             _p_new = round(_p * _moltiplicatore) if _p else _p
             _occ_new = _occ_old
             data["fonte_prezzo"] = "ai_stima"
+
+        # Tabella "Analisi competitor": se AirROI ha fornito annunci comparabili
+        # reali (stessa chiamata gia' pagata per prezzo/occupazione), li usiamo
+        # al posto della tabella interamente inventata dall'AI — ultima tabella
+        # del report rimasta senza una fonte dati reale (trovato il 4 luglio,
+        # domanda diretta di Salvatore). Se il parsing non produce abbastanza
+        # righe valide, resta il metodo AI precedente, nessuna interruzione.
+        if _airroi and _airroi.get("comparable_listings"):
+            _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
+            if _comp_airroi:
+                _righe_comp, _media_comp = _comp_airroi
+                data["competitor"] = _righe_comp
+                data["media_nazionale"] = _media_comp
+                data["fonte_competitor"] = "airroi"
+            else:
+                data["fonte_competitor"] = "ai_stima"
+        else:
+            data["fonte_competitor"] = "ai_stima"
 
         if _p:
             data["prezzo_notte_stimato"] = _p_new
