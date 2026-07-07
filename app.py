@@ -25,21 +25,11 @@ import territorio_gps
 app = Flask(__name__)
 
 # ── AirROI: dato di mercato reale per il prezzo/notte ───────────────────────────
-# Sessione 46 — sostituisce, dove esiste un mercato reale, il prezzo/notte
-# generato dall'AI con un dato osservato (AirROI). Dove il mercato non esiste
-# (comuni piccoli senza annunci attivi), resta invariato il metodo precedente:
-# stima AI + moltiplicatore fisso per categoria.
-#
-# Config: la chiave va impostata come variabile d'ambiente AIRROI_API_KEY su
-# Render (Settings > Environment). Se manca, il sistema si comporta come oggi
-# (nessuna chiamata, fallback automatico su AI) — mai un errore per l'utente.
 AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
 AIRROI_BASE = "https://api.airroi.com"
 
 
 def _numero_da(d, *chiavi, default=None):
-    """Primo valore numerico trovato tra le chiavi candidate di un dict,
-    tollerando nomi di campo diversi tra provider/versioni API."""
     for k in chiavi:
         v = d.get(k)
         if isinstance(v, (int, float)):
@@ -60,19 +50,6 @@ def _tipologia_da_camere(n_camere):
 
 
 def _costruisci_competitor_da_airroi(comparable_listings, valuta="EUR"):
-    """
-    Sostituisce la tabella "Analisi competitor" (prima interamente inventata
-    dall'AI) con un'aggregazione degli annunci comparabili reali restituiti
-    da AirROI nella stessa chiamata di /calculator/estimate — dato di mercato
-    vero, zero costo aggiuntivo. Raggruppa per numero di camere, calcola medie
-    di prezzo/occupazione/rating per gruppo più una riga di media generale.
-
-    Parsing difensivo: i nomi dei campi nella risposta reale non sono stati
-    verificati con una chiamata live (solo dalla documentazione pubblica) —
-    si tentano più alias plausibili per ogni campo. Se non si riesce a
-    ricavare un numero minimo di righe valide, si ritorna None e chi chiama
-    ricade sul metodo precedente (AI) senza mai rompere il PDF.
-    """
     if not comparable_listings:
         return None
     gruppi = {}
@@ -110,7 +87,7 @@ def _costruisci_competitor_da_airroi(comparable_listings, valuta="EUR"):
         rating_medio = round(sum(g["rating"]) / len(g["rating"]), 1) if g["rating"] else "\u2014"
         righe.append([tipologia, str(n), f"{valuta} {prezzo_medio}",
                       f"{occ_media}%" if occ_media != "\u2014" else "\u2014", str(rating_medio)])
-    righe = righe[:4]  # coerente col layout a 4 righe + media, come prima
+    righe = righe[:4]
 
     media_prezzo = round(sum(tutti_prezzi) / len(tutti_prezzi))
     media_occ = round(sum(tutte_occ) / len(tutte_occ)) if tutte_occ else "\u2014"
@@ -122,7 +99,6 @@ def _costruisci_competitor_da_airroi(comparable_listings, valuta="EUR"):
 
 
 def _numero_da_stringa(valore, default=1):
-    """Estrae il primo intero da stringhe tipo '2 camere' o '4 posti'. Tollera None/errori."""
     try:
         m = re.search(r"\d+", str(valore))
         return int(m.group()) if m else default
@@ -131,17 +107,6 @@ def _numero_da_stringa(valore, default=1):
 
 
 def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagni_raw=None, timeout_lookup=4, timeout_stima=6):
-    """
-    Due chiamate in sequenza:
-    1) /markets/lookup ($0.01) — verifica se esiste un mercato reale su queste coordinate.
-    2) /calculator/estimate ($0.20) — solo se il mercato esiste, stima prezzo/notte e occupazione.
-
-    Ritorna un dict {prezzo_notte_stimato, occupazione_percent} se il dato reale
-    esiste ed è valido, altrimenti None. Qualsiasi problema (chiave mancante,
-    coordinate assenti, timeout, rate limit, risposta malformata) ricade su None
-    senza mai sollevare eccezioni: chi chiama questa funzione deve poter sempre
-    fare fallback silenzioso sul metodo AI esistente.
-    """
     if not AIRROI_API_KEY or lat in (None, "") or lon in (None, ""):
         print(f"[AIRROI] skip — chiave assente o coordinate mancanti (lat={lat!r}, lon={lon!r})")
         return None
@@ -162,13 +127,6 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
         if r1.status_code != 200:
             return None
         mercato = r1.json()
-        # Bug trovato il 3 luglio (test Cortina): la risposta reale di /markets/lookup
-        # non contiene MAI una chiave "market_id" — conteneva solo full_name/country/
-        # region/locality/district. Il vecchio controllo su "market_id" era sempre
-        # falso, quindi ci si fermava qui su OGNI indirizzo, sempre e comunque prima
-        # di spendere i 0.20$ della stima. Il market_id non serve nemmeno alla
-        # chiamata successiva (/calculator/estimate usa lat/lon diretti). Nuovo
-        # criterio: procedi se il lookup ha risolto una localita' reale.
         if not mercato or not (mercato.get("locality") or mercato.get("region") or mercato.get("country")):
             print(f"[AIRROI] lookup non ha risolto nessuna localita': {mercato}")
             return None
@@ -196,24 +154,11 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
             print(f"[AIRROI] adr/occupancy mancanti nella risposta: {stima}")
             return None
 
-        # La risposta include già, senza costo aggiuntivo, la distribuzione mensile
-        # dei ricavi (12 valori, Gen->Dic) — è il segnale reale di stagionalità che
-        # usiamo per sostituire la curva prezzo/notte generata dall'AI (Sessione 46,
-        # seconda parte). Se il campo manca o non ha 12 valori validi, si ignora e
-        # si tiene solo il dato annuale — nessun errore, solo meno dettaglio.
         distribuzione_mensile = stima.get("monthly_revenue_distributions")
         if not (isinstance(distribuzione_mensile, list) and len(distribuzione_mensile) == 12
                 and all(isinstance(v, (int, float)) and v > 0 for v in distribuzione_mensile)):
             distribuzione_mensile = None
 
-        # La risposta include gia', senza costo aggiuntivo, fino a 50 annunci
-        # comparabili reali usati per calcolare la stima (comparable_listings).
-        # Da oggi (4 luglio) li usiamo per costruire la tabella "Analisi
-        # competitor" del PDF, che prima era interamente inventata dall'AI —
-        # mai collegata ne' ad AirROI ne' a Google, unica tabella rimasta
-        # senza una fonte reale. Se il campo manca/e' vuoto/malformato: nessun
-        # errore, si ricade sul metodo AI precedente (fallback silenzioso,
-        # stesso principio di distribuzione_mensile sopra).
         comparable_listings = stima.get("comparable_listings")
         if not (isinstance(comparable_listings, list) and len(comparable_listings) >= 3):
             comparable_listings = None
@@ -231,41 +176,13 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
 
 
 def _mesi_affidabili(oggi=None):
-    """
-    Restituisce gli indici (0=Gen...11=Dic) dei 3 mesi piu' affidabili rispetto
-    alla data di generazione del report: i dati AirROI riflettono le condizioni
-    di mercato *di adesso*, quindi i mesi immediatamente successivi al report
-    sono quelli in cui la stima e' piu' vicina alla realta' (oltre, e' proiezione
-    stagionale). Regola: se si genera entro il giorno 15 del mese, si parte dal
-    mese corrente; dopo il 15, si parte dal mese successivo (il mese in corso e'
-    ormai troppo avanzato per essere "il prossimo periodo prenotabile").
-    """
     import datetime
     oggi = oggi or datetime.date.today()
-    mese_partenza = (oggi.month - 1) if oggi.day <= 15 else oggi.month  # 0-based, con wrap sotto
+    mese_partenza = (oggi.month - 1) if oggi.day <= 15 else oggi.month
     return [(mese_partenza + i) % 12 for i in range(3)]
 
 
 def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_annuale=None):
-    """
-    Sostituisce la colonna prezzo/notte E la colonna occupazione della tabella
-    12 mesi con valori derivati dalla stagionalita' reale di AirROI (stesso peso
-    mensile per entrambe le colonne), mantenendo la media annua coerente con
-    l'ADR e l'occupazione restituiti da /calculator/estimate.
-
-    Fix del 4 luglio (test Pozzuoli/Napoli): prima si toccava solo il prezzo, e
-    l'occupazione restava quella "qualitativa" generata liberamente dall'AI —
-    risultato, il grafico mensile mostrava una media (~65-68%) sistematicamente
-    diversa dal KPI annuale che pagavamo per avere corretto (42-53% da AirROI).
-    Decisione: quando esiste un dato AirROI reale, ha sempre ragione lui, mai
-    l'AI — stessa logica gia' applicata al prezzo, ora estesa all'occupazione.
-
-    Approssimazione dichiarata: monthly_revenue_distributions mescola prezzo e
-    occupazione (ricavo = prezzo x notti prenotate), non e' un ADR mensile puro
-    ne' una distribuzione di occupazione pura. Usarlo per pesare entrambe le
-    colonne e' la lettura piu' onesta possibile senza due endpoint mensili
-    dedicati — va verificato contro l'API viva.
-    """
     if not occ or not distribuzione_mensile or len(occ) != 12:
         return occ
     media = sum(distribuzione_mensile) / 12
@@ -300,10 +217,6 @@ DARK_TEXT    = HexColor("#1A1A2E")
 
 W, H = A4
 
-# ── Aeroporti italiani — lista fissa con coordinate (25/06/2026) ──────────────
-# Calcolo distanza/aeroporto di riferimento fatto qui in Python, non da Make/AI:
-# zero invenzioni, zero chiamata API aggiuntiva. Aggiornare solo se aprono/chiudono
-# scali commerciali (evento raro).
 AEROPORTI_ITALIA = [
     ("Aeroporto di Roma Fiumicino", 41.8003, 12.2389),
     ("Aeroporto di Roma Ciampino", 41.7994, 12.5949),
@@ -365,23 +278,10 @@ _DOTAZIONI_SINONIMI = {
 
 
 def _norm_dotazione(d):
-    """Nome canonico di una dotazione a partire da una variante scritta
-    dall'AI/form (es. 'cucina'/'terrazza' -> 'Cucina attrezzata'/'Terrazzo').
-    Unica fonte di verita' per pallini (page1) e descrizione testuale
-    (genera_descrizione_standard): prima erano due mappe separate e
-    disallineate — 'terrazza' non era riconosciuta come sinonimo di
-    'Terrazzo' nella mappa dei pallini, che quindi lo mostrava come assente
-    anche quando dichiarato presente (bug trovato nel test di Pozzuoli,
-    4 luglio)."""
     return _DOTAZIONI_SINONIMI.get(str(d or "").strip().lower(), str(d or "").strip())
 
 
 def _zona_sembra_valida(testo):
-    """False se il testo sembra un nome di zona in inglese invece che italiano
-    (bug trovato a Milano il 4 luglio: il reverse geocode ha restituito
-    'Zone 1 of Milan' invece di un quartiere reale tipo 'Brera' o 'Navigli' —
-    probabile mancanza del parametro lingua=it a monte, su Make.com). Meglio
-    mostrare '—' che un pezzo di inglese in un report italiano."""
     t = str(testo or "").strip()
     if not t:
         return True
@@ -389,7 +289,6 @@ def _zona_sembra_valida(testo):
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
-    """Distanza in linea d'aria tra due coordinate, in km."""
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -399,15 +298,6 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 def aeroporto_row(lat, lon, max_km=120):
-    """
-    Restituisce la riga [distanza, nome, impatto] per l'aeroporto piu' vicino.
-    L'aeroporto piu' vicino si individua SEMPRE con la linea d'aria (calcolo
-    Python, zero costo) — ma la distanza mostrata all'utente e' quella REALE
-    in auto (km + minuti), via Google Distance Matrix, perche' e' il dato che
-    conta per chi deve arrivarci (Sessione 45, feedback Salvatore). Se l'API
-    non risponde (rete, chiave assente, isole senza strada), si ricade sulla
-    linea d'aria come prima — nessun errore visibile nel PDF.
-    """
     try:
         lat = float(lat)
         lon = float(lon)
@@ -502,7 +392,6 @@ def stage_color(stage):
 
 
 def wrap_text(c, text, x, y, max_w, font, size, line_h):
-    """Stampa testo con a-capo automatico. Supporta tag [B]...[/B]."""
     segments = []
     remaining = text
     while "[B]" in remaining:
@@ -551,7 +440,6 @@ def wrap_text(c, text, x, y, max_w, font, size, line_h):
 
 
 def draw_wrapped_text(c, text, x, y, max_w, font_name, size, line_h, color=None):
-    """Testo semplice con a-capo."""
     if color:
         c.setFillColor(color)
     words = text.split()
@@ -579,7 +467,6 @@ def page1(c, D):
     draw_footer(c, 1)
     y = H - 22 * mm
 
-    # Pill REPORT BASE
     pill_label = "REPORT BASE"
     c.setFont("Helvetica-Bold", 10)
     pl_w = c.stringWidth(pill_label, "Helvetica-Bold", 10) + 12 * mm
@@ -590,7 +477,6 @@ def page1(c, D):
     c.drawCentredString(W / 2, y - pl_h + 2.5 * mm, pill_label)
     y -= pl_h + 4 * mm
 
-    # Pill IL TUO INVESTIMENTO
     sub_label = "IL TUO INVESTIMENTO"
     c.setFont("Helvetica", 8)
     sl_w = c.stringWidth(sub_label, "Helvetica", 8) + 10 * mm
@@ -601,13 +487,12 @@ def page1(c, D):
     c.drawCentredString(W / 2, y - sl_h + 1.8 * mm, sub_label)
     y -= sl_h + 5 * mm
 
-    # Box indirizzo — font scaling dinamico: riduce fino a 10pt per indirizzi lunghi
     box_h = 16 * mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(14 * mm, y - box_h, W - 28 * mm, box_h, fill=1, stroke=0)
     c.setFillColor(WHITE)
     indirizzo_txt = D.get("indirizzo", "")
-    max_w_ind = W - 36 * mm  # margine interno box
+    max_w_ind = W - 36 * mm
     for font_size in [18, 16, 14, 12, 10]:
         c.setFont("Helvetica-Bold", font_size)
         if c.stringWidth(indirizzo_txt, "Helvetica-Bold", font_size) <= max_w_ind:
@@ -615,7 +500,6 @@ def page1(c, D):
     c.drawCentredString(W / 2, y - box_h / 2 - font_size * 0.18 * mm, indirizzo_txt)
     y -= box_h + 5 * mm
 
-    # Scheda immobile
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Scheda immobile")
     y -= 2 * mm
     col_w = (W - 28 * mm) / 2
@@ -651,7 +535,6 @@ def page1(c, D):
         c.drawString(14 * mm + col_w + label_col_w + 2 * mm, ry - row_h + 2.5 * mm, rv)
     y -= len(fields_l) * row_h + 4 * mm
 
-    # Dotazioni
     c.setFont("Helvetica", 7)
     c.setFillColor(TEAL)
     c.drawString(14 * mm, y, "Dotazioni presenti")
@@ -680,7 +563,6 @@ def page1(c, D):
         px += pw + 2 * mm
     y -= pill_h + 5 * mm
 
-    # Situazione attuale
     c.setFont("Helvetica", 7)
     c.setFillColor(TEAL)
     c.drawString(14 * mm, y, "Situazione attuale dichiarata")
@@ -704,7 +586,6 @@ def page1(c, D):
         px += pw + 2 * mm
     y -= pill_h + 5 * mm
 
-    # Descrizione
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Descrizione immobile")
     y -= 5 * mm
     y = wrap_text(c, D.get("descrizione", ""), 14 * mm, y, W - 28 * mm, "Helvetica", 8, 5.5 * mm)
@@ -719,14 +600,11 @@ def page2(c, D):
     draw_footer(c, 2)
     y = H - 22 * mm
 
-    # POI — STRUTTURA A 5 SLOT FISSI (25/06/2026)
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Posizione e punti di interesse")
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Distanze e impatto sulla domanda di prenotazioni")
     y -= 6 * mm
 
-    # Etichette di slot FISSE, scritte qui in Python: non arrivano mai da Make/AI.
-    # Garantisce ordine e numero di righe sempre identici, per qualsiasi comune.
     SLOT_LABELS = [
         "Trasporto pubblico",
         "Comune di riferimento",
@@ -736,26 +614,13 @@ def page2(c, D):
     ]
 
     poi_rows_raw = [list(row) for row in D.get("poi", [])]
-    # Sicurezza: se Make invia meno di 5 righe, le mancanti si completano con trattini
-    # (mai una riga inventata); se ne invia più di 5, le eccedenti vengono ignorate.
     while len(poi_rows_raw) < 5:
         poi_rows_raw.append(["\u2014", "\u2014", "\u2014"])
     poi_rows_raw = poi_rows_raw[:5]
-    # Slot 5 (Aeroporto, indice 4) e' SEMPRE calcolato qui in Python, non da Make/AI:
-    # sovrascrive qualsiasi cosa arrivi da fuori per questa riga specifica.
     poi_rows_raw[4] = aeroporto_row(D.get("lat"), D.get("long"))
-    # Slot 2 (Comune di riferimento, indice 1) forzato a "—" per capoluogo/grande_citta:
-    # per queste due categorie il concetto non ha senso (l'immobile e' gia' nella
-    # citta' di riferimento). La regola 8 del prompt lo chiede gia' all'AI dalla
-    # Sessione 42, ma continua a fallire in modo intermittente (visto di nuovo su
-    # Napoli il 4 luglio: e' uscita "Basilica di Santa Chiara" invece di "—") —
-    # stessa logica gia' applicata all'Aeroporto: mai lasciare all'AI una decisione
-    # che Python puo' prendere in modo deterministico al 100% delle volte.
     if str(D.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
         poi_rows_raw[1] = ["\u2014", "\u2014", "\u2014"]
 
-    # Celle come Paragraph: il testo va sempre a capo dentro la propria colonna,
-    # non invade mai quella vicina anche con nomi/distanze molto lunghi.
     style_cell_bold = ParagraphStyle("poiCellBold", fontName="Helvetica-Bold", fontSize=8, textColor=BLUE_NIGHT, leading=10)
     style_cell_reg  = ParagraphStyle("poiCellReg",  fontName="Helvetica",      fontSize=8, textColor=BLUE_NIGHT, leading=10)
     style_header    = ParagraphStyle("poiHeader",   fontName="Helvetica-Bold", fontSize=8, textColor=WHITE,      leading=10)
@@ -785,7 +650,6 @@ def page2(c, D):
     tbl.drawOn(c, 14 * mm, y - tbl._height)
     y -= tbl._height + 7 * mm
 
-    # Occupazione stagionale
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Occupazione stagionale")
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Andamento mensile stimato - prezzi e tassi di riempimento")
@@ -841,7 +705,6 @@ def page2(c, D):
     tbl_dx.drawOn(c, 14 * mm + half + gap, y - tbl_h)
     y -= tbl_h + 5 * mm
 
-    # Grafico linea occupazione
     graph_h = 62 * mm
     graph_w = W - 28 * mm
     gx, gy = 14 * mm, y - graph_h
@@ -859,7 +722,6 @@ def page2(c, D):
         c.setFillColor(MUTED)
         c.drawString(lx + 4 * mm, gy + graph_h - 5 * mm, lbl)
         lx += c.stringWidth(lbl, "Helvetica", 6.5) + 10 * mm
-    # Zona grafico: 16mm in basso riservati alle label (mese + EUR), punti partono da 17mm
     bottom_margin = 17 * mm
     top_margin = 10 * mm
     plot_h = graph_h - bottom_margin - top_margin
@@ -879,7 +741,6 @@ def page2(c, D):
     for i, row in enumerate(occ):
         px_dot = gx + side_margin + i * step
         rate = row[1]
-        # Clamp rate nel range per sicurezza
         rate_clamped = max(min_r, min(max_r, rate))
         py_dot = gy + bottom_margin + ((rate_clamped - min_r) / (max_r - min_r)) * plot_h
         points.append((px_dot, py_dot, row[3], rate))
@@ -897,16 +758,13 @@ def page2(c, D):
         affidabile = i in mesi_affidabili_idx
         r = 2.5 * mm if stage == "Peak" else 1.8 * mm
         if affidabile:
-            r += 0.7 * mm  # punto leggermente ingrandito rispetto agli altri 9 mesi
+            r += 0.7 * mm
         c.setFillColor(col)
         c.circle(px_dot, py_dot, r, fill=1, stroke=0)
         if affidabile:
             c.setStrokeColor(VERDE_DATO_REALE)
             c.setLineWidth(1.2)
             c.circle(px_dot, py_dot, r + 1 * mm, fill=0, stroke=1)
-            # Badge "sollevato": piccolo rettangolo arrotondato verde dietro l'etichetta,
-            # con un filo d'ombra sotto per dare l'effetto di rilievo (il PDF e' statico,
-            # non puo' pulsare davvero — questo simula visivamente lo stesso richiamo).
             badge_w, badge_h = 8.5 * mm, 4.2 * mm
             bx, by = px_dot - badge_w / 2, py_dot + 2.2 * mm
             c.setFillColor(HexColor("#B9C7BE"))
@@ -920,7 +778,6 @@ def page2(c, D):
             c.setFont("Helvetica-Bold", 6)
             c.setFillColor(BLUE_NIGHT)
             c.drawCentredString(px_dot, py_dot + 3 * mm, f"{rate}%")
-    # Label mese e EUR sotto la linea del grafico — sempre fuori dalla zona pallini
     for i, row in enumerate(occ):
         px_dot = gx + side_margin + i * step
         affidabile = i in mesi_affidabili_idx
@@ -931,9 +788,6 @@ def page2(c, D):
         c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
         c.drawCentredString(px_dot, gy + 4 * mm, f"EUR {row[2]}")
 
-    # Disclaimer prezzi sotto grafico — con a-capo automatico (bug: prima usciva
-    # dai bordi pagina su una sola riga con drawCentredString, senza vincolo di
-    # larghezza). Ora è un Paragraph centrato, wrappato entro la larghezza utile.
     disclaimer_prezzi = (
         "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
         "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
@@ -1079,7 +933,6 @@ def page3(c, D):
     tbl_eco.drawOn(c, 14 * mm, y - tbl_eco._height)
     y -= tbl_eco._height + 5 * mm
 
-    # 4 card riepilogo
     total_w = W - 28 * mm
     big_w = total_w * 0.30
     small_w = (total_w - big_w - 6 * mm) / 3
@@ -1103,7 +956,7 @@ def page3(c, D):
         c.roundRect(cx, cy, cw, ch, 2 * mm, fill=0, stroke=1)
         c.setFont("Helvetica-Bold" if is_gold else "Helvetica", 8 if is_gold else 7)
         c.setFillColor(GOLD if is_gold else MUTED)
-        c.drawCentredString(cx + cw / 2, cy + ch - 5 * mm, lbl)
+        c.drawCentredString(cx + cw / 2, y - big_h + ch - 5 * mm if not is_gold else cy + ch - 5 * mm, lbl)
         val_y = y - big_h + (big_h - small_h) / 2 + small_h / 2 - 4 * mm
         c.setFont("Helvetica-Bold", 14 if is_gold else 12)
         c.setFillColor(tc)
@@ -1111,13 +964,11 @@ def page3(c, D):
         cx += cw + 2 * mm
     y -= big_h + 4 * mm
 
-    # Nota
     nota = ("I valori sopra riportati sono orientativi e basati esclusivamente sulle informazioni fornite. "
             "Non includono spese personali, fiscali o societarie.")
     y = draw_wrapped_text(c, nota, 14 * mm, y - 2 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
     y -= 4 * mm
 
-    # Confronto affitto
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Confronto con affitto tradizionale")
     y -= 5 * mm
     conf_data = [
@@ -1154,7 +1005,6 @@ def page4(c, D):
     draw_footer(c, 4)
     y = H - 22 * mm
 
-    # Competitor
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm,
                             f"Analisi competitor - {D.get('competitor_zona', '')}")
     y -= 3 * mm
@@ -1190,7 +1040,6 @@ def page4(c, D):
     tbl_comp.drawOn(c, 14 * mm, y - tbl_comp._height)
     y -= tbl_comp._height + 7 * mm
 
-    # KPI
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Riepilogo indicatori di mercato")
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Sintesi conclusiva dei valori chiave calcolati per il tuo immobile")
@@ -1231,7 +1080,6 @@ def page4(c, D):
                  "Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona.")
     y -= 9 * mm
 
-    # Upsell box
     upsell_h = 30 * mm
     c.setFillColor(GOLD_LIGHT)
     c.roundRect(14 * mm, y - upsell_h, W - 28 * mm, upsell_h, 3 * mm, fill=1, stroke=0)
@@ -1252,7 +1100,6 @@ def page4(c, D):
     c.drawString(18 * mm, uy, "Scopri il Report Strategico su reportup.it  |  EUR 149 - pagamento unico")
     y -= upsell_h + 6 * mm
 
-    # Disclaimer
     c.setFont("Helvetica-Bold", 7)
     c.setFillColor(MUTED)
     c.drawString(14 * mm, y, "DISCLAIMER - LETTURA OBBLIGATORIA")
@@ -1326,7 +1173,6 @@ def page5(c, D):
 
     y -= 8 * mm
 
-    # Box ringraziamento
     box_h = 82 * mm
     box_x, box_w = 14 * mm, W - 28 * mm
     box_y = y - box_h
@@ -1401,12 +1247,6 @@ def page5(c, D):
 # ── Generatore PDF ────────────────────────────────────────────────────────────
 
 def normalize_data(data):
-    """
-    Gestisce 3 formati possibili di output AI:
-    1. Flat: {"tipologia": ..., "indirizzo": ..., "occupazione": [...]}
-    2. Annidato report.*: {"report": {"immobile": {"caratteristiche": {...}}}}
-    3. Annidato immobile.*: {"immobile": {"tipologia": ..., "dotazioni": [...]}}
-    """
     if "tipologia" in data and "indirizzo" in data and "occupazione" in data:
         return data
 
@@ -1488,14 +1328,6 @@ def normalize_data(data):
     return flat
 
 
-# ── Descrizione standard per categoria (Sessione 41) ─────────────────────────
-# File madre dei template: RU_09_Descrizioni_Standard.docx
-# Sovrascrive sempre il campo "descrizione" dell'AI: zero invenzioni geografiche,
-# coerenza garantita con la tabella POI gia' verificata.
-# Per oggi: capoluogo / grande_citta usano il template dedicato con zona; tutto
-# il resto (comune_minore) usa il template residenziale, in attesa della
-# sotto-classificazione costiero/lacuale/montano (sessione dedicata).
-
 def _join_lista_e(items):
     items = [i for i in items if i]
     if not items:
@@ -1506,7 +1338,6 @@ def _join_lista_e(items):
 
 
 def _concorda_numero(valore, singolare, plurale):
-    """Restituisce 'N singolare' se N==1, altrimenti 'N plurale'. Tollera stringhe/valori non numerici."""
     try:
         n = int(str(valore).strip())
     except (ValueError, TypeError):
@@ -1516,8 +1347,6 @@ def _concorda_numero(valore, singolare, plurale):
 
 _WIKI_CACHE = {}
 
-# Sezioni Wikipedia da cercare per categoria, in ordine di priorità.
-# Per ogni categoria: prima sezione trovata con testo utile vince.
 _WIKI_SEZIONI_PER_CATEGORIA = {
     "grande_citta":        ["Monumenti e luoghi d'interesse", "Luoghi di interesse", "Arte e cultura", "Patrimonio"],
     "capoluogo":           ["Monumenti e luoghi d'interesse", "Luoghi di interesse", "Arte e cultura", "Patrimonio"],
@@ -1529,60 +1358,32 @@ _WIKI_SEZIONI_PER_CATEGORIA = {
 
 
 def _pulisci_wikitext(testo):
-    """
-    Pulisce il wikitext grezzo di Wikipedia rimuovendo markup, template,
-    riferimenti e lasciando solo testo leggibile in italiano.
-    """
-    # Rimuovi template {{...}} anche annidati
     for _ in range(5):
         testo = re.sub(r'\{\{[^{}]*\}\}', '', testo)
-    # Rimuovi gallery <gallery>...</gallery>
     testo = re.sub(r'<gallery[^>]*>.*?</gallery>', '', testo, flags=re.DOTALL)
-    # Rimuovi tag HTML con contenuto
     testo = re.sub(r'<ref[^>]*>.*?</ref>', '', testo, flags=re.DOTALL)
     testo = re.sub(r'<[^>]+>', '', testo)
-    # Rimuovi intestazioni == Titolo == di qualsiasi livello
     testo = re.sub(r'={2,}.*?={2,}', '', testo)
-    # Rimuovi link a file/immagini [[File:...]] [[Immagine:...]] — iterativo,
-    # dall'interno verso l'esterno (come i template sopra). Necessario per
-    # didascalie con link annidati, es. [[File:Duomo.jpg|thumb|patrimonio
-    # dell'umanità UNESCO assieme al [[Cenacolo vinciano]]]] — un singolo
-    # passaggio con [^\]]* si fermava alla PRIMA ']]' trovata (quella del link
-    # annidato), lasciando la ']]' esterna come residuo nel testo finale
-    # (bug trovato nel test di Milano, 4 luglio: comparso testo con "]]" crudo
-    # nella descrizione del cliente). [^\[\]]* forza il match sulla coppia più
-    # interna ad ogni passaggio, senza poter scavalcare bracket annidati.
     for _ in range(5):
         nuovo = re.sub(r'\[\[(?:File|Immagine|Image|Media):[^\[\]]*\]\]', '', testo, flags=re.IGNORECASE)
         if nuovo == testo:
             break
         testo = nuovo
-    # Rimuovi link interni [[Testo|Display]] → Display, [[Testo]] → Testo —
-    # stesso approccio iterativo, stessa ragione.
     for _ in range(5):
         nuovo = re.sub(r'\[\[(?:[^\[\]|]*\|)?([^\[\]]*)\]\]', r'\1', testo)
         if nuovo == testo:
             break
         testo = nuovo
-    # Rimuovi link esterni
     testo = re.sub(r'\[https?://\S+\s+([^\]]+)\]', r'\1', testo)
     testo = re.sub(r'\[https?://\S+\]', '', testo)
-    # Rimuovi formattazione '''grassetto''' e ''corsivo''
     testo = re.sub(r"'{2,3}", '', testo)
-    # Rimuovi righe che contengono nomi di file immagine (.jpg .png .svg ecc)
     righe = testo.split('\n')
     righe = [r for r in righe if not re.search(r'\.(jpg|jpeg|png|svg|gif|tiff|webp)', r, re.IGNORECASE)]
     testo = '\n'.join(righe)
-    # Rimuovi parentesi con codici/coordinate/anni brevi
     testo = re.sub(r'\([^)]{0,8}\)', '', testo)
-    # Rimuovi righe troppo corte o che iniziano con * # : ; (liste wikitext)
     righe = testo.split('\n')
     righe = [r.strip() for r in righe if len(r.strip()) > 30 and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))]
     testo = ' '.join(righe)
-    # Parole chiave tipiche dei parametri di didascalia file (thumb|miniatura|
-    # upright|200px|...) che restano come "parola|" quando un link annidato
-    # dentro la didascalia viene risolto prima del link File esterno — stesso
-    # bug di Milano, residuo minore dopo il fix principale sopra.
     for _ in range(3):
         nuovo = re.sub(
             r'\b(?:thumb|thumbnail|miniatura|riquadro|right|left|center|centro|'
@@ -1591,12 +1392,7 @@ def _pulisci_wikitext(testo):
         if nuovo == testo:
             break
         testo = nuovo
-    # Normalizza spazi
     testo = re.sub(r'\s+', ' ', testo).strip()
-    # Rete di sicurezza finale: qualsiasi bracket [[ ]] [ ] sopravvissuto alla
-    # pulizia (pattern imprevisti, non solo quello di Milano) non deve MAI
-    # arrivare nel PDF del cliente — meglio perdere qualche carattere che
-    # mostrare wikitext grezzo in un report che il cliente paga.
     testo = re.sub(r'\[+|\]+', '', testo)
     testo = re.sub(r'\s+', ' ', testo).strip()
     testo = re.sub(r'^[,;.\s]+', '', testo)
@@ -1604,13 +1400,7 @@ def _pulisci_wikitext(testo):
 
 
 def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
-    """
-    Cerca una sezione specifica nella pagina Wikipedia e ne restituisce
-    le prime 2-3 frasi utili, pulite dal wikitext.
-    Ritorna None se la sezione non esiste o non contiene testo utile.
-    """
     try:
-        # Prima: ottieni l'indice delle sezioni
         resp_sections = requests.get(
             "https://it.wikipedia.org/w/api.php",
             params={
@@ -1627,7 +1417,6 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
         dati_sections = resp_sections.json()
         sections = dati_sections.get("parse", {}).get("sections", [])
 
-        # Trova il numero della sezione cercata (confronto case-insensitive, parziale)
         section_index = None
         nome_lower = nome_sezione.lower()
         for s in sections:
@@ -1637,7 +1426,6 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
         if section_index is None:
             return None
 
-        # Seconda: scarica il wikitext di quella sezione
         resp_text = requests.get(
             "https://it.wikipedia.org/w/api.php",
             params={
@@ -1658,8 +1446,6 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
 
         testo = _pulisci_wikitext(wikitext)
 
-        # Se la sezione principale è vuota (es. Roma "Monumenti" è solo gallerie),
-        # prova le sottosezioni immediate cercando testo utile
         if not testo or len(testo) < 30:
             subsections = [s for s in sections if
                            s.get("toclevel", 0) == 2 and
@@ -1684,7 +1470,6 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
         if not testo or len(testo) < 30:
             return None
 
-        # Prendi le prime frasi complete fino a ~300 caratteri
         frasi = [f.strip() for f in testo.split(". ") if len(f.strip()) > 20]
         risultato = ""
         for frase in frasi[:4]:
@@ -1703,14 +1488,6 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
 
 
 def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocategoria=None, timeout=3):
-    """
-    Estrae testo fattuale dalla pagina Wikipedia del comune, cercando
-    sezioni tematiche specifiche per categoria (monumenti per grandi città,
-    sagre/tradizioni per comuni minori, spiagge per costieri, ecc.).
-    Fallback sulla prima frase introduttiva se nessuna sezione è trovata.
-    Cache in memoria: stessa URL non rifà chiamate di rete nella stessa sessione.
-    Licenza: Wikipedia CC BY-SA — attribuzione nel footer PDF (pagina 1).
-    """
     if not wikipedia_url:
         return None
 
@@ -1722,10 +1499,6 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
     try:
         titolo = wikipedia_url.rstrip("/").rsplit("/", 1)[-1]
 
-        # Determina quale lista di sezioni usare.
-        # Un capoluogo/grande_citta può essere ANCHE costiero/lacuale/montano (es. Cagliari,
-        # Napoli, Trieste): in quel caso si uniscono le sezioni tema-città con quelle
-        # tema-territorio, provando prima le seconde perché più distintive del posto.
         if categoria in ("grande_citta", "capoluogo"):
             sezioni_da_cercare = list(_WIKI_SEZIONI_PER_CATEGORIA.get(categoria, []))
             if sottocategoria and sottocategoria in _WIKI_SEZIONI_PER_CATEGORIA:
@@ -1735,14 +1508,12 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
             cat_key = sottocategoria if sottocategoria else "residenziale_minore"
             sezioni_da_cercare = _WIKI_SEZIONI_PER_CATEGORIA.get(cat_key, _WIKI_SEZIONI_PER_CATEGORIA["residenziale_minore"])
 
-        # Prova ogni sezione in ordine finché una funziona
         for nome_sezione in sezioni_da_cercare:
             testo = _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=timeout)
             if testo:
                 risultato = testo
                 break
 
-        # Fallback: prima frase introduttiva (come prima)
         if not risultato:
             resp = requests.get(
                 f"https://it.wikipedia.org/api/rest_v1/page/summary/{titolo}",
@@ -1757,7 +1528,6 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
                     estratto = re.sub(r"\s+", " ", estratto).strip()
                     if estratto:
                         prima_frase = estratto.split(". ")[0].rstrip(". ").strip() + "."
-                        # Scarta frasi puramente amministrative ("X è un comune italiano...")
                         if 30 <= len(prima_frase) <= 220 and "comune italiano" not in prima_frase:
                             risultato = prima_frase
 
@@ -1781,14 +1551,6 @@ def _target_da_posti_letto(posti_letto):
 
 
 def _pulisci_distanza_per_frase(distanza):
-    """
-    Ripulisce il testo 'distanza' prima di infilarlo in una frase che gia'
-    inizia con 'a'/'A ' (es. 'X si trova a {distanza}'). L'AI a volte scrive
-    la distanza con una propria 'A' iniziale e ordine invertito ('A piedi 5
-    min' invece di '5 min a piedi'), generando frasi rotte tipo 'si trova a A
-    piedi 5 min'. Qui si toglie la 'A' iniziale duplicata e, quando possibile,
-    si riordina in una forma naturale ('X min a piedi', 'X km in auto').
-    """
     if not distanza or distanza in ("\u2014", "-"):
         return distanza
     t = str(distanza).strip()
@@ -1800,12 +1562,6 @@ def _pulisci_distanza_per_frase(distanza):
     m = re.match(r'^auto\s+(.+)$', t, flags=re.IGNORECASE)
     if m:
         return f"{m.group(1)} in auto"
-    # Caso generico: l'AI a volte antepone un'etichetta descrittiva prima della
-    # misura vera — es. "Negozi essenziali 400 m", "Monumento storico 1 km"
-    # (trovato nel test di Roma, 4 luglio: uscito "si trova a Negozi essenziali
-    # 400 m"). Se il testo non inizia gia' con una cifra ma finisce con un
-    # pattern numero+unita' riconoscibile, si tiene solo quella parte,
-    # scartando l'etichetta iniziale invece di infilarla intera nella frase.
     if not t[:1].isdigit():
         m2 = re.search(r'(\d[\d.,]*\s*(?:km|m|min\.?|ore|h))\s*$', t, flags=re.IGNORECASE)
         if m2 and m2.group(1).strip() != t:
@@ -1814,12 +1570,6 @@ def _pulisci_distanza_per_frase(distanza):
 
 
 _COSTI_PER_TIPOLOGIA = [
-    # (frammento da cercare nella tipologia, pulizie/cambio, biancheria/anno,
-    #  utenze/anno, manutenzione/anno) — tabella confermata da Salvatore il 3
-    # luglio, basata su benchmark reali di mercato per gestione B&B/affitti
-    # brevi in Italia. Valore FISSO per tipologia, non piu' un range che
-    # doveva "adattarsi": piu' semplice da leggere e impossibile da
-    # contraddire. Ordine dal piu' specifico.
     ("villa", 85, 750, 1300, 900), ("casa indipendente", 85, 750, 1300, 900),
     ("appartamento", 65, 600, 1000, 650), ("4+", 65, 600, 1000, 650), ("grande", 65, 600, 1000, 650),
     ("trilocale", 55, 500, 850, 500),
@@ -1830,9 +1580,6 @@ _COSTI_PER_TIPOLOGIA = [
 
 
 def _costi_per_tipologia(tipologia):
-    """Valori fissi di pulizie/biancheria/utenze/manutenzione per la
-    tipologia dichiarata (sempre obbligatoria nel form). Fallback prudente
-    e centrale se la tipologia non è riconoscibile."""
     t = str(tipologia or "").strip().lower()
     for frammento, pulizie, biancheria, utenze, manutenzione in _COSTI_PER_TIPOLOGIA:
         if frammento in t:
@@ -1841,17 +1588,6 @@ def _costi_per_tipologia(tipologia):
 
 
 def _calcola_costi_fissi_deterministici(data):
-    """
-    Pulizie, biancheria, utenze e manutenzione — scoperto il 3 luglio
-    (Sessione con Salvatore): erano generati liberamente dall'AI dentro un
-    range fisso identico per qualsiasi immobile (es. manutenzione 200-600€/
-    anno anche per una villa con piscina), quindi non scalavano con la
-    dimensione reale della proprietà, e il "valore adottato" a volte cadeva
-    fuori dal range dichiarato nello stesso PDF. Ora presi da una tabella
-    fissa per tipologia (mai dall'AI, mai calcolati da superficie/m² —
-    campo opzionale, quindi inaffidabile come base). Necessario anche in
-    vista dell'Europa: non potremo calibrare a mano ogni mercato/paese.
-    """
     pulizie, biancheria, utenze, manutenzione = _costi_per_tipologia(data.get("tipologia"))
     dotazioni = set(data.get("dotazioni_presenti") or [])
     ha_piscina = "Piscina" in dotazioni
@@ -1872,9 +1608,6 @@ _ETICHETTE_SLOT_POI = {
 
 
 def _sembra_etichetta_categoria(testo):
-    """True se il testo è un'etichetta di categoria (es. 'Servizi essenziali',
-    'Metro e trasporto pubblico') invece del nome proprio di un luogo — segnale
-    che l'AI ha invertito per errore i campi distanza/nome nella riga POI."""
     t = str(testo or "").strip().lower()
     if not t:
         return False
@@ -1884,8 +1617,6 @@ def _sembra_etichetta_categoria(testo):
 
 
 def _sembra_distanza(testo):
-    """True se il testo somiglia a una distanza/tempo di percorrenza reale
-    (cifre, o parole tipiche 'piedi'/'auto'/'min'/'km'/'in loco')."""
     t = str(testo or "").strip().lower()
     if any(ch.isdigit() for ch in t):
         return True
@@ -1893,13 +1624,6 @@ def _sembra_distanza(testo):
 
 
 def _correggi_poi_invertiti(poi):
-    """Ripara righe POI dove l'AI ha invertito distanza e nome — es. Napoli,
-    4 luglio: riga 'Elemento caratteristico' arrivata come
-    distanza='Fermata Umberto I - Duomo', nome='Metro e trasporto pubblico'
-    (esattamente al contrario). Senza questa correzione sia la tabella che la
-    descrizione mostrano il dato scambiato in modo plausibile ma sbagliato.
-    Se il pattern non è chiaramente riconoscibile la riga resta invariata —
-    mai indovinare quando il segnale non è netto."""
     corrette = []
     for row in poi:
         distanza, nome, impatto = (list(row) + ["\u2014", "\u2014", "\u2014"])[:3]
@@ -1910,17 +1634,10 @@ def _correggi_poi_invertiti(poi):
 
 
 def _e_distanza_numerica(testo):
-    """True se il testo contiene almeno una cifra (distanza vera, es. '2,3 km',
-    '5 min a piedi'). False se l'AI ha scritto una frase descrittiva al posto
-    di un numero (es. 'Raggiungibile con funivie', 'Nessun collegamento diretto').
-    Generalizza il fix del 3 luglio, che copriva solo il caso letterale 'in loco':
-    ora qualsiasi distanza senza cifre viene trattata come frase autonoma invece
-    di aggiungere eccezioni una per una."""
     return any(ch.isdigit() for ch in str(testo or ""))
 
 
 def _poi_riga_frase(poi, idx):
-    """Frase pronta dalla riga POI all'indice idx, o stringa vuota se assente."""
     try:
         distanza, nome, _impatto = (list(poi[idx]) + ["\u2014", "\u2014", "\u2014"])[:3]
     except (IndexError, TypeError):
@@ -1932,21 +1649,11 @@ def _poi_riga_frase(poi, idx):
     if dp.lower().startswith("in loco"):
         return f"{nome} si trova in loco."
     if not _e_distanza_numerica(dp):
-        # Distanza descrittiva, non numerica: frase autonoma, senza "a" davanti
-        # (evita rotture tipo "X si trova a Raggiungibile con funivie.")
         return f"{nome} \u2014 {dp}."
     return f"{nome} si trova a {dp}."
 
 
 def genera_descrizione_standard(data):
-    """
-    Descrizione standard a 4 blocchi fissi (Sessione 44 — vedi RU_09_Descrizioni_Standard.docx):
-    Blocco 1: immobile (tipologia, superficie, camere, bagni, posti letto, TUTTE le dotazioni)
-    Blocco 2: contesto (dati verificati tabella POI — trasporto, comune rif, elemento, servizi)
-    Blocco 3: attrattiva (Wikipedia tematico per categoria — condizionale, omesso se assente)
-    Blocco 4: target e chiusura evocativa (deterministica per categoria)
-    Zero invenzioni: ogni frase si basa solo su dati verificati già presenti in data.
-    """
     categoria   = str(data.get("categoria") or "comune_minore").strip().lower()
     sottocateg  = str(data.get("sottocategoria") or "residenziale_minore").strip().lower()
 
@@ -1962,27 +1669,22 @@ def genera_descrizione_standard(data):
     poi         = data.get("poi", []) or []
     fatto_wiki  = data.get("_wikipedia_estratto")
 
-    # Concordanza genere
     genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
     situata = "situata" if genere_femminile else "situato"
 
-    # Camere/bagni/posti letto con concordanza
     camere_frase      = _concorda_numero(camere, "camera", "camere")
     bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
     posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
 
-    # Dotazioni — TUTTE quelle presenti, scritte come frase fluente (non lista tecnica)
     def _fmt_dotazione(d):
         canonico = _norm_dotazione(d)
         return canonico if canonico == "WiFi" else canonico.lower()
     dotazioni_frase = _join_lista_e([_fmt_dotazione(d) for d in dotazioni]) if dotazioni else ""
 
-    # Zona — solo per capoluogo e grande_citta, solo se diversa dal nome comune
     zona_inserita = ""
     if categoria in ("capoluogo", "grande_citta") and zona and zona.lower() not in ("—", "", comune.lower()):
         zona_inserita = f", zona {zona}"
 
-    # POI — riga 0 trasporto, riga 1 comune rif, riga 2 elemento caratteristico, riga 3 servizi
     trasporto_frase = _poi_riga_frase(poi, 0)
     servizi_frase   = _poi_riga_frase(poi, 3)
     elemento_frase  = _poi_riga_frase(poi, 2)
@@ -1996,7 +1698,6 @@ def genera_descrizione_standard(data):
     except (IndexError, TypeError):
         pass
 
-    # ── BLOCCO 1: l'immobile ──────────────────────────────────────────────────
     desc = (
         f"Accogliente {tipologia.lower()} di {superficie} {situata} in {indirizzo}{zona_inserita}, "
         f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
@@ -2006,7 +1707,6 @@ def genera_descrizione_standard(data):
     else:
         desc += "Un immobile pronto ad accogliere i tuoi ospiti. "
 
-    # ── BLOCCO 2: il contesto ─────────────────────────────────────────────────
     if categoria in ("grande_citta", "capoluogo"):
         if trasporto_frase:
             desc += f"{trasporto_frase.rstrip('.')}, per muoversi in città senza pensieri. "
@@ -2032,11 +1732,9 @@ def genera_descrizione_standard(data):
         if servizi_frase:
             desc += f"{servizi_frase.rstrip('.')} nelle vicinanze per le esigenze quotidiane. "
 
-    # ── BLOCCO 3: l'attrattiva (Wikipedia — condizionale) ────────────────────
     if fatto_wiki:
         desc += fatto_wiki + " "
 
-    # ── BLOCCO 4: target e chiusura evocativa ────────────────────────────────
     target = _target_da_posti_letto(posti_letto)
 
     _chiusura_territorio = {
@@ -2088,7 +1786,6 @@ def genera_descrizione_standard(data):
 
 
 def build_pdf_bytes(data):
-    """Genera il PDF in memoria e restituisce bytes."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle("ReportUp \u2014 Report Base")
@@ -2110,19 +1807,12 @@ def health():
 
 @app.route("/categoria-comune", methods=["GET"])
 def categoria_comune():
-    """
-    Sostituisce il modulo 16 (Data store) su Make — Sessione 42.
-    Usa comuni_lookup.py: gestisce accenti, apostrofi, maiuscole/minuscole,
-    alias colloquiali (es. "Reggio Emilia") e comuni omonimi (via provincia).
-    Chiamata da Make: GET /categoria-comune?comune=...&provincia=... (provincia opzionale)
-    """
     comune_q = request.args.get("comune", "")
     provincia_q = request.args.get("provincia")
 
     record = comuni_lookup.trova_comune(comune_q, provincia_q)
 
     if not record:
-        # Nessun match: stesso default già usato come fallback in app.py
         return jsonify({
             "trovato": False,
             "categoria": "comune_minore",
@@ -2146,29 +1836,15 @@ def categoria_comune():
 
 
 # ── QUICK REPORT — dati reali, senza AI (Sessione 50) ────────────────────────
-# Sostituisce la vecchia logica del Quick (100% inventata da Claude via
-# Netlify Function ai-proxy.js) con una pipeline deterministica: geocode
-# reale, categoria comune da database, prezzo/occupazione da AirROI dove
-# esiste un mercato osservato, fallback su una tabella fissa (mai su un
-# numero inventato da un modello linguistico) dove il mercato non c'e'.
-# Distanze POI reali (aeroporto via Distance Matrix, centro comune via
-# coordinate note in comuni.csv, zero costo). Nessuna chiamata ad Anthropic
-# in questo endpoint: il Quick non "immagina" piu' nulla.
 
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
-# Prezzo/notte di riferimento quando AirROI non ha un mercato osservato sulle
-# coordinate (comuni piccoli, zero annunci attivi). Valori di partenza
-# ragionevoli ma ARBITRARI — Salvatore li puo' correggere qui in qualsiasi
-# momento sulla base della sua esperienza; sono comunque sempre etichettati
-# nella risposta come fonte_prezzo="stima_deterministica", mai spacciati per
-# dato di mercato osservato.
 PREZZO_BASE_CATEGORIA = {
     "capoluogo": 75,
     "grande_citta": 65,
     "comune_minore": 45,
 }
-OCCUPAZIONE_BASE_FALLBACK = 50  # percento, stima prudenziale quando manca AirROI
+OCCUPAZIONE_BASE_FALLBACK = 50
 
 MOLTIPLICATORE_SOTTOCATEGORIA = {
     "costiero": 1.30,
@@ -2178,21 +1854,12 @@ MOLTIPLICATORE_SOTTOCATEGORIA = {
 
 
 def _moltiplicatore_capacita(posti_letto_raw):
-    """Aggiustamento prezzo in funzione dei posti letto dichiarati, rispetto
-    a una base di riferimento di 2 posti letto (bilocale/monolocale tipico)."""
     posti = _numero_da_stringa(posti_letto_raw, default=2)
     extra = max(0, posti - 2)
     return round(1.0 + extra * 0.13, 3)
 
 
 def _geocode_indirizzo(indirizzo, timeout=5):
-    """
-    Geocodifica reale via Google Geocoding API (stessa GOOGLE_MAPS_API_KEY già
-    in uso per elevazione/distance matrix). Ritorna dict con lat, lon,
-    formatted_address, comune, provincia, cap — oppure None se l'indirizzo
-    non risolve o la chiave manca. Nessun fallback "inventato": se il geocode
-    fallisce, il Quick deve dirlo chiaramente all'utente, non stimare a caso.
-    """
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not api_key or not indirizzo:
         return None
@@ -2234,11 +1901,6 @@ def _geocode_indirizzo(indirizzo, timeout=5):
 
 GOOGLE_PLACES_NEARBY_URL = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
 
-# Cosa cercare vicino all'immobile in base al tipo di zona — sostituisce la
-# vecchia scelta fissa "sempre l'aeroporto", che a Cortina d'Ampezzo (138 km,
-# 114 min in auto) risultava fuori luogo: chi guarda un B&B in montagna vuole
-# sapere dov'è la seggiovia, non l'aeroporto più vicino (feedback Salvatore,
-# Sessione 50). Icone solo per la UI, mai usate per calcoli.
 POI_KEYWORD_PER_SOTTOCATEGORIA = {
     "montano": ("impianti sciistici", "⛷️"),
     "costiero": ("spiaggia", "🏖️"),
@@ -2248,10 +1910,21 @@ POI_KEYWORD_PER_SOTTOCATEGORIA = {
 
 def _cerca_poi_google(lat, lon, keyword, radius_m=15000, max_risultati=2, timeout=5):
     """
-    Ricerca reale via Google Places Nearby Search (stessa GOOGLE_MAPS_API_KEY
-    già in uso). Ritorna una lista di dict {nome, lat, lon} — mai invenzioni:
-    se l'API non risponde o non trova nulla, ritorna lista vuota e chi chiama
-    passa al fallback successivo (mai un nome di luogo a caso).
+    Ricerca reale via Google Places Nearby Search.
+
+    FIX (Sessione 54 — bug trovato a Pozzuoli il 7 luglio): la chiamata non
+    specificava mai un criterio di ordinamento, quindi Google applicava il
+    default "prominence" — ordina per popolarità/numero di recensioni, non
+    per vicinanza. Risultato osservato: a Pozzuoli usciva "Spiaggia di
+    Chiaia" (Napoli, molto più recensita) invece delle spiagge di Pozzuoli
+    stesso, semplicemente perché più famosa su Google, non perché più vicina.
+
+    Fix: `rankby=distance` (che in Places API richiede di NON passare
+    `radius`, ma resta compatibile con `keyword`) ordina i risultati per
+    vicinanza reale. In più, calcoliamo comunque la distanza haversine noi
+    stessi e riordiniamo/filtriamo lato Python — doppia sicurezza, non ci si
+    fida ciecamente dell'ordine restituito da un'API esterna per un dato che
+    finisce stampato nel PDF/mail del cliente.
     """
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not api_key:
@@ -2259,7 +1932,7 @@ def _cerca_poi_google(lat, lon, keyword, radius_m=15000, max_risultati=2, timeou
     try:
         resp = requests.get(
             GOOGLE_PLACES_NEARBY_URL,
-            params={"location": f"{lat},{lon}", "radius": radius_m, "keyword": keyword,
+            params={"location": f"{lat},{lon}", "rankby": "distance", "keyword": keyword,
                     "language": "it", "key": api_key},
             timeout=timeout,
         )
@@ -2270,28 +1943,22 @@ def _cerca_poi_google(lat, lon, keyword, radius_m=15000, max_risultati=2, timeou
             print(f"[QUICK] Places status non OK per '{keyword}': {dati.get('status')}")
             return []
         risultati = []
-        for r in dati.get("results", [])[:max_risultati]:
+        for r in dati.get("results", []):
             loc = r.get("geometry", {}).get("location", {})
             if r.get("name") and loc.get("lat") is not None and loc.get("lng") is not None:
-                risultati.append({"nome": r["name"], "lat": loc["lat"], "lon": loc["lng"]})
-        return risultati
+                dist_km = _haversine_km(float(lat), float(lon), loc["lat"], loc["lng"])
+                if dist_km * 1000 <= radius_m:
+                    risultati.append({"nome": r["name"], "lat": loc["lat"], "lon": loc["lng"], "_dist_km": dist_km})
+        # Riordino esplicito lato Python per vicinanza reale — non ci affidiamo
+        # solo all'ordine restituito dall'API, anche con rankby=distance.
+        risultati.sort(key=lambda x: x["_dist_km"])
+        return risultati[:max_risultati]
     except Exception as e:
         print(f"[QUICK] Places eccezione per '{keyword}': {e}")
         return []
 
 
 def _punti_interesse_quick(lat, lon, sottocategoria):
-    """
-    Fino a 2 punti di interesse REALI, scelti in base al tipo di zona:
-    - montano/costiero/lacuale: cerca il punto caratteristico della zona
-      (impianti sciistici, spiaggia, lago). Se la ricerca non trova
-      abbastanza risultati, completa con l'aeroporto più vicino.
-    - zona senza sottocategoria (urbana/generica): aeroporto + un'attrazione
-      turistica reale nelle vicinanze.
-    Ogni voce ha distanza in linea d'aria (nessuna chiamata Distance Matrix
-    aggiuntiva per contenere i costi) tranne l'aeroporto, che mantiene la
-    distanza/tempo reali in auto già calcolati altrove.
-    """
     punti = []
 
     if sottocategoria in POI_KEYWORD_PER_SOTTOCATEGORIA:
@@ -2315,22 +1982,6 @@ def _punti_interesse_quick(lat, lon, sottocategoria):
 
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
 def quick_estimate():
-    """
-    Endpoint del Quick Report — Sessione 50. Chiamato DIRETTAMENTE dal
-    browser (reportup.it), senza passare da Make.com né da Anthropic: il
-    Quick non è mai stato negli scenari Make ed è pensato per restare così
-    (risposta immediata a video, zero attesa). Nessuna chiave segreta è
-    coinvolta qui (solo AIRROI_API_KEY e GOOGLE_MAPS_API_KEY, entrambe lato
-    server), quindi questo endpoint può avere CORS aperto — a differenza
-    degli endpoint /generate-pdf*, che restano riservati a Make.com.
-
-    Input JSON atteso:
-      { "indirizzo": "Via Roma 1, Milano",
-        "tipologia": "Bilocale", "camere": "2", "posti_letto": "4", "bagni": "1" }
-
-    Output: dati reali (AirROI dove disponibile) o stima dichiarata come
-    tale in fonte_prezzo — mai un numero generato da un modello linguistico.
-    """
     if request.method == "OPTIONS":
         resp = jsonify({"ok": True})
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -2360,7 +2011,6 @@ def quick_estimate():
     categoria = record_comune["categoria"] if record_comune else "comune_minore"
     sottocategoria = territorio_gps.classifica_sottocategoria(lat, lon)
 
-    # ── Prezzo e occupazione: AirROI prima, fallback deterministico dopo ──
     airroi = _airroi_lookup_e_stima(
         lat, lon,
         camere_raw=body.get("camere"),
@@ -2386,12 +2036,6 @@ def quick_estimate():
     potenziale_lordo = prezzo_notte * notti_anno
 
     if airroi and airroi.get("comparable_listings"):
-        # Confronto onesto: prezzo stimato vs media dei comparabili REALI
-        # restituiti da AirROI nella stessa chiamata — stesso mercato, stesso
-        # momento. Sostituisce il vecchio confronto con una "media nazionale"
-        # scritta a mano nel codice (mele con pere: dato osservato contro
-        # numero inventato — trovato e corretto il 5 luglio dopo il test su
-        # Cortina, +359% assurdo contro un benchmark arbitrario).
         prezzi_comparabili = [
             _numero_da(a, "average_daily_rate", "adr", "price", "daily_rate")
             for a in airroi["comparable_listings"] if isinstance(a, dict)
@@ -2402,18 +2046,15 @@ def quick_estimate():
         media_locale = None
 
     if media_locale:
-        _delta_percent_log = round((prezzo_notte - media_locale) / media_locale * 100)  # solo per log interni
+        _delta_percent_log = round((prezzo_notte - media_locale) / media_locale * 100)
         print(f"[QUICK] posizionamento reale vs comparabili locali: {_delta_percent_log}%")
         sopra_media = prezzo_notte >= media_locale
     else:
-        sopra_media = None  # nessun dato reale per confrontare
+        sopra_media = None
 
     if sopra_media is True:
         posizionamento_messaggio = "Il tuo immobile è già posizionato sopra la media della zona: un ottimo punto di partenza."
     else:
-        # Sia "sotto media" reale sia "nessun dato" (fallback): mai un'invenzione,
-        # ma nemmeno un tono demoralizzante sulla prima chiamata gratuita — si
-        # trasforma in leva verso il Base, che è il prodotto che spiega il "come".
         posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
 
     punti_interesse = _punti_interesse_quick(lat, lon, sottocategoria)
@@ -2440,24 +2081,13 @@ def quick_estimate():
 
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
-    """
-    ATTENZIONE — endpoint LEGACY, non usato dallo scenario Make.com attuale
-    (quello vero e' /generate-pdf-direct). Qui NON ci sono: formattazione CAP/
-    sigla provincia, override categoria da comuni_lookup, integrazione AirROI,
-    costi deterministici, descrizione standard. Se Make punta qui per errore,
-    il PDF esce con tutti i bug delle sessioni passate. Tenuto solo per
-    compatibilita' con eventuali chiamate esterne gia' esistenti — non
-    estendere, non usare per nuovi flussi.
-    """
     try:
         data = request.get_json(force=True)
         if not data:
             return jsonify({"error": "JSON body richiesto"}), 400
 
-        # Normalizza struttura annidata → flat
         data = normalize_data(data)
 
-        # Normalizza occupazione: accetta sia liste che tuple
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
@@ -2480,27 +2110,17 @@ def generate_pdf():
 
 @app.route("/generate-pdf-binary", methods=["POST"])
 def generate_pdf_binary():
-    """
-    ATTENZIONE — endpoint LEGACY, stessa nota di /generate-pdf: nessuno dei fix
-    successivi (CAP/sigla, AirROI, categoria, costi, descrizione standard) e'
-    applicato qui. Lo scenario Make.com attivo usa /generate-pdf-direct.
-    Accetta il JSON grezzo dell'AI (eventualmente con backtick markdown).
-    Pulisce, parsa, genera il PDF e lo restituisce come base64.
-    """
     import json as _json
     import re as _re
     raw = ""
     try:
         raw = request.get_data(as_text=True)
 
-        # Pulizia backtick robusta: estrai tutto tra { e } più esterni
         cleaned = raw.strip()
-        # Prova prima con regex per blocco ```json...```
         m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
         if m:
             cleaned = m.group(1).strip()
         else:
-            # Estrai dal primo { all'ultimo }
             start = cleaned.find("{")
             end = cleaned.rfind("}")
             if start != -1 and end != -1 and end > start:
@@ -2508,10 +2128,8 @@ def generate_pdf_binary():
 
         data = _json.loads(cleaned)
 
-        # Normalizza struttura annidata → flat
         data = normalize_data(data)
 
-        # Normalizza array
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
         if "poi" in data:
@@ -2534,10 +2152,6 @@ def generate_pdf_binary():
 
 @app.route("/generate-pdf-direct", methods=["POST"])
 def generate_pdf_direct():
-    """
-    Accetta il JSON grezzo dell'AI, genera il PDF e lo restituisce
-    come file binario diretto con Content-Type: application/pdf.
-    """
     import json as _json
     import re as _re
     raw = ""
@@ -2555,36 +2169,20 @@ def generate_pdf_direct():
 
         data = _json.loads(cleaned)
         data = normalize_data(data)
-        # Override lat/long con i valori VERI del geocode Make (Sessione 45):
-        # quelli scritti dall'AI nel JSON possono essere leggermente imprecisi
-        # (va bene per l'aeroporto, soglia larga; non va bene per costa/lago/
-        # quota, soglie strette in km). Se Make passa ?lat=...&long=... in
-        # query string, questi vincono sempre su quanto scritto dall'AI.
         if request.args.get("lat") and request.args.get("long"):
             data["lat"] = request.args.get("lat")
             data["long"] = request.args.get("long")
-        # Normalizza campi stringa
         for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
             if campo in data and not isinstance(data[campo], str):
                 data[campo] = str(data[campo])
 
-        # Capitalizza comune e zona
         if "comune" in data:
             data["comune"] = data["comune"].title()
         if "zona" in data:
             data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
 
-        # Categoria comune — Sessione 42: calcolata qui in modo deterministico
-        # da comuni_lookup.py (CSV 7.904 comuni), gestisce accenti, apostrofi,
-        # maiuscole/minuscole, alias colloquiali e omonimi. Sovrascrive sempre
-        # qualsiasi valore arrivato da Make/AI: zero crediti Make per questo
-        # dato, zero rischio di mismatch case-sensitive come visto con Roma.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        # Sottocategoria (costiero/lacuale/montano) — GPS del punto esatto, non del
-        # comune (Sessione 45): risolve i comuni estesi (es. Giugliano centro vs
-        # Varcaturo) dove la vecchia sottocategoria statica per comune era sbagliata
-        # per metà degli indirizzi reali.
         data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
         data["_wikipedia_estratto"] = _estratto_wikipedia(
             _record_comune.get("wikipedia") if _record_comune else None,
@@ -2592,23 +2190,13 @@ def generate_pdf_direct():
             sottocategoria=data["sottocategoria"],
         )
 
-        # Formatta indirizzo: capitalizza e aggiungi virgole attorno al CAP
         if "indirizzo" in data:
             import re as _re2
             addr = data["indirizzo"].strip()
-            # Trova CAP (5 cifre) e aggiunge virgole attorno
             addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
-            # Rimuovi virgole doppie e spazi multipli
             addr = _re2.sub(r',\s*,', ',', addr)
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
-            # Capitalizza ogni parola
             data["indirizzo"] = addr.title()
-            # Fix deterministico sigla provincia: sostituisce SEMPRE la sigla tra
-            # parentesi con quella vera da comuni_lookup.py, non solo maiuscolizza
-            # quella scritta dall'AI. Bug scoperto su Cortina d'Ampezzo: l'AI aveva
-            # scritto "(BZ)" invece di "(BL)" — la vecchia versione del fix (solo
-            # uppercase, Sessione 44) non lo intercettava perché "BZ" è già
-            # maiuscolo, semplicemente sbagliato nelle lettere.
             if _record_comune and _record_comune.get("sigla_provincia"):
                 _sigla_corretta = _record_comune["sigla_provincia"].upper()
                 if _re.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
@@ -2618,19 +2206,8 @@ def generate_pdf_direct():
             else:
                 data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
-        # Costi fissi (biancheria/utenze/manutenzione) — deterministici da
-        # superficie/posti letto/dotazioni, non piu' generati dall'AI (vedi
-        # commento della funzione per il bug che ha portato a questo fix).
         _calcola_costi_fissi_deterministici(data)
 
-        # Prezzo/notte — doppio binario (Sessione 46)
-        # 1) Se esiste un mercato reale AirROI su queste coordinate: si usa quel dato
-        #    osservato (prezzo/notte + occupazione reali), non la stima dell'AI.
-        # 2) Se il mercato non esiste (comune piccolo, nessun annuncio attivo):
-        #    resta il metodo precedente, invariato — stima AI + moltiplicatore fisso
-        #    per categoria (Sessione 44: residenziale_minore +5%, tutto il resto +15%).
-        # In entrambi i casi il rialzo/sostituzione è applicato PRIMA del ricalcolo
-        # economico, per propagare coerentemente su tutti i valori derivati.
         _cat = data.get("categoria", "comune_minore")
         _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
         _p = data.get("prezzo_notte_stimato", 0)
@@ -2655,12 +2232,6 @@ def generate_pdf_direct():
             _occ_new = _occ_old
             data["fonte_prezzo"] = "ai_stima"
 
-        # Tabella "Analisi competitor": se AirROI ha fornito annunci comparabili
-        # reali (stessa chiamata gia' pagata per prezzo/occupazione), li usiamo
-        # al posto della tabella interamente inventata dall'AI — ultima tabella
-        # del report rimasta senza una fonte dati reale (trovato il 4 luglio,
-        # domanda diretta di Salvatore). Se il parsing non produce abbastanza
-        # righe valide, resta il metodo AI precedente, nessuna interruzione.
         if _airroi and _airroi.get("comparable_listings"):
             _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
             if _comp_airroi:
@@ -2677,21 +2248,12 @@ def generate_pdf_direct():
             data["prezzo_notte_stimato"] = _p_new
             data["occupazione_percent"] = _occ_new
 
-            # Ricalcolo completo della cascata economica, non piu' un semplice
-            # rapporto sul prezzo: quando cambia anche l'occupazione (caso AirROI,
-            # Sessione del 3 luglio: bug scoperto su Cortina, "50% occ. x 365gg"
-            # ma "223 notti" nello stesso PDF — numeri incoerenti perche' notti_anno
-            # e kpi_occupazione non venivano mai risincronizzati). Ora tutto deriva
-            # dalle stesse formule mostrate in tabella, sempre coerenti tra loro.
             _notti_new = round(_occ_new / 100 * 365) if _occ_new else 0
             data["notti_anno"] = _notti_new
             data["kpi_occupazione"] = _occ_new
 
             _ricavo_lordo_new = round(_p_new * _notti_new)
             _ricavo_lordo_old = data.get("ricavo_lordo", 0)
-            # Il bonus prenotazioni dirette mantiene la stessa % che aveva scelto
-            # l'AI dentro il proprio range dichiarato (es. "5-10%"): non lo
-            # riscopriamo, lo scaliamo in proporzione al nuovo ricavo lordo.
             _bonus_old = data.get("bonus_dirette", 0)
             _bonus_new = round(_bonus_old * (_ricavo_lordo_new / _ricavo_lordo_old)) if _ricavo_lordo_old else _bonus_old
             _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
@@ -2700,8 +2262,6 @@ def generate_pdf_direct():
             _pulizia_unit = data.get("costi_pulizie_unit", 35)
             _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
             _costi_pulizie_new = round(_pulizia_unit * _notti_new)
-            # Costi fissi (biancheria, utenze, manutenzione, mutuo): indipendenti
-            # da prezzo/occupazione, restano quelli originali dell'AI, invariati.
             _costi_biancheria = data.get("costi_biancheria", 0)
             _costi_utenze = data.get("costi_utenze", 0)
             _costi_manutenzione = data.get("costi_manutenzione", 0)
@@ -2724,14 +2284,6 @@ def generate_pdf_direct():
             data["kpi_potenziale"] = _ricavo_lordo_new
 
             _ratio = _p_new / _p if _p else 1
-            # Tabella 12 mesi: se AirROI ha restituito la distribuzione mensile reale,
-            # la usiamo per prezzo E occupazione (stagionalita' vera, non scalata
-            # dall'AI). Se AirROI ha dato solo il dato annuale, ricalibriamo comunque
-            # la media dei 12 mesi di occupazione su quel valore, mantenendo la forma
-            # stagionale dell'AI ma correggendone il livello assoluto — mai lasciare
-            # che grafico e KPI raccontino due storie diverse quando paghiamo per un
-            # dato reale (fix 4 luglio, vedi _applica_stagionalita_airroi). Solo in
-            # totale assenza di AirROI resta lo scaling proporzionale di prima.
             if "occupazione" in data:
                 if _airroi and _airroi.get("distribuzione_mensile"):
                     data["occupazione"] = _applica_stagionalita_airroi(
@@ -2752,14 +2304,8 @@ def generate_pdf_direct():
                         for row in data["occupazione"]
                     ]
 
-        # I 3 mesi piu' affidabili rispetto alla data di generazione (Sessione 46,
-        # seconda parte) — evidenziati nel PDF a prescindere dal fatto che AirROI
-        # abbia trovato un mercato: se non l'ha trovato, indicano comunque a quali
-        # mesi la stima AI e' temporalmente piu' vicina.
         data["mesi_affidabili_idx"] = _mesi_affidabili()
 
-        # Descrizione standard per categoria: sovrascrive sempre quella dell'AI
-        # (Sessione 41 — vedi RU_09_Descrizioni_Standard.docx)
         data["descrizione"] = genera_descrizione_standard(data)
 
         if "occupazione" in data:
@@ -2769,7 +2315,6 @@ def generate_pdf_direct():
         if "competitor" in data:
             data["competitor"] = [list(row) for row in data["competitor"]]
 
-        # Ricalcolo totale_costi e profitto_netto includendo rata mutuo annua
         if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
             rata_annua = int(data["rata_mutuo_mensile"]) * 12
             costi_base = (
@@ -2803,11 +2348,6 @@ from strategico import build_strategico_pdf_bytes
 
 @app.route("/generate-strategico", methods=["POST"])
 def generate_strategico():
-    """
-    Accetta il JSON grezzo dell'AI (Strategico), genera il PDF 13 pagine
-    e lo restituisce come file binario diretto con Content-Type: application/pdf.
-    Pattern identico a /generate-pdf-direct.
-    """
     import json as _json
     import re as _re
     raw = ""
@@ -2829,18 +2369,15 @@ def generate_strategico():
             data["lat"] = request.args.get("lat")
             data["long"] = request.args.get("long")
 
-        # Normalizza campi stringa
         for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
             if campo in data and not isinstance(data[campo], str):
                 data[campo] = str(data[campo])
 
-        # Capitalizza comune e zona
         if "comune" in data:
             data["comune"] = data["comune"].title()
         if "zona" in data:
             data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
 
-        # Categoria comune — Sessione 42: stesso lookup deterministico dell'endpoint Base.
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
         data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
@@ -2850,7 +2387,6 @@ def generate_strategico():
             sottocategoria=data["sottocategoria"],
         )
 
-        # Formatta indirizzo
         if "indirizzo" in data:
             import re as _re2
             addr = data["indirizzo"].strip()
@@ -2858,8 +2394,6 @@ def generate_strategico():
             addr = _re2.sub(r',\s*,', ',', addr)
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
             data["indirizzo"] = addr.title()
-            # Fix deterministico sigla provincia (stesso fix di generate_pdf_direct,
-            # ora sostituisce col dato vero, non solo maiuscolizza — vedi Base)
             if _record_comune and _record_comune.get("sigla_provincia"):
                 _sigla_corretta = _record_comune["sigla_provincia"].upper()
                 if _re2.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
@@ -2869,7 +2403,6 @@ def generate_strategico():
             else:
                 data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
-        # Costi fissi deterministici (stesso fix del Base)
         _calcola_costi_fissi_deterministici(data)
 
         if "occupazione" in data:
@@ -2887,7 +2420,6 @@ def generate_strategico():
                 if isinstance(item, dict) and "azioni" in item:
                     item["azioni"] = list(item["azioni"])
 
-        # Ricalcolo mutuo se attivo
         if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
             rata_annua = int(data["rata_mutuo_mensile"]) * 12
             costi_base = (
