@@ -2163,6 +2163,59 @@ def verify_address():
     return _risposta({"valido": True, "indirizzo_formattato": geo.get("formatted_address")})
 
 
+@app.route("/extract-report-fields", methods=["POST", "OPTIONS"])
+def extract_report_fields():
+    """
+    Mail di consegna Report Base (Sessione 54): il modulo HTTP2 dello scenario
+    Make restituisce il JSON dell'AI come testo grezzo dentro content[1].text,
+    con marcatori ```json/``` attorno — nessun modulo Make lo spacchetta mai in
+    campi. Il tentativo di ieri di pulirlo con replace() annidati scritti a
+    mano in Make e' fallito piu' volte (funzioni digitate come testo invece
+    che inserite dal picker). Soluzione piu' semplice: facciamo fare la pulizia
+    qui, dove esiste gia' (stessa identica logica di generate_pdf_direct), e
+    restituiamo a Make un JSON pulito. In Make basta un modulo HTTP con "Parse
+    response: Yes" (checkbox gia' presente, nessuna funzione da scrivere) per
+    ottenere pillole vere su prezzo_notte_stimato/occupazione_percent/
+    profitto_netto da collegare a Gmail.
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    def _risposta(payload, status=200):
+        resp = jsonify(payload)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, status
+
+    import json as _json
+    import re as _re
+
+    body = request.get_json(force=True, silent=True) or {}
+    testo = body.get("testo") or ""
+    if not testo:
+        return _risposta({"errore": "testo_mancante"}, 400)
+
+    cleaned = testo.strip()
+    m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+    if m:
+        cleaned = m.group(1).strip()
+    else:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end+1]
+
+    try:
+        data = _json.loads(cleaned)
+    except Exception as e:
+        return _risposta({"errore": "json_non_valido", "dettaglio": str(e)}, 422)
+
+    return _risposta(data)
+
+
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
