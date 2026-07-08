@@ -2079,6 +2079,41 @@ def quick_estimate():
     })
 
 
+@app.route("/verify-address", methods=["POST", "OPTIONS"])
+def verify_address():
+    """
+    Prevenzione (Sessione 54): verifica SOLO il geocode dell'indirizzo, prima
+    che il cliente Base venga mandato a pagare su Stripe. Nessuna chiamata
+    AirROI qui (quella costa e serve solo dopo il pagamento) — solo Google
+    Geocoding, stesso identico metodo gia' usato dal Quick, per bloccare a
+    monte gli indirizzi che il resto della pipeline non riuscirebbe comunque
+    a processare (causa gia' vista in produzione: ZERO_RESULTS su indirizzi
+    scritti male/incompleti, pagamento incassato ma report mai generato).
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    def _risposta(payload, status=200):
+        resp = jsonify(payload)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, status
+
+    body = request.get_json(force=True, silent=True) or {}
+    indirizzo = (body.get("indirizzo") or "").strip()
+    if not indirizzo:
+        return _risposta({"valido": False, "motivo": "indirizzo_mancante"}, 400)
+
+    geo = _geocode_indirizzo(indirizzo)
+    if not geo:
+        return _risposta({"valido": False, "motivo": "indirizzo_non_trovato"})
+
+    return _risposta({"valido": True, "indirizzo_formattato": geo.get("formatted_address")})
+
+
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
