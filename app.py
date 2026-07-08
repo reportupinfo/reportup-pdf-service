@@ -1601,6 +1601,31 @@ def _calcola_costi_fissi_deterministici(data):
     data["_costi_ha_giardino"] = ha_giardino
 
 
+# Camere per tipologia (Sessione 54) — prima il campo "camere" nella scheda
+# immobile del PDF veniva generato liberamente dall'AI, che a volte inventava
+# un numero anche dove non ha senso (es. 3 camere su una villa dichiarata
+# senza quel dato, mai chiesto nel form). Regola fissa data da Salvatore,
+# stesso principio deterministico gia' usato per i costi fissi sopra: la
+# tipologia dichiarata nel form decide da sola il valore mostrato, l'AI non
+# lo tocca piu'. Ordine dal piu' specifico, stesso stile di _COSTI_PER_TIPOLOGIA.
+_CAMERE_PER_TIPOLOGIA = [
+    ("stanza singola", "1"), ("singola", "1"),
+    ("stanza doppia", "1"), ("doppia", "1"),
+    ("bilocale", "2"),
+    ("trilocale", "3"),
+    ("4+", "4+"), ("appartamento", "4+"), ("grande", "4+"),
+    ("villa", "\u2014"), ("casa indipendente", "\u2014"),
+]
+
+
+def _camere_per_tipologia(tipologia):
+    t = str(tipologia or "").strip().lower()
+    for frammento, valore in _CAMERE_PER_TIPOLOGIA:
+        if frammento in t:
+            return valore
+    return "\u2014"
+
+
 _ETICHETTE_SLOT_POI = {
     "trasporto pubblico", "comune di riferimento", "elemento caratteristico",
     "servizi essenziali", "aeroporto",
@@ -1672,7 +1697,12 @@ def genera_descrizione_standard(data):
     genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
     situata = "situata" if genere_femminile else "situato"
 
-    camere_frase      = _concorda_numero(camere, "camera", "camere")
+    if str(camere).strip() == "\u2014":
+        camere_frase = ""
+    elif str(camere).strip() == "4+":
+        camere_frase = "4 o più camere"
+    else:
+        camere_frase = _concorda_numero(camere, "camera", "camere")
     bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
     posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
 
@@ -1698,9 +1728,10 @@ def genera_descrizione_standard(data):
     except (IndexError, TypeError):
         pass
 
+    tratti_immobile = [t for t in [camere_frase, bagni_frase, posti_letto_frase] if t]
     desc = (
         f"Accogliente {tipologia.lower()} di {superficie} {situata} in {indirizzo}{zona_inserita}, "
-        f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
+        f"con {_join_lista_e(tratti_immobile)}. "
     )
     if dotazioni_frase:
         desc += f"L'immobile è dotato di {dotazioni_frase}: tutto il necessario per un soggiorno confortevole. "
@@ -2242,6 +2273,7 @@ def generate_pdf_direct():
                 data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         _calcola_costi_fissi_deterministici(data)
+        data["camere"] = _camere_per_tipologia(data.get("tipologia"))
 
         _cat = data.get("categoria", "comune_minore")
         _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
@@ -2439,6 +2471,7 @@ def generate_strategico():
                 data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         _calcola_costi_fissi_deterministici(data)
+        data["camere"] = _camere_per_tipologia(data.get("tipologia"))
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
