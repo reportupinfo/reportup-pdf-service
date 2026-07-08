@@ -1924,6 +1924,9 @@ def _geocode_indirizzo(indirizzo, timeout=5):
             "lat": loc["lat"], "lon": loc["lng"],
             "formatted_address": risultato.get("formatted_address"),
             "comune": comune, "provincia": provincia, "cap": cap,
+            "partial_match": bool(risultato.get("partial_match")),
+            "location_type": risultato.get("geometry", {}).get("location_type"),
+            "types": risultato.get("types", []),
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
@@ -2141,6 +2144,21 @@ def verify_address():
     geo = _geocode_indirizzo(indirizzo)
     if not geo:
         return _risposta({"valido": False, "motivo": "indirizzo_non_trovato"})
+
+    # Controllo di precisione (Sessione 54, secondo giro — trovato con test
+    # reale "Via Fantasia 999, Roma"): Google Geocoding spesso NON restituisce
+    # ZERO_RESULTS per un indirizzo inventato, se contiene una città/provincia
+    # reale — lo "aggancia" comunque al centro città o alla via più vicina che
+    # riesce a interpretare (partial_match=true, oppure un risultato il cui
+    # tipo e' solo "locality"/"political", mai un vero indirizzo di strada).
+    # In quel caso Google dice status=OK ma il civico/la via non esistono
+    # davvero: senza questo controllo il cliente passava comunque, pagava, e
+    # riceveva un PDF con punti di interesse reali ma agganciati al punto
+    # sbagliato (visto nel test: Roma centro invece dell'indirizzo scritto).
+    tipi_indirizzo_reale = {"street_address", "premise", "subpremise", "route"}
+    ha_via_reale = bool(tipi_indirizzo_reale & set(geo.get("types") or []))
+    if geo.get("partial_match") or not ha_via_reale:
+        return _risposta({"valido": False, "motivo": "indirizzo_impreciso"})
 
     return _risposta({"valido": True, "indirizzo_formattato": geo.get("formatted_address")})
 
