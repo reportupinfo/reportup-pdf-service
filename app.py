@@ -49,7 +49,7 @@ def _tipologia_da_camere(n_camere):
     return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
 
 
-def _costruisci_competitor_da_airroi(comparable_listings, valuta="EUR"):
+def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
     if not comparable_listings:
         return None
     gruppi = {}
@@ -381,7 +381,7 @@ def draw_section_subtitle(c, x, y, text):
 
 
 def fmt_eur(val):
-    return f"EUR {int(val):,}".replace(",", ".")
+    return f"€ {int(val):,}".replace(",", ".")
 
 
 def stage_color(stage):
@@ -658,7 +658,7 @@ def page2(c, D):
     mesi_affidabili_idx = set(D.get("mesi_affidabili_idx", []))
     VERDE_AFFIDABILE = HexColor("#D4F1DE")
     VERDE_DATO_REALE = HexColor("#2E9E4F")
-    header_half = ["Mese", "Occup.", "EUR/notte", "Stage"]
+    header_half = ["Mese", "Occup.", "€/notte", "Stage"]
     gap = 5 * mm
     half = (W - 28 * mm - gap) / 2
     col_w_half = [half * 0.20, half * 0.24, half * 0.32, half * 0.24]
@@ -692,8 +692,8 @@ def page2(c, D):
                 style.append(("BOTTOMPADDING", (0, ri + 1), (2, ri + 1), 5))
         return style
 
-    data_sx = [[o[0], f"{o[1]}%", f"EUR {o[2]}", o[3]] for o in occ[:6]]
-    data_dx = [[o[0], f"{o[1]}%", f"EUR {o[2]}", o[3]] for o in occ[6:]]
+    data_sx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[:6]]
+    data_dx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[6:]]
     tbl_sx = Table([header_half] + data_sx, colWidths=col_w_half)
     tbl_sx.setStyle(TableStyle(make_half_style(data_sx, 0)))
     tbl_sx.wrapOn(c, half, 300)
@@ -786,7 +786,7 @@ def page2(c, D):
         c.drawCentredString(px_dot, gy + 8 * mm, row[0])
         c.setFont("Helvetica-Bold" if affidabile else "Helvetica", 6 if affidabile else 5.5)
         c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
-        c.drawCentredString(px_dot, gy + 4 * mm, f"EUR {row[2]}")
+        c.drawCentredString(px_dot, gy + 4 * mm, f"€ {row[2]}")
 
     disclaimer_prezzi = (
         "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
@@ -819,7 +819,7 @@ def page3(c, D):
 
     def _cella_media_mercato(valore_annuo, extra=""):
         nota = f' <font size="6" color="#7A8A96">(media di mercato per la tipologia{extra})</font>'
-        return Paragraph(f"EUR {valore_annuo:,}/anno{nota}".replace(",", "."), style_media_mercato)
+        return Paragraph(f"€ {valore_annuo:,}/anno{nota}".replace(",", "."), style_media_mercato)
 
     p = D.get("prezzo_notte_stimato", 0)
     occ_pct = D.get("occupazione_percent", 0)
@@ -866,20 +866,20 @@ def page3(c, D):
         ["Voce", "Come viene calcolato", "Valore"],
         ["RICAVI", "", ""],
         ["Ricavo lordo annuo stimato",
-         f"EUR {p}/notte x {occ_pct}% occ. x 365gg = EUR {p} x {notti} notti",
+         f"€ {p}/notte x {occ_pct}% occ. x 365gg = € {p} x {notti} notti",
          fmt_eur(D.get("ricavo_lordo", 0))],
         ["Bonus prenotazioni dirette",
-         f"EUR {D.get('ricavo_lordo',0):,} x {D.get('bonus_dirette_pct','5-10%')} = EUR {D.get('bonus_dirette',0):,}".replace(",", "."),
+         f"€ {D.get('ricavo_lordo',0):,} x {D.get('bonus_dirette_pct','5-10%')} = € {D.get('bonus_dirette',0):,}".replace(",", "."),
          fmt_eur(D.get("bonus_dirette", 0))],
         ["TOTALE RICAVI",
-         f"EUR {D.get('ricavo_lordo',0):,} + EUR {D.get('bonus_dirette',0):,} = EUR {D.get('totale_ricavi',0):,}".replace(",", "."),
+         f"€ {D.get('ricavo_lordo',0):,} + € {D.get('bonus_dirette',0):,} = € {D.get('totale_ricavi',0):,}".replace(",", "."),
          fmt_eur(D.get("totale_ricavi", 0))],
         ["COSTI VARIABILI", _nota_costi_variabili, ""],
         ["Commissioni piattaforma Airbnb",
-         f"EUR {D.get('ricavo_lordo',0):,} x {comm_pct}% = EUR {D.get('costi_commissioni',0):,}".replace(",", "."),
+         f"€ {D.get('ricavo_lordo',0):,} x {comm_pct}% = € {D.get('costi_commissioni',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_commissioni', 0))}"],
         ["Pulizie per cambio ospite",
-         f"EUR {pulizia_unit}/cambio x {notti} notti = EUR {D.get('costi_pulizie',0):,}".replace(",", "."),
+         f"€ {pulizia_unit}/cambio x {notti} notti = € {D.get('costi_pulizie',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
          _cella_media_mercato(D.get('costi_biancheria', 0)),
@@ -895,11 +895,11 @@ def page3(c, D):
              else "")),
          f"- {fmt_eur(D.get('costi_manutenzione', 0))}"],
         ["Rata mutuo (se presente)",
-         "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"EUR {rata_mutuo}/mese x 12 = EUR {mutuo_annuo:,}".replace(",", "."),
-         "EUR 0" if not D.get("mutuo_attivo") else f"- {fmt_eur(mutuo_annuo)}"],
+         "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"€ {rata_mutuo}/mese x 12 = € {mutuo_annuo:,}".replace(",", "."),
+         "€ 0" if not D.get("mutuo_attivo") else f"- {fmt_eur(mutuo_annuo)}"],
         ["Totale costi variabili", "", f"- {fmt_eur(D.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO", "", fmt_eur(D.get("profitto_netto", 0))],
-        ["Margine netto su ricavi lordi", "", f"{D.get('margine_percent', 0)}%"],
+        ["Margine netto su ricavi totali", "", f"{D.get('margine_percent', 0)}%"],
     ]
 
     col_w_eco = [(W - 28 * mm) * 0.28, (W - 28 * mm) * 0.52, (W - 28 * mm) * 0.20]
@@ -939,7 +939,7 @@ def page3(c, D):
     small_h, big_h = 18 * mm, 24 * mm
     cards = [
         ("Margine netto", f"{D.get('margine_percent', 0)}%", WHITE, BLUE_NIGHT, small_w, small_h),
-        ("Ricavo lordo stimato", fmt_eur(D.get("ricavo_lordo", 0)), TEAL_LIGHT, TEAL, small_w, small_h),
+        ("Totale ricavi", fmt_eur(D.get("totale_ricavi", 0)), TEAL_LIGHT, TEAL, small_w, small_h),
         ("Costi variabili totali", f"- {fmt_eur(D.get('totale_costi', 0))}", RED_LIGHT, RED, small_w, small_h),
         ("Il tuo guadagno stimato", fmt_eur(D.get("profitto_netto", 0)), GOLD_LIGHT, GOLD, big_w, big_h),
     ]
@@ -1013,10 +1013,10 @@ def page4(c, D):
     comp_data = [["Tipologia annunci - " + D.get("competitor_zona", ""), "N.", "Prezzo med.", "Occup.", "Rating"]]
     for row in D.get("competitor", []):
         comp_data.append(list(row))
-    mn = D.get("media_nazionale", ["Media nazionale B&B urbani", "\u2014", "EUR 95", "64%", "4.5"])
+    mn = D.get("media_nazionale", ["Media nazionale B&B urbani", "\u2014", "€ 95", "64%", "4.5"])
     comp_data.append(list(mn))
     comp_data.append(["IL TUO IMMOBILE (stima)", "\u2014",
-                      f"EUR {D.get('kpi_prezzo', 0)}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
+                      f"€ {D.get('kpi_prezzo', 0)}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
     n_med = len(comp_data) - 2
     col_w_comp = [(W - 28 * mm) * 0.42, (W - 28 * mm) * 0.10, (W - 28 * mm) * 0.18,
                   (W - 28 * mm) * 0.15, (W - 28 * mm) * 0.15]
@@ -1047,7 +1047,7 @@ def page4(c, D):
     kw = (W - 28 * mm - 6 * mm) / 4
     kh = 24 * mm
     kpis = [
-        ("PREZZO MEDIO / NOTTE", f"EUR {D.get('kpi_prezzo', 0)}", "per notte", D.get("kpi_prezzo_range", "")),
+        ("PREZZO MEDIO / NOTTE", f"€ {D.get('kpi_prezzo', 0)}", "per notte", D.get("kpi_prezzo_range", "")),
         ("TASSO DI OCCUPAZIONE", f"{D.get('kpi_occupazione', 0)}%", "stimato", D.get("kpi_occ_range", "")),
         ("POTENZIALE LORDO ANNUO", fmt_eur(D.get("kpi_potenziale", 0)), "all'anno",
          f"Con occupazione al {D.get('kpi_occupazione', 0)}%"),
@@ -1089,7 +1089,7 @@ def page4(c, D):
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(BLUE_NIGHT)
     c.drawString(18 * mm, y - 7 * mm, "Vuoi il piano d\u2019azione completo?")
-    upsell_text = ("Il Report Strategico (EUR 149) include tutto il Base piu': pricing stagionale mese per mese, "
+    upsell_text = ("Il Report Strategico (€ 149) include tutto il Base piu': pricing stagionale mese per mese, "
                    "3 scenari economici (pessimistico / realistico / ottimistico), piano d'azione 90 giorni, "
                    "cap rate e valore asset, normativa affitti brevi locale e l'analisi personale "
                    "dell'Arch. Salvatore Junior Sica.")
@@ -1097,7 +1097,7 @@ def page4(c, D):
     uy = draw_wrapped_text(c, upsell_text, 18 * mm, uy, W - 36 * mm, "Helvetica", 7.5, 5 * mm, BLUE_NIGHT)
     c.setFont("Helvetica-Bold", 8)
     c.setFillColor(GOLD)
-    c.drawString(18 * mm, uy, "Scopri il Report Strategico su reportup.it  |  EUR 149 - pagamento unico")
+    c.drawString(18 * mm, uy, "Scopri il Report Strategico su reportup.it  |  € 149 - pagamento unico")
     y -= upsell_h + 6 * mm
 
     c.setFont("Helvetica-Bold", 7)
@@ -1601,31 +1601,6 @@ def _calcola_costi_fissi_deterministici(data):
     data["_costi_ha_giardino"] = ha_giardino
 
 
-# Camere per tipologia (Sessione 54) — prima il campo "camere" nella scheda
-# immobile del PDF veniva generato liberamente dall'AI, che a volte inventava
-# un numero anche dove non ha senso (es. 3 camere su una villa dichiarata
-# senza quel dato, mai chiesto nel form). Regola fissa data da Salvatore,
-# stesso principio deterministico gia' usato per i costi fissi sopra: la
-# tipologia dichiarata nel form decide da sola il valore mostrato, l'AI non
-# lo tocca piu'. Ordine dal piu' specifico, stesso stile di _COSTI_PER_TIPOLOGIA.
-_CAMERE_PER_TIPOLOGIA = [
-    ("stanza singola", "1"), ("singola", "1"),
-    ("stanza doppia", "1"), ("doppia", "1"),
-    ("bilocale", "2"),
-    ("trilocale", "3"),
-    ("4+", "4+"), ("appartamento", "4+"), ("grande", "4+"),
-    ("villa", "\u2014"), ("casa indipendente", "\u2014"),
-]
-
-
-def _camere_per_tipologia(tipologia):
-    t = str(tipologia or "").strip().lower()
-    for frammento, valore in _CAMERE_PER_TIPOLOGIA:
-        if frammento in t:
-            return valore
-    return "\u2014"
-
-
 _ETICHETTE_SLOT_POI = {
     "trasporto pubblico", "comune di riferimento", "elemento caratteristico",
     "servizi essenziali", "aeroporto",
@@ -1697,12 +1672,7 @@ def genera_descrizione_standard(data):
     genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
     situata = "situata" if genere_femminile else "situato"
 
-    if str(camere).strip() == "\u2014":
-        camere_frase = ""
-    elif str(camere).strip() == "4+":
-        camere_frase = "4 o più camere"
-    else:
-        camere_frase = _concorda_numero(camere, "camera", "camere")
+    camere_frase      = _concorda_numero(camere, "camera", "camere")
     bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
     posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
 
@@ -1728,10 +1698,9 @@ def genera_descrizione_standard(data):
     except (IndexError, TypeError):
         pass
 
-    tratti_immobile = [t for t in [camere_frase, bagni_frase, posti_letto_frase] if t]
     desc = (
         f"Accogliente {tipologia.lower()} di {superficie} {situata} in {indirizzo}{zona_inserita}, "
-        f"con {_join_lista_e(tratti_immobile)}. "
+        f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
     )
     if dotazioni_frase:
         desc += f"L'immobile è dotato di {dotazioni_frase}: tutto il necessario per un soggiorno confortevole. "
@@ -1924,9 +1893,6 @@ def _geocode_indirizzo(indirizzo, timeout=5):
             "lat": loc["lat"], "lon": loc["lng"],
             "formatted_address": risultato.get("formatted_address"),
             "comune": comune, "provincia": provincia, "cap": cap,
-            "partial_match": bool(risultato.get("partial_match")),
-            "location_type": risultato.get("geometry", {}).get("location_type"),
-            "types": risultato.get("types", []),
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
@@ -2113,109 +2079,6 @@ def quick_estimate():
     })
 
 
-@app.route("/verify-address", methods=["POST", "OPTIONS"])
-def verify_address():
-    """
-    Prevenzione (Sessione 54): verifica SOLO il geocode dell'indirizzo, prima
-    che il cliente Base venga mandato a pagare su Stripe. Nessuna chiamata
-    AirROI qui (quella costa e serve solo dopo il pagamento) — solo Google
-    Geocoding, stesso identico metodo gia' usato dal Quick, per bloccare a
-    monte gli indirizzi che il resto della pipeline non riuscirebbe comunque
-    a processare (causa gia' vista in produzione: ZERO_RESULTS su indirizzi
-    scritti male/incompleti, pagamento incassato ma report mai generato).
-    """
-    if request.method == "OPTIONS":
-        resp = jsonify({"ok": True})
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
-
-    def _risposta(payload, status=200):
-        resp = jsonify(payload)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        return resp, status
-
-    body = request.get_json(force=True, silent=True) or {}
-    indirizzo = (body.get("indirizzo") or "").strip()
-    if not indirizzo:
-        return _risposta({"valido": False, "motivo": "indirizzo_mancante"}, 400)
-
-    geo = _geocode_indirizzo(indirizzo)
-    if not geo:
-        return _risposta({"valido": False, "motivo": "indirizzo_non_trovato"})
-
-    # Controllo di precisione (Sessione 54, secondo giro — trovato con test
-    # reale "Via Fantasia 999, Roma"): Google Geocoding spesso NON restituisce
-    # ZERO_RESULTS per un indirizzo inventato, se contiene una città/provincia
-    # reale — lo "aggancia" comunque al centro città o alla via più vicina che
-    # riesce a interpretare (partial_match=true, oppure un risultato il cui
-    # tipo e' solo "locality"/"political", mai un vero indirizzo di strada).
-    # In quel caso Google dice status=OK ma il civico/la via non esistono
-    # davvero: senza questo controllo il cliente passava comunque, pagava, e
-    # riceveva un PDF con punti di interesse reali ma agganciati al punto
-    # sbagliato (visto nel test: Roma centro invece dell'indirizzo scritto).
-    tipi_indirizzo_reale = {"street_address", "premise", "subpremise", "route"}
-    ha_via_reale = bool(tipi_indirizzo_reale & set(geo.get("types") or []))
-    if geo.get("partial_match") or not ha_via_reale:
-        return _risposta({"valido": False, "motivo": "indirizzo_impreciso"})
-
-    return _risposta({"valido": True, "indirizzo_formattato": geo.get("formatted_address")})
-
-
-@app.route("/extract-report-fields", methods=["POST", "OPTIONS"])
-def extract_report_fields():
-    """
-    Mail di consegna Report Base (Sessione 54): il modulo HTTP2 dello scenario
-    Make restituisce il JSON dell'AI come testo grezzo dentro content[1].text,
-    con marcatori ```json/``` attorno — nessun modulo Make lo spacchetta mai in
-    campi. Il tentativo di ieri di pulirlo con replace() annidati scritti a
-    mano in Make e' fallito piu' volte (funzioni digitate come testo invece
-    che inserite dal picker). Soluzione piu' semplice: facciamo fare la pulizia
-    qui, dove esiste gia' (stessa identica logica di generate_pdf_direct), e
-    restituiamo a Make un JSON pulito. In Make basta un modulo HTTP con "Parse
-    response: Yes" (checkbox gia' presente, nessuna funzione da scrivere) per
-    ottenere pillole vere su prezzo_notte_stimato/occupazione_percent/
-    profitto_netto da collegare a Gmail.
-    """
-    if request.method == "OPTIONS":
-        resp = jsonify({"ok": True})
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
-
-    def _risposta(payload, status=200):
-        resp = jsonify(payload)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        return resp, status
-
-    import json as _json
-    import re as _re
-
-    body = request.get_json(force=True, silent=True) or {}
-    testo = body.get("testo") or ""
-    if not testo:
-        return _risposta({"errore": "testo_mancante"}, 400)
-
-    cleaned = testo.strip()
-    m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
-    if m:
-        cleaned = m.group(1).strip()
-    else:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            cleaned = cleaned[start:end+1]
-
-    try:
-        data = _json.loads(cleaned)
-    except Exception as e:
-        return _risposta({"errore": "json_non_valido", "dettaglio": str(e)}, 422)
-
-    return _risposta(data)
-
-
 @app.route("/generate-pdf", methods=["POST"])
 def generate_pdf():
     try:
@@ -2344,7 +2207,6 @@ def generate_pdf_direct():
                 data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         _calcola_costi_fissi_deterministici(data)
-        data["camere"] = _camere_per_tipologia(data.get("tipologia"))
 
         _cat = data.get("categoria", "comune_minore")
         _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
@@ -2542,7 +2404,6 @@ def generate_strategico():
                 data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
         _calcola_costi_fissi_deterministici(data)
-        data["camere"] = _camere_per_tipologia(data.get("tipologia"))
 
         if "occupazione" in data:
             data["occupazione"] = [list(row) for row in data["occupazione"]]
