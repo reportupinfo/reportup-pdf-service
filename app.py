@@ -2150,183 +2150,193 @@ def generate_pdf_binary():
         return jsonify({"error": str(e), "raw_preview": raw[:500] if 'raw' in dir() else ""}), 500
 
 
-@app.route("/generate-pdf-direct", methods=["POST"])
-def generate_pdf_direct():
+def _elabora_dati_report_base(raw, lat=None, long=None):
+    """Parsa il testo grezzo restituito dall'AI (HTTP2) e applica tutte le
+    correzioni deterministiche + l'integrazione AirROI, producendo il dict
+    'data' finale usato sia per generare il PDF sia per popolare i campi
+    economici nella mail (modulo HTTP24/JSON25 su Make)."""
     import json as _json
     import re as _re
+    cleaned = raw.strip()
+    m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+    if m:
+        cleaned = m.group(1).strip()
+    else:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end+1]
+
+    data = _json.loads(cleaned)
+    data = normalize_data(data)
+    if lat and long:
+        data["lat"] = lat
+        data["long"] = long
+    for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
+        if campo in data and not isinstance(data[campo], str):
+            data[campo] = str(data[campo])
+
+    if "comune" in data:
+        data["comune"] = data["comune"].title()
+    if "zona" in data:
+        data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
+
+    _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
+    data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
+    data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
+    data["_wikipedia_estratto"] = _estratto_wikipedia(
+        _record_comune.get("wikipedia") if _record_comune else None,
+        categoria=data["categoria"],
+        sottocategoria=data["sottocategoria"],
+    )
+
+    if "indirizzo" in data:
+        import re as _re2
+        addr = data["indirizzo"].strip()
+        addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
+        addr = _re2.sub(r',\s*,', ',', addr)
+        addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
+        data["indirizzo"] = addr.title()
+        if _record_comune and _record_comune.get("sigla_provincia"):
+            _sigla_corretta = _record_comune["sigla_provincia"].upper()
+            if _re.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
+                data["indirizzo"] = _re.sub(r'\([A-Za-z]{2}\)', f"({_sigla_corretta})", data["indirizzo"])
+            else:
+                data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
+        else:
+            data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+
+    _calcola_costi_fissi_deterministici(data)
+
+    _cat = data.get("categoria", "comune_minore")
+    _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
+    _p = data.get("prezzo_notte_stimato", 0)
+
+    print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
+
+    _occ_old = data.get("occupazione_percent", 0)
+
+    _airroi = _airroi_lookup_e_stima(
+        data.get("lat"), data.get("long"),
+        camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
+        bagni_raw=data.get("bagni"),
+    )
+
+    if _airroi:
+        _p_new = _airroi["prezzo_notte_stimato"]
+        _occ_new = _airroi["occupazione_percent"]
+        data["fonte_prezzo"] = "airroi"
+    else:
+        _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
+        _p_new = round(_p * _moltiplicatore) if _p else _p
+        _occ_new = _occ_old
+        data["fonte_prezzo"] = "ai_stima"
+
+    if _airroi and _airroi.get("comparable_listings"):
+        _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
+        if _comp_airroi:
+            _righe_comp, _media_comp = _comp_airroi
+            data["competitor"] = _righe_comp
+            data["media_nazionale"] = _media_comp
+            data["fonte_competitor"] = "airroi"
+        else:
+            data["fonte_competitor"] = "ai_stima"
+    else:
+        data["fonte_competitor"] = "ai_stima"
+
+    if _p:
+        data["prezzo_notte_stimato"] = _p_new
+        data["occupazione_percent"] = _occ_new
+
+        _notti_new = round(_occ_new / 100 * 365) if _occ_new else 0
+        data["notti_anno"] = _notti_new
+        data["kpi_occupazione"] = _occ_new
+
+        _ricavo_lordo_new = round(_p_new * _notti_new)
+        _ricavo_lordo_old = data.get("ricavo_lordo", 0)
+        _bonus_old = data.get("bonus_dirette", 0)
+        _bonus_new = round(_bonus_old * (_ricavo_lordo_new / _ricavo_lordo_old)) if _ricavo_lordo_old else _bonus_old
+        _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
+
+        _comm_pct = data.get("costi_commissioni_pct", 15)
+        _pulizia_unit = data.get("costi_pulizie_unit", 35)
+        _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
+        _costi_pulizie_new = round(_pulizia_unit * _notti_new)
+        _costi_biancheria = data.get("costi_biancheria", 0)
+        _costi_utenze = data.get("costi_utenze", 0)
+        _costi_manutenzione = data.get("costi_manutenzione", 0)
+        _mutuo_annuo = data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0
+
+        _totale_costi_new = (_costi_commissioni_new + _costi_pulizie_new
+                              + _costi_biancheria + _costi_utenze
+                              + _costi_manutenzione + _mutuo_annuo)
+        _profitto_netto_new = _totale_ricavi_new - _totale_costi_new
+
+        data["ricavo_lordo"] = _ricavo_lordo_new
+        data["bonus_dirette"] = _bonus_new
+        data["totale_ricavi"] = _totale_ricavi_new
+        data["costi_commissioni"] = _costi_commissioni_new
+        data["costi_pulizie"] = _costi_pulizie_new
+        data["totale_costi"] = _totale_costi_new
+        data["profitto_netto"] = _profitto_netto_new
+        data["margine_percent"] = round(_profitto_netto_new / _totale_ricavi_new * 100) if _totale_ricavi_new else 0
+        data["kpi_prezzo"] = _p_new
+        data["kpi_potenziale"] = _ricavo_lordo_new
+
+        _ratio = _p_new / _p if _p else 1
+        if "occupazione" in data:
+            if _airroi and _airroi.get("distribuzione_mensile"):
+                data["occupazione"] = _applica_stagionalita_airroi(
+                    data["occupazione"], _airroi["distribuzione_mensile"], _p_new,
+                    occ_annuale=_occ_new,
+                )
+            elif _airroi:
+                _occ_medio_ai = (sum(row[1] for row in data["occupazione"]) / 12) or 1
+                _occ_ratio = _occ_new / _occ_medio_ai
+                data["occupazione"] = [
+                    [row[0], max(5, min(100, round(row[1] * _occ_ratio))),
+                     round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
+                    for row in data["occupazione"]
+                ]
+            else:
+                data["occupazione"] = [
+                    [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
+                    for row in data["occupazione"]
+                ]
+
+    data["mesi_affidabili_idx"] = _mesi_affidabili()
+
+    data["descrizione"] = genera_descrizione_standard(data)
+
+    if "occupazione" in data:
+        data["occupazione"] = [list(row) for row in data["occupazione"]]
+    if "poi" in data:
+        data["poi"] = _correggi_poi_invertiti(data["poi"])
+    if "competitor" in data:
+        data["competitor"] = [list(row) for row in data["competitor"]]
+
+    if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
+        rata_annua = int(data["rata_mutuo_mensile"]) * 12
+        costi_base = (
+            data.get("costi_commissioni", 0) +
+            data.get("costi_pulizie", 0) +
+            data.get("costi_biancheria", 0) +
+            data.get("costi_utenze", 0) +
+            data.get("costi_manutenzione", 0)
+        )
+        data["totale_costi"] = costi_base + rata_annua
+        data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
+        data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+
+    return data
+
+
+@app.route("/generate-pdf-direct", methods=["POST"])
+def generate_pdf_direct():
     raw = ""
     try:
         raw = request.get_data(as_text=True)
-        cleaned = raw.strip()
-        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
-        if m:
-            cleaned = m.group(1).strip()
-        else:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                cleaned = cleaned[start:end+1]
-
-        data = _json.loads(cleaned)
-        data = normalize_data(data)
-        if request.args.get("lat") and request.args.get("long"):
-            data["lat"] = request.args.get("lat")
-            data["long"] = request.args.get("long")
-        for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
-            if campo in data and not isinstance(data[campo], str):
-                data[campo] = str(data[campo])
-
-        if "comune" in data:
-            data["comune"] = data["comune"].title()
-        if "zona" in data:
-            data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
-
-        _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
-        data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
-        data["_wikipedia_estratto"] = _estratto_wikipedia(
-            _record_comune.get("wikipedia") if _record_comune else None,
-            categoria=data["categoria"],
-            sottocategoria=data["sottocategoria"],
-        )
-
-        if "indirizzo" in data:
-            import re as _re2
-            addr = data["indirizzo"].strip()
-            addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
-            addr = _re2.sub(r',\s*,', ',', addr)
-            addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
-            data["indirizzo"] = addr.title()
-            if _record_comune and _record_comune.get("sigla_provincia"):
-                _sigla_corretta = _record_comune["sigla_provincia"].upper()
-                if _re.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
-                    data["indirizzo"] = _re.sub(r'\([A-Za-z]{2}\)', f"({_sigla_corretta})", data["indirizzo"])
-                else:
-                    data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
-            else:
-                data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
-
-        _calcola_costi_fissi_deterministici(data)
-
-        _cat = data.get("categoria", "comune_minore")
-        _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
-        _p = data.get("prezzo_notte_stimato", 0)
-
-        print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
-
-        _occ_old = data.get("occupazione_percent", 0)
-
-        _airroi = _airroi_lookup_e_stima(
-            data.get("lat"), data.get("long"),
-            camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
-            bagni_raw=data.get("bagni"),
-        )
-
-        if _airroi:
-            _p_new = _airroi["prezzo_notte_stimato"]
-            _occ_new = _airroi["occupazione_percent"]
-            data["fonte_prezzo"] = "airroi"
-        else:
-            _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
-            _p_new = round(_p * _moltiplicatore) if _p else _p
-            _occ_new = _occ_old
-            data["fonte_prezzo"] = "ai_stima"
-
-        if _airroi and _airroi.get("comparable_listings"):
-            _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
-            if _comp_airroi:
-                _righe_comp, _media_comp = _comp_airroi
-                data["competitor"] = _righe_comp
-                data["media_nazionale"] = _media_comp
-                data["fonte_competitor"] = "airroi"
-            else:
-                data["fonte_competitor"] = "ai_stima"
-        else:
-            data["fonte_competitor"] = "ai_stima"
-
-        if _p:
-            data["prezzo_notte_stimato"] = _p_new
-            data["occupazione_percent"] = _occ_new
-
-            _notti_new = round(_occ_new / 100 * 365) if _occ_new else 0
-            data["notti_anno"] = _notti_new
-            data["kpi_occupazione"] = _occ_new
-
-            _ricavo_lordo_new = round(_p_new * _notti_new)
-            _ricavo_lordo_old = data.get("ricavo_lordo", 0)
-            _bonus_old = data.get("bonus_dirette", 0)
-            _bonus_new = round(_bonus_old * (_ricavo_lordo_new / _ricavo_lordo_old)) if _ricavo_lordo_old else _bonus_old
-            _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
-
-            _comm_pct = data.get("costi_commissioni_pct", 15)
-            _pulizia_unit = data.get("costi_pulizie_unit", 35)
-            _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
-            _costi_pulizie_new = round(_pulizia_unit * _notti_new)
-            _costi_biancheria = data.get("costi_biancheria", 0)
-            _costi_utenze = data.get("costi_utenze", 0)
-            _costi_manutenzione = data.get("costi_manutenzione", 0)
-            _mutuo_annuo = data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0
-
-            _totale_costi_new = (_costi_commissioni_new + _costi_pulizie_new
-                                  + _costi_biancheria + _costi_utenze
-                                  + _costi_manutenzione + _mutuo_annuo)
-            _profitto_netto_new = _totale_ricavi_new - _totale_costi_new
-
-            data["ricavo_lordo"] = _ricavo_lordo_new
-            data["bonus_dirette"] = _bonus_new
-            data["totale_ricavi"] = _totale_ricavi_new
-            data["costi_commissioni"] = _costi_commissioni_new
-            data["costi_pulizie"] = _costi_pulizie_new
-            data["totale_costi"] = _totale_costi_new
-            data["profitto_netto"] = _profitto_netto_new
-            data["margine_percent"] = round(_profitto_netto_new / _totale_ricavi_new * 100) if _totale_ricavi_new else 0
-            data["kpi_prezzo"] = _p_new
-            data["kpi_potenziale"] = _ricavo_lordo_new
-
-            _ratio = _p_new / _p if _p else 1
-            if "occupazione" in data:
-                if _airroi and _airroi.get("distribuzione_mensile"):
-                    data["occupazione"] = _applica_stagionalita_airroi(
-                        data["occupazione"], _airroi["distribuzione_mensile"], _p_new,
-                        occ_annuale=_occ_new,
-                    )
-                elif _airroi:
-                    _occ_medio_ai = (sum(row[1] for row in data["occupazione"]) / 12) or 1
-                    _occ_ratio = _occ_new / _occ_medio_ai
-                    data["occupazione"] = [
-                        [row[0], max(5, min(100, round(row[1] * _occ_ratio))),
-                         round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
-                        for row in data["occupazione"]
-                    ]
-                else:
-                    data["occupazione"] = [
-                        [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
-                        for row in data["occupazione"]
-                    ]
-
-        data["mesi_affidabili_idx"] = _mesi_affidabili()
-
-        data["descrizione"] = genera_descrizione_standard(data)
-
-        if "occupazione" in data:
-            data["occupazione"] = [list(row) for row in data["occupazione"]]
-        if "poi" in data:
-            data["poi"] = _correggi_poi_invertiti(data["poi"])
-        if "competitor" in data:
-            data["competitor"] = [list(row) for row in data["competitor"]]
-
-        if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
-            rata_annua = int(data["rata_mutuo_mensile"]) * 12
-            costi_base = (
-                data.get("costi_commissioni", 0) +
-                data.get("costi_pulizie", 0) +
-                data.get("costi_biancheria", 0) +
-                data.get("costi_utenze", 0) +
-                data.get("costi_manutenzione", 0)
-            )
-            data["totale_costi"] = costi_base + rata_annua
-            data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
-            data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+        data = _elabora_dati_report_base(raw, request.args.get("lat"), request.args.get("long"))
 
         pdf_bytes = build_pdf_bytes(data)
         comune = data.get('comune', 'report').replace(' ', '_')
@@ -2343,6 +2353,42 @@ def generate_pdf_direct():
 
     except Exception as e:
         return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
+
+
+# Campi economici finali (post-normalizzazione + AirROI) da restituire a Make
+# per popolare le pillole del modulo Gmail (Report Base). Devono combaciare
+# esattamente con RU_Output_Economico_v2 mappato nel modulo JSON(25) su Make.
+_CAMPI_ECONOMICI_EMAIL = [
+    "prezzo_notte_stimato", "occupazione_percent", "notti_anno", "ricavo_lordo",
+    "bonus_dirette", "bonus_dirette_pct", "totale_ricavi",
+    "costi_commissioni", "costi_commissioni_pct", "costi_pulizie", "costi_pulizie_unit",
+    "costi_biancheria", "costi_utenze", "costi_manutenzione",
+    "totale_costi", "profitto_netto", "margine_percent",
+    "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione", "kpi_occ_range", "kpi_potenziale",
+]
+
+
+@app.route("/extract-report-fields", methods=["POST"])
+def extract_report_fields():
+    """Riceve {"testo": "<risposta grezza dell'AI, HTTP2>"} da Make (modulo HTTP24)
+    ed estrae i campi economici finali (post-normalizzazione + AirROI) in un
+    JSON pulito, così il modulo JSON(25) su Make può mapparli come pillole
+    nell'email del Report Base. Non genera nessun PDF."""
+    raw = ""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        raw = body.get("testo", "")
+        if not raw:
+            return jsonify({"error": "Campo 'testo' mancante o vuoto nel body"}), 400
+
+        data = _elabora_dati_report_base(raw)
+        risultato = {campo: data.get(campo) for campo in _CAMPI_ECONOMICI_EMAIL}
+        return jsonify(risultato)
+
+    except Exception as e:
+        return jsonify({"error": str(e), "raw_preview": raw[:500] if raw else ""}), 500
+
+
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
 from strategico import build_strategico_pdf_bytes
 
