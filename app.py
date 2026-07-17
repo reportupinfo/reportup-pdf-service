@@ -971,16 +971,26 @@ def page3(c, D):
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Confronto con affitto tradizionale")
     y -= 5 * mm
+    _diff_ricavo = D.get('ricavo_lordo', 0) - D.get('affitto_ricavo', 0)
+    _diff_profitto = D.get('profitto_netto', 0) - D.get('affitto_profitto', 0)
+
+    def _fmt_diff(delta):
+        segno = "+" if delta >= 0 else "-"
+        numero = f"{abs(int(delta)):,}".replace(",", ".")
+        return f"\u20ac {segno}{numero}"
+
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
         ["Ricavo annuo lordo", fmt_eur(D.get("affitto_ricavo", 0)), fmt_eur(D.get("ricavo_lordo", 0)),
-         f"+{fmt_eur(D.get('ricavo_lordo', 0) - D.get('affitto_ricavo', 0))}"],
+         _fmt_diff(_diff_ricavo)],
         ["Costi di gestione", fmt_eur(D.get("affitto_costi", 0)), fmt_eur(D.get("totale_costi", 0)), "--"],
         ["Profitto netto", fmt_eur(D.get("affitto_profitto", 0)), fmt_eur(D.get("profitto_netto", 0)),
-         f"+{fmt_eur(D.get('profitto_netto', 0) - D.get('affitto_profitto', 0))}"],
+         _fmt_diff(_diff_profitto)],
         ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
         ["Rischio morosit\u00e0", "Alto", "Nullo", "Eliminato"],
     ]
+    _colore_ricavo = TEAL if _diff_ricavo >= 0 else RED
+    _colore_profitto = TEAL if _diff_profitto >= 0 else RED
     col_w_conf = [(W - 28 * mm) * 0.28, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.28]
     tbl_conf = Table(conf_data, colWidths=col_w_conf)
     tbl_conf.setStyle(TableStyle([
@@ -991,8 +1001,8 @@ def page3(c, D):
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
         ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("TEXTCOLOR", (3, 1), (3, 1), TEAL), ("FONTNAME", (3, 1), (3, 1), "Helvetica-Bold"),
-        ("TEXTCOLOR", (3, 3), (3, 3), TEAL), ("FONTNAME", (3, 3), (3, 3), "Helvetica-Bold"),
+        ("TEXTCOLOR", (3, 1), (3, 1), _colore_ricavo), ("FONTNAME", (3, 1), (3, 1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (3, 3), (3, 3), _colore_profitto), ("FONTNAME", (3, 3), (3, 3), "Helvetica-Bold"),
         ("TEXTCOLOR", (3, 4), (3, 4), TEAL), ("FONTNAME", (3, 4), (3, 4), "Helvetica-Bold"),
         ("TEXTCOLOR", (3, 5), (3, 5), TEAL), ("FONTNAME", (3, 5), (3, 5), "Helvetica-Bold"),
     ]))
