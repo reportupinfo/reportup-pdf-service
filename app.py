@@ -1980,6 +1980,33 @@ def _punti_interesse_quick(lat, lon, sottocategoria):
     return punti[:2]
 
 
+@app.route("/verify-address", methods=["POST", "OPTIONS"])
+def verify_address():
+    """Chiamato dal form Base (Sessione 54) prima di mandare il cliente su
+    Stripe: verifica che l'indirizzo sia realmente geolocalizzabile, per
+    evitare pagamenti incassati senza che il report riesca mai a generarsi
+    più avanti nella pipeline Make (il geocode fallirebbe silenziosamente)."""
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    def _risposta(payload, status=200):
+        resp = jsonify(payload)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, status
+
+    body = request.get_json(force=True, silent=True) or {}
+    indirizzo = (body.get("indirizzo") or "").strip()
+    if not indirizzo:
+        return _risposta({"valido": False})
+
+    geo = _geocode_indirizzo(indirizzo)
+    return _risposta({"valido": bool(geo)})
+
+
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
 def quick_estimate():
     if request.method == "OPTIONS":
@@ -2077,77 +2104,6 @@ def quick_estimate():
 
         "punti_interesse": punti_interesse,
     })
-
-
-@app.route("/generate-pdf", methods=["POST"])
-def generate_pdf():
-    try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"error": "JSON body richiesto"}), 400
-
-        data = normalize_data(data)
-
-        if "occupazione" in data:
-            data["occupazione"] = [list(row) for row in data["occupazione"]]
-        if "poi" in data:
-            data["poi"] = _correggi_poi_invertiti(data["poi"])
-        if "competitor" in data:
-            data["competitor"] = [list(row) for row in data["competitor"]]
-
-        pdf_bytes = build_pdf_bytes(data)
-        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
-        return jsonify({
-            "success": True,
-            "pdf_base64": pdf_b64,
-            "filename": f"ReportUp_Base_{data.get('comune', 'report').replace(' ', '_')}.pdf"
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/generate-pdf-binary", methods=["POST"])
-def generate_pdf_binary():
-    import json as _json
-    import re as _re
-    raw = ""
-    try:
-        raw = request.get_data(as_text=True)
-
-        cleaned = raw.strip()
-        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
-        if m:
-            cleaned = m.group(1).strip()
-        else:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                cleaned = cleaned[start:end+1]
-
-        data = _json.loads(cleaned)
-
-        data = normalize_data(data)
-
-        if "occupazione" in data:
-            data["occupazione"] = [list(row) for row in data["occupazione"]]
-        if "poi" in data:
-            data["poi"] = _correggi_poi_invertiti(data["poi"])
-        if "competitor" in data:
-            data["competitor"] = [list(row) for row in data["competitor"]]
-
-        pdf_bytes = build_pdf_bytes(data)
-        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
-        return jsonify({
-            "success": True,
-            "pdf_base64": pdf_b64,
-            "filename": f"ReportUp_Base_{data.get('comune', 'report').replace(' ', '_')}.pdf"
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e), "raw_preview": raw[:500] if 'raw' in dir() else ""}), 500
 
 
 def _elabora_dati_report_base(raw, lat=None, long=None):
