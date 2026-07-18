@@ -2148,6 +2148,11 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
 
     _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
+    if _record_comune:
+        # Il nome del comune scritto dall'AI può contenere refusi (es. una
+        # lettera di troppo); il CSV è la fonte di verità, sovrascriviamo
+        # sempre con l'ortografia ufficiale invece di fidarci dell'AI.
+        data["comune"] = _record_comune["comune"]
     data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
     data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
     data["_wikipedia_estratto"] = _estratto_wikipedia(
