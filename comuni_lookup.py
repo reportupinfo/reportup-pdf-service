@@ -68,7 +68,14 @@ def trova_comune(nome_comune: str, provincia: str = None) -> dict | None:
 
     candidati = indice.get(chiave)
     if not candidati:
-        return None
+        # Nessuna corrispondenza esatta: prova un confronto fuzzy per
+        # catturare piccoli refusi (es. una lettera di troppo/mancante),
+        # comune quando il nome arriva da un testo generato via AI.
+        import difflib
+        corrispondenze = difflib.get_close_matches(chiave, indice.keys(), n=1, cutoff=0.87)
+        if not corrispondenze:
+            return None
+        candidati = indice[corrispondenze[0]]
 
     if len(candidati) == 1:
         return candidati[0]
