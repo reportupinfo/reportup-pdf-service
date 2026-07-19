@@ -21,6 +21,8 @@ from reportlab.lib.enums import TA_CENTER
 
 import comuni_lookup
 import territorio_gps
+import stagionalita_turistica
+import omi_canoni
 
 app = Flask(__name__)
 
@@ -1132,13 +1134,19 @@ def page5(c, D):
     draw_section_subtitle(c, 14 * mm, y, "Dati e metodologia alla base di questa analisi")
     y -= 6 * mm
 
+    _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_ai")
+    if _fonte_affitto == "omi_reale":
+        _desc_affitto = ("Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate, Semestre 2025/2. "
+                          "Canone di locazione medio EUR/m2 della zona, applicato alla superficie dichiarata.")
+    else:
+        _desc_affitto = ("Stima di mercato — dato OMI non disponibile per questo comune nel semestre corrente. "
+                          "Valore orientativo, non tratto dalla banca dati OMI.")
+
     fonti = [
         ("Prezzi per notte e\ntasso di occupazione",
          "Elaborazione su dati aggregati delle principali piattaforme di short rental (Airbnb, Booking.com, VRBO). "
          "I valori rappresentano medie di mercato per tipologia di immobile e zona al momento della generazione."),
-        ("Canoni di affitto\ntradizionale",
-         "Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate. Banca dati delle quotazioni "
-         "immobiliari, aggiornamento semestrale."),
+        ("Canoni di affitto\ntradizionale", _desc_affitto),
         ("Dati demografici e\nflussi turistici",
          "ISTAT - Istituto Nazionale di Statistica. Movimento turistico in Italia, rilevazione annuale su arrivi "
          "e presenze per comune e tipologia di struttura."),
@@ -1362,7 +1370,7 @@ _WIKI_SEZIONI_PER_CATEGORIA = {
     "capoluogo":           ["Monumenti e luoghi d'interesse", "Luoghi di interesse", "Arte e cultura", "Patrimonio"],
     "costiero":            ["Spiagge", "Territorio", "Turismo", "Sagre", "Tradizioni", "Cultura"],
     "lacuale":             ["Turismo", "Sport", "Territorio", "Sagre", "Tradizioni", "Cultura"],
-    "montano":             ["Sport", "Turismo", "Sci", "Trekking", "Territorio", "Sagre", "Tradizioni"],
+    "montano":             ["Sport", "Turismo", "Sci", "Trekking", "Territorio", "Sagre", "Tradizioni"],  # NOTE: vedi anche stagionalita_turistica.py per la curva bimodale sci+estate
     "residenziale_minore": ["Sagre", "Tradizioni", "Cultura", "Economia", "Prodotti tipici", "Gastronomia"],
 }
 
@@ -2179,6 +2187,24 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     _calcola_costi_fissi_deterministici(data)
 
+    # ── Confronto affitto tradizionale — dato OMI reale quando disponibile ──
+    # Sessione 62: prima questi 3 campi arrivavano interamente dall'AI (mai
+    # verificati, causa dell'errore Brera €1.000 vs reale €1.800-2.200 già
+    # segnalato in checklist). Ora, se il comune è coperto dal dataset OMI
+    # 2025/2, li ricalcoliamo in modo deterministico dal canone reale
+    # EUR/m2. Se il comune non è coperto, restano quelli dell'AI —
+    # dichiarati come stima, mai spacciati per OMI.
+    _istat = _record_comune.get("codice_istat") if _record_comune else None
+    _omi_affitto = omi_canoni.stima_affitto_tradizionale(
+        _istat, data.get("superficie"), data.get("tipologia")
+    ) if _istat else None
+    if _omi_affitto:
+        data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], data["fonte_affitto_tradizionale"] = _omi_affitto
+        print(f"[OMI] canone reale applicato per comune={data.get('comune')!r} istat={_istat}")
+    else:
+        data["fonte_affitto_tradizionale"] = "stima_ai"
+        print(f"[OMI] comune={data.get('comune')!r} non coperto dal dataset OMI 2025/2 — resta stima AI")
+
     _cat = data.get("categoria", "comune_minore")
     _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
     _p = data.get("prezzo_notte_stimato", 0)
@@ -2254,26 +2280,29 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         data["kpi_prezzo"] = _p_new
         data["kpi_potenziale"] = _ricavo_lordo_new
 
-        _ratio = _p_new / _p if _p else 1
+        _curva, _fonte_stagionalita = stagionalita_turistica.ottieni_curva_stagionale(
+            _sub, _cat, data.get("comune")
+        )
+        data["fonte_stagionalita"] = _fonte_stagionalita
+
         if "occupazione" in data:
             if _airroi and _airroi.get("distribuzione_mensile"):
+                # Dato mensile REALE da AirROI: priorità massima, nessuna curva
+                # sostitutiva necessaria — è il caso migliore possibile.
                 data["occupazione"] = _applica_stagionalita_airroi(
                     data["occupazione"], _airroi["distribuzione_mensile"], _p_new,
                     occ_annuale=_occ_new,
                 )
-            elif _airroi:
-                _occ_medio_ai = (sum(row[1] for row in data["occupazione"]) / 12) or 1
-                _occ_ratio = _occ_new / _occ_medio_ai
-                data["occupazione"] = [
-                    [row[0], max(5, min(100, round(row[1] * _occ_ratio))),
-                     round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
-                    for row in data["occupazione"]
-                ]
+                data["fonte_stagionalita"] = "airroi_reale"
             else:
-                data["occupazione"] = [
-                    [row[0], row[1], round(row[2] * _ratio) if len(row) > 2 else row[2]] + list(row[3:])
-                    for row in data["occupazione"]
-                ]
+                # Il LIVELLO annuo (_occ_new/_p_new) è reale se c'è AirROI,
+                # oppure stima AI col moltiplicatore fisso se il mercato non è
+                # osservato (comportamento invariato, unico caso in cui l'AI
+                # resta in gioco). La FORMA dei 12 mesi non è MAI più quella
+                # inventata dall'AI: viene sempre dalla curva di categoria
+                # territoriale (vedi stagionalita_turistica.py).
+                print(f"[STAGIONALITA] curva '{_fonte_stagionalita}' applicata per comune={data.get('comune')!r}")
+                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva)
 
     data["mesi_affidabili_idx"] = _mesi_affidabili()
 
