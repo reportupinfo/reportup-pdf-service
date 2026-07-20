@@ -2318,9 +2318,16 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         bagni_raw=data.get("bagni"),
     )
 
+    # Correttivo occupazione AirROI — Sessione 65, differenziato per
+    # categoria (vedi stagionalita_turistica.py per fonti e ragionamento).
+    # Sostituisce il correttivo fisso 1.35 di ieri.
+    _correttivo_occ, _fonte_correttivo = stagionalita_turistica.correttivo_occupazione(
+        _sub, _cat, data.get("comune")
+    )
+
     if _airroi:
         _p_new = _airroi["prezzo_notte_stimato"]
-        _occ_new = _airroi["occupazione_percent"]
+        _occ_new = min(stagionalita_turistica.OCCUPAZIONE_TETTO_MASSIMO, round(_airroi["occupazione_percent"] * _correttivo_occ))
         data["fonte_prezzo"] = "airroi"
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
