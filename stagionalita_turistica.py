@@ -126,16 +126,38 @@ CURVA_GENERICA = [25, 25, 30, 38, 42, 48, 60, 62, 45, 35, 25, 30]
 
 def applica_curva(occ_annuale, adr_annuale, curva):
     """Versione generica: ricostruisce le 12 righe usando una qualsiasi
-    curva di forma a 12 valori relativi, mantenendo la media reale."""
+    curva di forma a 12 valori relativi, mantenendo la media reale.
+    Ogni riga ha 4 campi [mese, occupazione, prezzo, stagione] — il PDF
+    (app.py, stage_color) si aspetta sempre il 4° campo per colorare
+    tabella e grafico; ometterlo causa un IndexError e un 500 in produzione
+    (bug reale, Sessione 63/64, verificato dai log Render)."""
     mesi = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
             "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
     media = sum(curva) / 12
+
+    # Etichetta di stagione per rango relativo all'interno della curva stessa
+    # (non per soglia assoluta di occupazione, perché il livello annuo può
+    # essere basso o alto a seconda del comune): i 2 mesi più forti sono
+    # "Peak", i successivi 4 "Alta", i successivi 3 "Media", il resto "Bassa"
+    # — stessa distribuzione 2/4/3/3 usata storicamente nei report AI.
+    ordine = sorted(range(12), key=lambda i: curva[i], reverse=True)
+    etichetta = [""] * 12
+    for rank, i in enumerate(ordine):
+        if rank < 2:
+            etichetta[i] = "Peak"
+        elif rank < 6:
+            etichetta[i] = "Alta"
+        elif rank < 9:
+            etichetta[i] = "Media"
+        else:
+            etichetta[i] = "Bassa"
+
     righe = []
     for i, nome_mese in enumerate(mesi):
         peso = curva[i] / media
         occ_mese = max(5, min(100, round(occ_annuale * peso))) if occ_annuale else None
         prezzo_mese = max(1, round(adr_annuale * peso)) if adr_annuale else None
-        righe.append([nome_mese, occ_mese, prezzo_mese])
+        righe.append([nome_mese, occ_mese, prezzo_mese, etichetta[i]])
     return righe
 
 
