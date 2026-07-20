@@ -161,6 +161,42 @@ def applica_curva(occ_annuale, adr_annuale, curva):
     return righe
 
 
+# ── Correttivo occupazione per categoria — Sessione 65 ───────────────────────
+# AirROI sottostima il livello annuo di occupazione (non solo la forma), ma
+# in misura diversa a seconda della vocazione turistica del comune. Fonti:
+# - Città (AirDNA): Roma 84%, Bologna 63%, Firenze 61%, Verona 66%,
+#   Milano 57-58% -> media ~66% reale vs ~45% tipico grezzo AirROI.
+# - Montano invernale: nessun dato AirDNA diretto, ma evidenza qualitativa
+#   forte (Alto Sangro/Roccaraso "tutto esaurito" gen-mar 2025, +60%
+#   presenze a gennaio) -> correttivo aggressivo confermato.
+# - Costiero: Rimini 49%, Taormina 61% -> media ~55%.
+# - Lacuale: Como 57% (singolo punto dato, insufficiente per differenziare).
+# - Montano estivo / generico: Loiano (Appennino, paese non turistico) 45%,
+#   Santarcangelo di Romagna 49%, Sassari 52% -> praticamente allineati al
+#   dato grezzo AirROI. Qui un correttivo forte sarebbe im-preciso nella
+#   direzione opposta (troppo ottimistico per un paese senza vocazione
+#   turistica riconosciuta) -> correttivo lieve.
+CORRETTIVO_OCCUPAZIONE_PER_CATEGORIA = {
+    "citta": 1.45,
+    "montano_invernale": 1.40,
+    "costiero": 1.35,
+    "lacuale": 1.35,
+    "montano_estivo": 1.10,
+    "generico": 1.10,
+}
+OCCUPAZIONE_TETTO_MASSIMO = 85
+
+
+def correttivo_occupazione(sottocategoria, categoria, comune):
+    """
+    Ritorna (moltiplicatore, etichetta_fonte) da applicare al livello annuo
+    di occupazione fornito da AirROI, secondo la stessa classificazione già
+    usata per la curva stagionale (riuso di ottieni_curva_stagionale per
+    coerenza fra le due logiche)."""
+    _curva_ignorata, fonte = ottieni_curva_stagionale(sottocategoria, categoria, comune)
+    return CORRETTIVO_OCCUPAZIONE_PER_CATEGORIA.get(fonte, 1.35), fonte
+
+
 def ottieni_curva_stagionale(sottocategoria, categoria, comune):
     """
     Sceglie la curva di forma corretta in base a sottocategoria territoriale
