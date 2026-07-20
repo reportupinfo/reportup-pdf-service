@@ -124,22 +124,26 @@ CURVA_CITTA = [45, 48, 55, 65, 68, 65, 55, 40, 65, 68, 52, 58]
 CURVA_GENERICA = [25, 25, 30, 38, 42, 48, 60, 62, 45, 35, 25, 30]
 
 
-def applica_curva(occ_annuale, adr_annuale, curva):
+def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5):
     """Versione generica: ricostruisce le 12 righe usando una qualsiasi
     curva di forma a 12 valori relativi, mantenendo la media reale.
     Ogni riga ha 4 campi [mese, occupazione, prezzo, stagione] — il PDF
     (app.py, stage_color) si aspetta sempre il 4° campo per colorare
     tabella e grafico; ometterlo causa un IndexError e un 500 in produzione
-    (bug reale, Sessione 63/64, verificato dai log Render)."""
+    (bug reale, Sessione 63/64, verificato dai log Render).
+
+    Il prezzo usa una versione dell'ampiezza della curva SMORZATA SOLO SUL
+    LATO BASSO (smorzamento_prezzo, default 0.5): i mesi sopra media restano
+    identici alla curva piena (spesso coincidono con i 3 mesi "affidabili"
+    confermati dal mercato reale AirROI — non vanno mai abbassati). Solo i
+    mesi sotto media vengono attenuati verso l'alto: nella realtà un host in
+    bassa stagione riduce le prenotazioni accettate più di quanto riduca la
+    tariffa. Segnalato da Salvatore, Sessione 65: prima lo smorzamento era
+    simmetrico e abbassava anche i picchi confermati — corretto qui."""
     mesi = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
             "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
     media = sum(curva) / 12
 
-    # Etichetta di stagione per rango relativo all'interno della curva stessa
-    # (non per soglia assoluta di occupazione, perché il livello annuo può
-    # essere basso o alto a seconda del comune): i 2 mesi più forti sono
-    # "Peak", i successivi 4 "Alta", i successivi 3 "Media", il resto "Bassa"
-    # — stessa distribuzione 2/4/3/3 usata storicamente nei report AI.
     ordine = sorted(range(12), key=lambda i: curva[i], reverse=True)
     etichetta = [""] * 12
     for rank, i in enumerate(ordine):
@@ -154,9 +158,13 @@ def applica_curva(occ_annuale, adr_annuale, curva):
 
     righe = []
     for i, nome_mese in enumerate(mesi):
-        peso = curva[i] / media
-        occ_mese = max(5, min(100, round(occ_annuale * peso))) if occ_annuale else None
-        prezzo_mese = max(1, round(adr_annuale * peso)) if adr_annuale else None
+        peso_occ = curva[i] / media
+        if peso_occ >= 1:
+            peso_prezzo = peso_occ
+        else:
+            peso_prezzo = 1 + (peso_occ - 1) * smorzamento_prezzo
+        occ_mese = max(5, min(100, round(occ_annuale * peso_occ))) if occ_annuale else None
+        prezzo_mese = max(1, round(adr_annuale * peso_prezzo)) if adr_annuale else None
         righe.append([nome_mese, occ_mese, prezzo_mese, etichetta[i]])
     return righe
 
