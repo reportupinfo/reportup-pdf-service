@@ -51,6 +51,29 @@ def _tipologia_da_camere(n_camere):
     return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
 
 
+def _media_nazionale_da_percentili(percentili_revenue, occupazione_frazione, valuta="€"):
+    """
+    Costruisce la riga 'Media nazionale' da dati REALI AirROI (percentili di
+    ricavo annuo) quando non ci sono comparable_listings sufficienti per la
+    tabella dettagliata. Converte ricavo -> prezzo/notte implicito dividendo
+    per notti/anno stimate alla stessa occupazione. Meno preciso di annunci
+    comparabili reali, ma è dato di mercato vero, non invenzione. Sessione 64.
+    """
+    if not percentili_revenue or not occupazione_frazione:
+        return None
+    notti_anno = occupazione_frazione * 365
+    if notti_anno < 1:
+        return None
+    p25 = percentili_revenue.get("p25", 0) / notti_anno
+    p75 = percentili_revenue.get("p75", 0) / notti_anno
+    p50 = percentili_revenue.get("p50", 0) / notti_anno if percentili_revenue.get("p50") else (p25 + p75) / 2
+    if p25 <= 0 or p75 <= 0:
+        return None
+    occ_pct = round(occupazione_frazione * 100)
+    return ["Media di mercato AirROI (percentili)", "\u2014",
+            f"{valuta} {round(p25)}-{round(p75)}", f"{occ_pct}%", "\u2014"]
+
+
 def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
     if not comparable_listings:
         return None
@@ -165,12 +188,26 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
         if not (isinstance(comparable_listings, list) and len(comparable_listings) >= 3):
             comparable_listings = None
 
-        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0}")
+        # I percentili di ricavo arrivano da AirROI anche quando non ci sono
+        # comparable_listings individuali: dato reale di mercato, usabile per
+        # costruire un range di prezzo zona invece dell'invenzione AI.
+        # Sessione 64.
+        _perc_rev = stima.get("percentiles", {}).get("revenue") if isinstance(stima.get("percentiles"), dict) else None
+        percentili_revenue = None
+        if isinstance(_perc_rev, dict) and _perc_rev.get("p25") and _perc_rev.get("p75"):
+            percentili_revenue = {
+                "p25": float(_perc_rev["p25"]), "p50": float(_perc_rev.get("p50") or 0),
+                "p75": float(_perc_rev["p75"]), "p90": float(_perc_rev.get("p90") or 0),
+            }
+
+        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0} percentili_revenue={'presente' if percentili_revenue else 'assente'}")
         return {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
             "distribuzione_mensile": distribuzione_mensile,
             "comparable_listings": comparable_listings,
+            "percentili_revenue": percentili_revenue,
+            "occupazione_frazione": float(occ),
         }
     except Exception as e:
         print(f"[AIRROI] eccezione: {e}")
@@ -1641,18 +1678,60 @@ def _sembra_distanza(testo):
     return any(p in t for p in ("piedi", "auto", "min", "km", "in loco"))
 
 
+def _e_distanza_numerica(testo):
+    return any(ch.isdigit() for ch in str(testo or ""))
+
+
+def _impatto_deterministico(distanza_str, modalita="piedi"):
+    """
+    Calcola Alto/Medio/Basso da soglie fisse sulla distanza già estratta da
+    Google Maps, invece di lasciarlo decidere all'AI. Sessione 64.
+    modalita='piedi': per righe camminabili (trasporto pubblico, servizi essenziali).
+    modalita='auto': per righe su scala di comune (comune di riferimento, elemento caratteristico).
+    Ritorna None se non riesce a estrarre un numero — in quel caso il chiamante
+    tiene il valore originale (dato assente/dash, o "In loco").
+    """
+    testo = str(distanza_str or "").strip().lower()
+    if not testo or testo == "—":
+        return None
+    if "in loco" in testo:
+        return "Alto"
+
+    # Priorità ai km se presenti nel testo (es. "30 km auto"), altrimenti
+    # ai minuti (es. "15 min a piedi") — evita ambiguità tra i due formati.
+    m_km = re.search(r"([\d.,]+)\s*km", testo)
+    if m_km:
+        try:
+            km = float(m_km.group(1).replace(",", "."))
+        except ValueError:
+            return None
+        if modalita == "piedi":
+            return "Alto" if km <= 1 else "Medio" if km <= 2.5 else "Basso"
+        return "Alto" if km <= 15 else "Medio" if km <= 40 else "Basso"
+
+    m_min = re.search(r"(\d+)\s*min", testo)
+    if m_min:
+        minuti = int(m_min.group(1))
+        return "Alto" if minuti <= 10 else "Medio" if minuti <= 20 else "Basso"
+
+    return None
+
+
 def _correggi_poi_invertiti(poi):
+    # Ordine fisso garantito dal prompt: 0=trasporto pubblico, 1=comune di
+    # riferimento, 2=elemento caratteristico, 3=servizi essenziali.
+    _modalita_per_riga = ["piedi", "auto", "auto", "piedi"]
     corrette = []
-    for row in poi:
+    for idx, row in enumerate(poi):
         distanza, nome, impatto = (list(row) + ["\u2014", "\u2014", "\u2014"])[:3]
         if _sembra_etichetta_categoria(nome) and not _sembra_distanza(distanza):
             distanza, nome = nome, distanza
+        modalita = _modalita_per_riga[idx] if idx < len(_modalita_per_riga) else "piedi"
+        _impatto_calcolato = _impatto_deterministico(distanza, modalita)
+        if _impatto_calcolato:
+            impatto = _impatto_calcolato
         corrette.append([distanza, nome, impatto])
     return corrette
-
-
-def _e_distanza_numerica(testo):
-    return any(ch.isdigit() for ch in str(testo or ""))
 
 
 def _poi_riga_frase(poi, idx):
@@ -2143,6 +2222,13 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     data = _json.loads(cleaned)
     data = normalize_data(data)
+
+    # Dotazioni assenti: pura sottrazione insiemistica (lista standard meno
+    # quelle dichiarate presenti dal cliente) — zero margine di invenzione,
+    # l'AI non decide più questo campo. Sessione 64.
+    _dot_presenti_norm = [_norm_dotazione(d) for d in (data.get("dotazioni_presenti") or [])]
+    data["dotazioni_assenti"] = [d for d in DOTAZIONI_AMMESSE if d not in _dot_presenti_norm]
+
     if lat and long:
         data["lat"] = lat
         data["long"] = long
@@ -2253,6 +2339,19 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             data["fonte_competitor"] = "ai_stima"
     else:
         data["fonte_competitor"] = "ai_stima"
+
+    # Fallback intermedio: nessun annuncio comparabile individuale, ma AirROI
+    # fornisce comunque i percentili di ricavo reali del mercato — meglio di
+    # niente, usiamoli per la riga "Media nazionale" invece di lasciarla
+    # 100% inventata dall'AI. Le 4 righe competitor dettagliate restano AI
+    # (non ricostruibili senza annunci individuali). Sessione 64.
+    if data["fonte_competitor"] == "ai_stima" and _airroi and _airroi.get("percentili_revenue"):
+        _media_reale = _media_nazionale_da_percentili(
+            _airroi["percentili_revenue"], _airroi.get("occupazione_frazione")
+        )
+        if _media_reale:
+            data["media_nazionale"] = _media_reale
+            data["fonte_competitor"] = "airroi_percentili"
 
     if _p:
         data["prezzo_notte_stimato"] = _p_new
