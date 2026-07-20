@@ -2195,8 +2195,17 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     # EUR/m2. Se il comune non è coperto, restano quelli dell'AI —
     # dichiarati come stima, mai spacciati per OMI.
     _istat = _record_comune.get("codice_istat") if _record_comune else None
+    _superficie_num = None
+    _sup_raw = data.get("superficie")
+    if _sup_raw is not None:
+        _match_sup = _re.search(r"[\d.,]+", str(_sup_raw))
+        if _match_sup:
+            try:
+                _superficie_num = float(_match_sup.group(0).replace(",", "."))
+            except ValueError:
+                _superficie_num = None
     _omi_affitto = omi_canoni.stima_affitto_tradizionale(
-        _istat, data.get("superficie"), data.get("tipologia")
+        _istat, _superficie_num, data.get("tipologia")
     ) if _istat else None
     if _omi_affitto:
         data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], data["fonte_affitto_tradizionale"] = _omi_affitto
@@ -2286,7 +2295,19 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         data["fonte_stagionalita"] = _fonte_stagionalita
 
         if "occupazione" in data:
-            if _airroi and _airroi.get("distribuzione_mensile"):
+            if _fonte_stagionalita == "montano_invernale":
+                # Comune a doppia vocazione nota (sci + estate): la curva
+                # bimodale curata vince SEMPRE, anche se AirROI fornisce una
+                # sua distribuzione_mensile. Motivo: su mercati piccoli come
+                # questi, AirROI ha visibilità limitata anche lei sulle
+                # prenotazioni invernali — il suo dato "reale" rischierebbe
+                # di ereditare la stessa sottostima invernale che stiamo
+                # correggendo, solo da un'altra fonte. Verificato in Sessione
+                # 63 su Pescasseroli: con priorità AirROI la curva tornava
+                # a un unico picco estivo nonostante il fix.
+                print(f"[STAGIONALITA] curva bimodale (priorità su AirROI) per comune={data.get('comune')!r}")
+                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva)
+            elif _airroi and _airroi.get("distribuzione_mensile"):
                 # Dato mensile REALE da AirROI: priorità massima, nessuna curva
                 # sostitutiva necessaria — è il caso migliore possibile.
                 data["occupazione"] = _applica_stagionalita_airroi(
