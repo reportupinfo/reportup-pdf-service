@@ -2204,9 +2204,13 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
                 _superficie_num = float(_match_sup.group(0).replace(",", "."))
             except ValueError:
                 _superficie_num = None
-    _omi_affitto = omi_canoni.stima_affitto_tradizionale(
-        _istat, _superficie_num, data.get("tipologia")
-    ) if _istat else None
+    try:
+        _omi_affitto = omi_canoni.stima_affitto_tradizionale(
+            _istat, _superficie_num, data.get("tipologia")
+        ) if _istat else None
+    except Exception as _err_omi:
+        print(f"[OMI] errore imprevisto, fallback a stima AI: {_err_omi!r}")
+        _omi_affitto = None
     if _omi_affitto:
         data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], data["fonte_affitto_tradizionale"] = _omi_affitto
         print(f"[OMI] canone reale applicato per comune={data.get('comune')!r} istat={_istat}")
@@ -2289,12 +2293,16 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         data["kpi_prezzo"] = _p_new
         data["kpi_potenziale"] = _ricavo_lordo_new
 
-        _curva, _fonte_stagionalita = stagionalita_turistica.ottieni_curva_stagionale(
-            _sub, _cat, data.get("comune")
-        )
-        data["fonte_stagionalita"] = _fonte_stagionalita
+        try:
+            _curva, _fonte_stagionalita = stagionalita_turistica.ottieni_curva_stagionale(
+                _sub, _cat, data.get("comune")
+            )
+        except Exception as _err_stag:
+            print(f"[STAGIONALITA] errore imprevisto, curva non sostituita: {_err_stag!r}")
+            _curva, _fonte_stagionalita = None, None
+        data["fonte_stagionalita"] = _fonte_stagionalita or "stima_ai"
 
-        if "occupazione" in data:
+        if "occupazione" in data and _curva:
             if _fonte_stagionalita == "montano_invernale":
                 # Comune a doppia vocazione nota (sci + estate): la curva
                 # bimodale curata vince SEMPRE, anche se AirROI fornisce una
