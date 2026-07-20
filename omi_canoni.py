@@ -64,11 +64,15 @@ def canone_omi_mq(codice_istat):
     """
     Ritorna (loc_min_mq, loc_max_mq, n_zone) — canone di locazione mensile
     EUR/m2, media tra le zone OMI del comune — oppure None se il comune
-    non è nel dataset OMI 2025/2.
+    non è nel dataset OMI 2025/2 o il codice non è valido.
     """
     if codice_istat is None:
         return None
-    rec = _carica().get(str(int(codice_istat)))
+    try:
+        chiave = str(int(codice_istat))
+    except (ValueError, TypeError):
+        return None
+    rec = _carica().get(chiave)
     if not rec:
         return None
     return rec["loc_min_mq"], rec["loc_max_mq"], rec["n_zone"]
