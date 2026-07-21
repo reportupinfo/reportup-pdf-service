@@ -325,6 +325,40 @@ def _norm_dotazione(d):
     return _DOTAZIONI_SINONIMI.get(str(d or "").strip().lower(), str(d or "").strip())
 
 
+# ── Incremento prezzo/notte per dotazione — Sessione 66 ──────────────────────
+# Non tutte le dotazioni influenzano il prezzo di mercato: WiFi, aria
+# condizionata, riscaldamento e fino a 2 bagni sono ormai standard in
+# qualsiasi annuncio short-rental e non giustificano un incremento (a
+# differenza di quanto già fatto sui COSTI di gestione, dove restano
+# rilevanti). Solo le dotazioni che aggiungono valore percepito reale hanno
+# un incremento, deciso da Salvatore su base esperienza diretta (30.000+
+# valutazioni): cucina attrezzata e ascensore leggermente sopra lo standard
+# (+2%), giardino/terrazzo/lavatrice un vantaggio concreto ma comune (+3%),
+# parcheggio (+5%, sempre richiesto e spesso assente), piscina (+7%, il
+# fattore più raro e più valorizzato). Gli incrementi si sommano (additivi,
+# non composti) se l'immobile ha più dotazioni valorizzate insieme.
+INCREMENTO_PREZZO_PER_DOTAZIONE = {
+    "Cucina attrezzata": 0.02,
+    "Ascensore": 0.02,
+    "Giardino": 0.03,
+    "Terrazzo": 0.03,
+    "Lavatrice": 0.03,
+    "Parcheggio": 0.05,
+    "Piscina": 0.07,
+    # WiFi, Aria condizionata, Riscaldamento: 0 — standard di mercato, nessun incremento.
+}
+
+
+def _moltiplicatore_dotazioni(dotazioni_presenti):
+    """Ritorna il moltiplicatore da applicare al prezzo/notte in base alle
+    dotazioni dichiarate presenti (es. 1.05 = +5%). Dotazioni non elencate
+    in INCREMENTO_PREZZO_PER_DOTAZIONE (WiFi, aria condizionata,
+    riscaldamento, bagni) non aggiungono nulla — sono ormai standard."""
+    presenti_norm = {_norm_dotazione(d) for d in (dotazioni_presenti or [])}
+    incremento = sum(v for nome, v in INCREMENTO_PREZZO_PER_DOTAZIONE.items() if nome in presenti_norm)
+    return 1 + incremento
+
+
 def _zona_sembra_valida(testo):
     t = str(testo or "").strip()
     if not t:
@@ -2362,6 +2396,16 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         _occ_new = _occ_old
         _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
         data["fonte_prezzo"] = "ai_stima"
+
+    # Incremento per dotazioni di valore (Sessione 66) — applicato UNA VOLTA
+    # qui, prima che _p_new si propaghi su tabella mensile, ricavi e KPI, così
+    # il bonus vale in automatico ovunque compaia il prezzo, indipendente
+    # dalla fonte (AirROI o stima AI). WiFi/aria condizionata/riscaldamento/
+    # bagni non danno incremento — vedi INCREMENTO_PREZZO_PER_DOTAZIONE.
+    if _p_new:
+        _mult_dotazioni = _moltiplicatore_dotazioni(data.get("dotazioni_presenti"))
+        if _mult_dotazioni != 1:
+            _p_new = round(_p_new * _mult_dotazioni)
 
     if _airroi and _airroi.get("comparable_listings"):
         _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
