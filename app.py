@@ -221,7 +221,7 @@ def _mesi_affidabili(oggi=None):
     return [(mese_partenza + i) % 12 for i in range(3)]
 
 
-def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_annuale=None):
+def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_annuale=None, tetto_massimo=85):
     if not occ or not distribuzione_mensile or len(occ) != 12:
         return occ
     media = sum(distribuzione_mensile) / 12
@@ -230,10 +230,15 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
     nuova = []
     for i, row in enumerate(occ):
         peso = distribuzione_mensile[i] / media
-        prezzo_mese = max(1, round(adr_annuale * peso))
+        # Smorzamento simmetrico sul prezzo (Sessione 66) — anche quando il
+        # dato mensile è reale (AirROI), un picco non deve raddoppiare il
+        # prezzo medio: stesso meccanismo già applicato alla curva curata,
+        # per coerenza indipendentemente dalla fonte del dato.
+        peso_prezzo = stagionalita_turistica.smorza_peso_prezzo(peso)
+        prezzo_mese = max(1, round(adr_annuale * peso_prezzo))
         nuova_row = [row[0], row[1], prezzo_mese] + list(row[3:])
         if occ_annuale is not None:
-            nuova_row[1] = max(5, min(100, round(occ_annuale * peso)))
+            nuova_row[1] = max(5, min(tetto_massimo, round(occ_annuale * peso)))
         nuova.append(nuova_row)
     return nuova
 
@@ -2143,21 +2148,42 @@ def quick_estimate():
     )
 
     if airroi:
-        prezzo_notte = airroi["prezzo_notte_stimato"]
-        occupazione_percent = airroi["occupazione_percent"]
+        _prezzo_medio_grezzo = airroi["prezzo_notte_stimato"]
+        _correttivo_occ, _fonte_occ = stagionalita_turistica.correttivo_occupazione(
+            sottocategoria, categoria, record_comune["comune"] if record_comune else geo.get("comune")
+        )
+        _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_occ)
+        occupazione_percent = min(_tetto_occ, round(airroi["occupazione_percent"] * _correttivo_occ))
+        # Prezzo del MESE CORRENTE (non la media annua piatta) — stessa logica
+        # usata dal Base per la tabella mensile, così Quick e Base mostrano un
+        # numero coerente per lo stesso "oggi" invece di un piatto vs un picco
+        # non allineati. Sessione 66.
+        prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
+            _prezzo_medio_grezzo, sottocategoria, categoria,
+            record_comune["comune"] if record_comune else geo.get("comune"),
+            distribuzione_mensile=airroi.get("distribuzione_mensile"),
+        )
         fonte_prezzo = "airroi"
         n_comparabili = len(airroi["comparable_listings"]) if airroi.get("comparable_listings") else 0
     else:
         base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
         mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
         mult_capacita = _moltiplicatore_capacita(body.get("posti_letto"))
-        prezzo_notte = round(base * mult_zona * mult_capacita)
+        _prezzo_medio_grezzo = round(base * mult_zona * mult_capacita)
+        prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
+            _prezzo_medio_grezzo, sottocategoria, categoria,
+            record_comune["comune"] if record_comune else geo.get("comune"),
+        )
         occupazione_percent = OCCUPAZIONE_BASE_FALLBACK
         fonte_prezzo = "stima_deterministica"
         n_comparabili = 0
 
+    # Il potenziale annuo lordo resta calcolato sul prezzo MEDIO annuo, non sul
+    # prezzo del mese corrente appena mostrato: mischiare un prezzo di un
+    # singolo mese con un numero di notti annuo darebbe un potenziale annuo
+    # falsato (gonfiato in alta stagione, sottostimato in bassa stagione).
     notti_anno = round(365 * occupazione_percent / 100)
-    potenziale_lordo = prezzo_notte * notti_anno
+    potenziale_lordo = _prezzo_medio_grezzo * notti_anno
 
     if airroi and airroi.get("comparable_listings"):
         prezzi_comparabili = [
@@ -2327,12 +2353,14 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     if _airroi:
         _p_new = _airroi["prezzo_notte_stimato"]
-        _occ_new = min(stagionalita_turistica.OCCUPAZIONE_TETTO_MASSIMO, round(_airroi["occupazione_percent"] * _correttivo_occ))
+        _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
+        _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
         data["fonte_prezzo"] = "airroi"
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p_new = round(_p * _moltiplicatore) if _p else _p
         _occ_new = _occ_old
+        _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
         data["fonte_prezzo"] = "ai_stima"
 
     if _airroi and _airroi.get("comparable_listings"):
@@ -2420,13 +2448,13 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
                 # 63 su Pescasseroli: con priorità AirROI la curva tornava
                 # a un unico picco estivo nonostante il fix.
                 print(f"[STAGIONALITA] curva bimodale (priorità su AirROI) per comune={data.get('comune')!r}")
-                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva)
+                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva, tetto_massimo=_tetto_occ)
             elif _airroi and _airroi.get("distribuzione_mensile"):
                 # Dato mensile REALE da AirROI: priorità massima, nessuna curva
                 # sostitutiva necessaria — è il caso migliore possibile.
                 data["occupazione"] = _applica_stagionalita_airroi(
                     data["occupazione"], _airroi["distribuzione_mensile"], _p_new,
-                    occ_annuale=_occ_new,
+                    occ_annuale=_occ_new, tetto_massimo=_tetto_occ,
                 )
                 data["fonte_stagionalita"] = "airroi_reale"
             else:
@@ -2437,7 +2465,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
                 # inventata dall'AI: viene sempre dalla curva di categoria
                 # territoriale (vedi stagionalita_turistica.py).
                 print(f"[STAGIONALITA] curva '{_fonte_stagionalita}' applicata per comune={data.get('comune')!r}")
-                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva)
+                data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva, tetto_massimo=_tetto_occ)
 
     data["mesi_affidabili_idx"] = _mesi_affidabili()
 
