@@ -239,7 +239,7 @@ def classifica_sottocategoria(lat, lon):
         return None
 
     d_costa = distanza_costa_km(lat, lon)
-    if d_costa is not None and d_costa <= 3.0:
+    if d_costa is not None and d_costa <= 1.5:
         return "costiero"
 
     if lago_vicino(lat, lon):
