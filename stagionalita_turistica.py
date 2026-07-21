@@ -124,13 +124,69 @@ CURVA_CITTA = [45, 48, 55, 65, 68, 65, 55, 40, 65, 68, 52, 58]
 CURVA_GENERICA = [25, 25, 30, 38, 42, 48, 60, 62, 45, 35, 25, 30]
 
 
-def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5):
+def smorza_peso_prezzo(peso_occ, smorzamento_basso=0.5, smorzamento_alto=0.65):
+    """Attenua l'ampiezza di un peso stagionale prima di applicarlo al prezzo.
+    Sessione 66: prima i mesi SOPRA media (peso_occ >= 1) non avevano NESSUNO
+    smorzamento — la curva saliva piena, producendo picchi di prezzo
+    eccessivi (es. curva costiero piena: +116% a luglio sul prezzo medio,
+    quando il mercato reale è più vicino a un +45-50%). Ora anche il lato
+    sopra media viene attenuato (smorzamento_alto), in modo simmetrico al
+    meccanismo già esistente sotto media (smorzamento_basso) — un picco
+    resta un picco, ma non raddoppia il prezzo medio. Segnalato da
+    Salvatore, Sessione 66."""
+    if peso_occ >= 1:
+        return 1 + (peso_occ - 1) * smorzamento_alto
+    return 1 + (peso_occ - 1) * smorzamento_basso
+
+
+def mese_corrente_idx():
+    import datetime
+    return datetime.date.today().month - 1
+
+
+def prezzo_mese_corrente(prezzo_medio, sottocategoria, categoria, comune,
+                          distribuzione_mensile=None, mese_idx=None):
+    """Stima il prezzo/notte per il MESE CORRENTE (non la media annua),
+    partendo dal prezzo medio grezzo di AirROI. Usa la distribuzione
+    mensile REALE di AirROI quando disponibile (dato di mercato vero),
+    altrimenti la curva di forma per categoria territoriale, con lo stesso
+    smorzamento simmetrico usato in applica_curva.
+
+    Introdotta in Sessione 66 per allineare il Quick Report al Base: prima
+    il Quick mostrava sempre il prezzo medio annuo piatto, mentre il Base
+    (per lo stesso identico immobile, nello stesso giorno) mostrava nella
+    tabella mensile il prezzo del mese corrente — spesso molto diverso in
+    piena stagione, creando uno scostamento ingiustificato tra i due
+    prodotti per lo stesso "adesso"."""
+    if mese_idx is None:
+        mese_idx = mese_corrente_idx()
+    if distribuzione_mensile and len(distribuzione_mensile) == 12 and prezzo_medio:
+        media = sum(distribuzione_mensile) / 12
+        if media > 0:
+            peso = distribuzione_mensile[mese_idx] / media
+            peso_smorzato = smorza_peso_prezzo(peso)
+            return max(1, round(prezzo_medio * peso_smorzato)), "airroi_reale"
+    curva, fonte = ottieni_curva_stagionale(sottocategoria, categoria, comune)
+    media = sum(curva) / 12
+    peso_occ = curva[mese_idx] / media
+    peso_prezzo = smorza_peso_prezzo(peso_occ)
+    prezzo = max(1, round(prezzo_medio * peso_prezzo)) if prezzo_medio else None
+    return prezzo, fonte
+
+
+def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5, tetto_massimo=85):
     """Versione generica: ricostruisce le 12 righe usando una qualsiasi
     curva di forma a 12 valori relativi, mantenendo la media reale.
     Ogni riga ha 4 campi [mese, occupazione, prezzo, stagione] — il PDF
     (app.py, stage_color) si aspetta sempre il 4° campo per colorare
     tabella e grafico; ometterlo causa un IndexError e un 500 in produzione
     (bug reale, Sessione 63/64, verificato dai log Render).
+
+    tetto_massimo (Sessione 66): tetto per i MESI di picco, non solo per il
+    livello annuo — prima era fisso a 100, per cui anche comuni senza vera
+    vocazione turistica potevano mostrare mesi al 100% pieno. Va sempre
+    passato lo stesso tetto calcolato con tetto_occupazione(fonte) per
+    coerenza col livello annuo.
 
     Il prezzo usa una versione dell'ampiezza della curva SMORZATA SOLO SUL
     LATO BASSO (smorzamento_prezzo, default 0.5): i mesi sopra media restano
@@ -159,11 +215,8 @@ def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5):
     righe = []
     for i, nome_mese in enumerate(mesi):
         peso_occ = curva[i] / media
-        if peso_occ >= 1:
-            peso_prezzo = peso_occ
-        else:
-            peso_prezzo = 1 + (peso_occ - 1) * smorzamento_prezzo
-        occ_mese = max(5, min(100, round(occ_annuale * peso_occ))) if occ_annuale else None
+        peso_prezzo = smorza_peso_prezzo(peso_occ, smorzamento_basso=smorzamento_prezzo)
+        occ_mese = max(5, min(tetto_massimo, round(occ_annuale * peso_occ))) if occ_annuale else None
         prezzo_mese = max(1, round(adr_annuale * peso_prezzo)) if adr_annuale else None
         righe.append([nome_mese, occ_mese, prezzo_mese, etichetta[i]])
     return righe
@@ -192,7 +245,41 @@ CORRETTIVO_OCCUPAZIONE_PER_CATEGORIA = {
     "montano_estivo": 1.10,
     "generico": 1.10,
 }
-OCCUPAZIONE_TETTO_MASSIMO = 85
+
+# ── Tetto massimo di occupazione — Sessione 66 ──────────────────────────────
+# Il correttivo sopra (necessario perché AirROI sottostima) può, su comuni
+# minori con buoni servizi ma senza vera vocazione turistica, produrre un
+# livello annuo o dei picchi mensili irrealistici (100% pieno tutto l'anno
+# non esiste in nessun mercato reale). Segnalato da Salvatore su Quarto (NA,
+# comune minore costiero non distante da Napoli): con tetto unico all'85%
+# il LIVELLO annuo restava plausibile, ma i MESI di picco (applica_curva)
+# arrivavano comunque al 100% pieno perché quella funzione aveva un tetto
+# proprio hardcoded a 100, indipendente da questo. Fix: un tetto per
+# categoria, applicato SIA al livello annuo SIA ai picchi mensili — il 100%
+# non deve mai comparire in nessun mese per nessun comune.
+# - 98%: grandi città/capoluoghi e zone a vocazione turistica forte
+#   (montano invernale) — la domanda vera può essere quasi sempre piena.
+# - 95%: altre zone turistiche riconosciute (costiero, lacuale) ma senza
+#   la stessa scala di un capoluogo o di una stazione sciistica maggiore.
+# - 85%: comuni minori senza vocazione turistica specifica (montano estivo
+#   generico, residenziale) — nessun mercato reale sta pieno quasi tutto
+#   l'anno senza un motivo turistico forte.
+TETTO_OCCUPAZIONE_PER_CATEGORIA = {
+    "citta": 98,
+    "montano_invernale": 98,
+    "costiero": 95,
+    "lacuale": 95,
+    "montano_estivo": 85,
+    "generico": 85,
+}
+OCCUPAZIONE_TETTO_MASSIMO = 85  # fallback per fonti non mappate, mantenuto per compatibilità
+
+
+def tetto_occupazione(fonte):
+    """Ritorna il tetto massimo di occupazione (%) per la fonte/categoria
+    indicata (stessa etichetta di ottieni_curva_stagionale/correttivo_occupazione).
+    Nessuna categoria arriva mai al 100%."""
+    return TETTO_OCCUPAZIONE_PER_CATEGORIA.get(fonte, OCCUPAZIONE_TETTO_MASSIMO)
 
 
 def correttivo_occupazione(sottocategoria, categoria, comune):
