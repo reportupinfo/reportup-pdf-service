@@ -2180,6 +2180,9 @@ def quick_estimate():
         posti_letto_raw=body.get("posti_letto"),
         bagni_raw=body.get("bagni"),
     )
+    print(f"[QUICK] indirizzo={indirizzo!r} lat={lat!r} lon={lon!r} categoria={categoria!r} sottocategoria={sottocategoria!r} "
+          f"camere_raw={body.get('camere')!r} posti_letto_raw={body.get('posti_letto')!r} bagni_raw={body.get('bagni')!r} "
+          f"airroi_trovato={bool(airroi)} distribuzione_mensile_presente={bool(airroi and airroi.get('distribuzione_mensile'))}")
 
     if airroi:
         _prezzo_medio_grezzo = airroi["prezzo_notte_stimato"]
@@ -2199,6 +2202,10 @@ def quick_estimate():
         )
         fonte_prezzo = "airroi"
         n_comparabili = len(airroi["comparable_listings"]) if airroi.get("comparable_listings") else 0
+        print(f"[QUICK] fonte={_fonte_occ!r} correttivo_occ={_correttivo_occ} tetto_occ={_tetto_occ} "
+              f"occupazione_grezza_airroi={airroi['occupazione_percent']!r} occupazione_percent_corretta={occupazione_percent} "
+              f"prezzo_medio_grezzo={_prezzo_medio_grezzo} mese_idx={stagionalita_turistica.mese_corrente_idx()} "
+              f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
     else:
         base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
         mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
@@ -2211,6 +2218,8 @@ def quick_estimate():
         occupazione_percent = OCCUPAZIONE_BASE_FALLBACK
         fonte_prezzo = "stima_deterministica"
         n_comparabili = 0
+        print(f"[QUICK] AirROI assente — fallback deterministico. prezzo_medio_grezzo={_prezzo_medio_grezzo} "
+              f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
 
     # Il potenziale annuo lordo resta calcolato sul prezzo MEDIO annuo, non sul
     # prezzo del mese corrente appena mostrato: mischiare un prezzo di un
@@ -2242,6 +2251,10 @@ def quick_estimate():
         posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
 
     punti_interesse = _punti_interesse_quick(lat, lon, sottocategoria)
+
+    print(f"[QUICK] RISPOSTA FINALE indirizzo={indirizzo!r} prezzo_notte={prezzo_notte} "
+          f"occupazione_percent={occupazione_percent} notti_anno={notti_anno} potenziale_lordo={potenziale_lordo} "
+          f"fonte_prezzo={fonte_prezzo!r}")
 
     return _risposta({
         "indirizzo": geo["formatted_address"],
