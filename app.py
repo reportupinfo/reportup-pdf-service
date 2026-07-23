@@ -539,8 +539,9 @@ def draw_footer(c, page_num):
     c.rect(0, 0, W, footer_h, fill=1, stroke=0)
     c.setFont("Helvetica", 6.5)
     c.setFillColor(HexColor("#A8BCC8"))
+    from datetime import date as _date
     c.drawString(14 * mm, 3.5 * mm,
-                 "\u00a9 2025 ReportUp \u00b7 reportup.it  |  Documento orientativo - non costituisce consulenza professionale")
+                 f"\u00a9 {_date.today().year} ReportUp \u00b7 reportup.it  |  Documento orientativo - non costituisce consulenza professionale")
     c.drawRightString(W - 14 * mm, 3.5 * mm, f"Pag. {page_num}")
 
 
@@ -907,7 +908,7 @@ def page2(c, D):
     plot_h = graph_h - bottom_margin - top_margin
     side_margin = 16 * mm
     min_r, max_r = 30, 95
-    for pct in [40, 50, 60, 70, 80, 90]:
+    for pct in [30, 40, 50, 60, 70, 80, 90]:
         py_line = gy + bottom_margin + ((pct - min_r) / (max_r - min_r)) * plot_h
         c.setStrokeColor(BORDER)
         c.setLineWidth(0.25)
@@ -1006,6 +1007,15 @@ def page3(c, D):
     notti = D.get("notti_anno", 0)
     comm_pct = D.get("costi_commissioni_pct", 15)
     pulizia_unit = D.get("costi_pulizie_unit", 35)
+    _cambi = D.get("cambi_anno")
+    _sm = D.get("soggiorno_medio_notti")
+    _pulizie_tot = f"{D.get('costi_pulizie', 0):,}".replace(",", ".")
+    if _cambi and _sm:
+        _sm_txt = f"{_sm:g}".replace(".", ",")
+        _formula_pulizie = (f"€ {pulizia_unit}/cambio x {_cambi} cambi "
+                            f"(soggiorno medio {_sm_txt} notti) = € {_pulizie_tot}")
+    else:
+        _formula_pulizie = f"€ {pulizia_unit}/cambio x {notti} notti = € {_pulizie_tot}"
     _tipologia_costi = D.get("tipologia", "immobile")
     _nota_costi_variabili = f"Media di mercato per tipologia: {_tipologia_costi}"
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
@@ -1058,8 +1068,7 @@ def page3(c, D):
         ["Commissioni piattaforma Airbnb",
          f"€ {D.get('ricavo_lordo',0):,} x {comm_pct}% = € {D.get('costi_commissioni',0):,}".replace(",", "."),
          f"- {fmt_eur(D.get('costi_commissioni', 0))}"],
-        ["Pulizie per cambio ospite",
-         f"€ {pulizia_unit}/cambio x {notti} notti = € {D.get('costi_pulizie',0):,}".replace(",", "."),
+        ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
          _cella_media_mercato(D.get('costi_biancheria', 0)),
@@ -1146,6 +1155,10 @@ def page3(c, D):
 
     nota = ("I valori sopra riportati sono orientativi e basati esclusivamente sulle informazioni fornite. "
             "Non includono spese personali, fiscali o societarie.")
+    if D.get("cambi_anno") and D.get("soggiorno_medio_notti"):
+        _sm_nota = f"{D.get('soggiorno_medio_notti'):g}".replace(".", ",")
+        nota += (f" Ipotesi: soggiorno medio di {_sm_nota} notti per la zona. "
+                 "Il Report Strategico differenzia l'analisi per soggiorni brevi, medi e lunghi.")
     y = draw_wrapped_text(c, nota, 14 * mm, y - 2 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
     y -= 4 * mm
 
@@ -2561,6 +2574,35 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             data["media_nazionale"] = _media_reale
             data["fonte_competitor"] = "airroi_percentili"
 
+    # Coerenza occupazione righe competitor AI — Sessione 67. Quando i
+    # comparabili reali mancano, le 4 righe competitor restano scritte
+    # dall'AI e mostravano occupazioni scollegate dal valore corretto in
+    # Python (es. 62-74% accanto a una stima reale del 46% nello stesso
+    # report — stessa incoerenza già eliminata sui range KPI in S66).
+    # Fix deterministico: riscala le occupazioni AI in modo che la loro
+    # media coincida col valore reale, preservando le differenze relative
+    # tra tipologie. Le righe da comparabili reali (fonte airroi) non
+    # vengono MAI toccate.
+    if (data.get("fonte_competitor") in ("ai_stima", "airroi_percentili")
+            and _occ_new and isinstance(data.get("competitor"), list)):
+        _occ_ai = []
+        for _riga in data["competitor"]:
+            try:
+                _m = re.search(r"\d+", str(_riga[3]))
+                _occ_ai.append(float(_m.group()) if _m else None)
+            except Exception:
+                _occ_ai.append(None)
+        _validi = [v for v in _occ_ai if v]
+        if _validi:
+            _fattore = _occ_new / (sum(_validi) / len(_validi))
+            for _riga, _v in zip(data["competitor"], _occ_ai):
+                if _v:
+                    try:
+                        _riga[3] = f"{max(5, min(_tetto_occ, round(_v * _fattore)))}%"
+                    except Exception:
+                        pass
+            print(f"[COMPETITOR] occupazioni AI riscalate attorno al valore reale {_occ_new}% (fattore {round(_fattore, 2)})")
+
     if _p:
         data["prezzo_notte_stimato"] = _p_new
         data["occupazione_percent"] = _occ_new
@@ -2578,7 +2620,14 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         _comm_pct = data.get("costi_commissioni_pct", 15)
         _pulizia_unit = data.get("costi_pulizie_unit", 35)
         _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
-        _costi_pulizie_new = round(_pulizia_unit * _notti_new)
+        # Pulizie per CAMBIO ospite, non per notte — Sessione 67. Vedi
+        # SOGGIORNO_MEDIO_PER_CATEGORIA in stagionalita_turistica.py per
+        # motivazione e valori. cambi = notti / durata media soggiorno.
+        _soggiorno_medio = stagionalita_turistica.soggiorno_medio(_fonte_correttivo)
+        _cambi_new = max(1, round(_notti_new / _soggiorno_medio)) if _notti_new else 0
+        data["cambi_anno"] = _cambi_new
+        data["soggiorno_medio_notti"] = _soggiorno_medio
+        _costi_pulizie_new = round(_pulizia_unit * _cambi_new)
         _costi_biancheria = data.get("costi_biancheria", 0)
         _costi_utenze = data.get("costi_utenze", 0)
         _costi_manutenzione = data.get("costi_manutenzione", 0)
