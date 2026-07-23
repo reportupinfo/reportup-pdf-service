@@ -359,6 +359,17 @@ def ottieni_curva_stagionale(sottocategoria, categoria, comune):
     sub = (sottocategoria or "").strip().lower()
     cat = (categoria or "").strip().lower()
 
+    # Sessione 67 — regola comuni estesi/grandi città: la categoria
+    # amministrativa capoluogo/grande_città VINCE SEMPRE sulla
+    # sotto-classificazione GPS dell'indirizzo. Caso reale: Napoli, Via
+    # Toledo a ~700m dal mare, usciva "costiero" (correttivo 1.35, tetto
+    # 95, soggiorno 3,5 notti) invece di "citta" (1.45 / 98 / 2 notti).
+    # Roma, Genova, Bari, Venezia etc. rientrano tutte qui. I comuni
+    # MINORI estesi (es. Giugliano) restano invece classificati
+    # per-indirizzo: è il comportamento voluto.
+    if cat in ("capoluogo", "grande_citta"):
+        return CURVA_CITTA, "citta"
+
     if sub == "montano":
         if comune_ha_vocazione_invernale(comune):
             return CURVA_BIMODALE_MONTANO_INVERNALE, "montano_invernale"
@@ -367,6 +378,4 @@ def ottieni_curva_stagionale(sottocategoria, categoria, comune):
         return CURVA_COSTIERO, "costiero"
     if sub == "lacuale":
         return CURVA_LACUALE, "lacuale"
-    if cat in ("capoluogo", "grande_citta"):
-        return CURVA_CITTA, "citta"
     return CURVA_GENERICA, "generico"
