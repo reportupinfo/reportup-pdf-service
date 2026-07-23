@@ -206,6 +206,39 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
         if r2.status_code != 200:
             return None
         stima = r2.json()
+
+        # Retry mirato — Sessione 67. Osservato su Quarto (23/7): a parità
+        # esatta di parametri, alcune risposte di /calculator/estimate
+        # arrivano SENZA comparable_listings (Quick: 4 comparabili; due Base
+        # nello stesso giorno: 0). Quando succede, l'occupazione ricade sul
+        # correttivo generico (più conservativo) e il report ne risente.
+        # Una singola ripetizione della chiamata, solo in questo caso,
+        # raddoppia la probabilità di agganciare il dato reale al costo di
+        # una chiamata AirROI extra occasionale.
+        _cl = stima.get("comparable_listings")
+        if not (isinstance(_cl, list) and len(_cl) >= 3):
+            print("[AIRROI] estimate senza comparable_listings — retry singolo")
+            try:
+                r2b = requests.get(
+                    f"{AIRROI_BASE}/calculator/estimate",
+                    params={
+                        "lat": lat_f, "lng": lon_f,
+                        "bedrooms": bedrooms, "baths": baths, "guests": guests,
+                        "currency": "native",
+                    },
+                    headers=headers, timeout=timeout_stima,
+                )
+                if r2b.status_code == 200:
+                    stima_b = r2b.json()
+                    _cl_b = stima_b.get("comparable_listings")
+                    if isinstance(_cl_b, list) and len(_cl_b) >= 3:
+                        print(f"[AIRROI] retry riuscito — comparable_listings={len(_cl_b)}")
+                        stima = stima_b
+                    else:
+                        print("[AIRROI] retry senza comparabili — si procede col dato disponibile")
+            except Exception as _e_retry:
+                print(f"[AIRROI] retry fallito ({_e_retry!r}) — si procede col dato disponibile")
+
         adr = stima.get("average_daily_rate")
         occ = stima.get("occupancy")
         if not adr or occ is None:
