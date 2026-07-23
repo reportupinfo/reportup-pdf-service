@@ -124,6 +124,32 @@ CURVA_CITTA = [45, 48, 55, 65, 68, 65, 55, 40, 65, 68, 52, 58]
 CURVA_GENERICA = [25, 25, 30, 38, 42, 48, 60, 62, 45, 35, 25, 30]
 
 
+def smorza_peso_occupazione(peso_occ, smorzamento_basso=0.5):
+    """Smorzamento dell'OCCUPAZIONE solo sul lato basso — Sessione 67.
+
+    Problema segnalato (Quarto, report 23/7): i mesi deboli crollavano
+    troppo (Gen 32%, Feb 30% con annuo 46%) perche' il peso stagionale
+    veniva applicato pieno all'occupazione, mentre sul prezzo il lato basso
+    era gia' smorzato dalla Sessione 65. Evidenza reale (Pescasseroli,
+    feedback contatto fidato + comparabili Quarto 61-72%): AirROI e le
+    curve di forma sottostimano sistematicamente la bassa stagione nei
+    mercati piccoli — i minimi mostrati erano piu' bassi della realta'.
+
+    Meccanica identica a smorza_peso_prezzo lato basso: i mesi SOTTO media
+    vengono compressi verso la media (default 0.5 = dimezza lo scarto),
+    i mesi sopra media restano IDENTICI (i picchi sono spesso confermati
+    dal mercato reale e non vanno mai toccati). Il tetto per categoria
+    continua ad applicarsi dopo, invariato.
+
+    Effetto collaterale accettato: la media dei 12 mesi in tabella risulta
+    leggermente sopra il valore annuo usato per i KPI/ricavi (~3-4 punti)
+    — i conti economici restano sul dato annuo di mercato, quindi
+    prudenziali; la tabella mostra minimi realistici."""
+    if peso_occ >= 1:
+        return peso_occ
+    return 1 + (peso_occ - 1) * smorzamento_basso
+
+
 def smorza_peso_prezzo(peso_occ, smorzamento_basso=0.5, smorzamento_alto=0.65):
     """Attenua l'ampiezza di un peso stagionale prima di applicarlo al prezzo.
     Sessione 66: prima i mesi SOPRA media (peso_occ >= 1) non avevano NESSUNO
@@ -216,7 +242,11 @@ def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5, tetto
     for i, nome_mese in enumerate(mesi):
         peso_occ = curva[i] / media
         peso_prezzo = smorza_peso_prezzo(peso_occ, smorzamento_basso=smorzamento_prezzo)
-        occ_mese = max(5, min(tetto_massimo, round(occ_annuale * peso_occ))) if occ_annuale else None
+        # Sessione 67: anche l'occupazione mensile usa il lato basso smorzato
+        # (mesi deboli compressi verso la media, picchi intoccati) — vedi
+        # smorza_peso_occupazione per motivazione ed evidenze.
+        peso_occ_mese = smorza_peso_occupazione(peso_occ)
+        occ_mese = max(5, min(tetto_massimo, round(occ_annuale * peso_occ_mese))) if occ_annuale else None
         prezzo_mese = max(1, round(adr_annuale * peso_prezzo)) if adr_annuale else None
         righe.append([nome_mese, occ_mese, prezzo_mese, etichetta[i]])
     return righe
