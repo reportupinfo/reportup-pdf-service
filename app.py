@@ -293,6 +293,23 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
     media = sum(distribuzione_mensile) / 12
     if media <= 0:
         return occ
+    # Etichette stagione ricalcolate dal RANKING dei pesi reali AirROI —
+    # Sessione 67. Prima restavano quelle scritte dall'AI nel template
+    # (Lug/Ago sempre "Peak"): a Roma/Milano il dato reale ha i picchi in
+    # primavera/autunno, e il PDF mostrava mesi "Media" al 98% accanto a
+    # "Peak" all'87%. Stesso schema di applica_curva: top2=Peak, poi
+    # 4=Alta, 3=Media, 3=Bassa.
+    _ordine = sorted(range(12), key=lambda i: distribuzione_mensile[i], reverse=True)
+    _etichetta = [""] * 12
+    for _rank, _i in enumerate(_ordine):
+        if _rank < 2:
+            _etichetta[_i] = "Peak"
+        elif _rank < 6:
+            _etichetta[_i] = "Alta"
+        elif _rank < 9:
+            _etichetta[_i] = "Media"
+        else:
+            _etichetta[_i] = "Bassa"
     nuova = []
     for i, row in enumerate(occ):
         peso = distribuzione_mensile[i] / media
@@ -302,7 +319,7 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
         # per coerenza indipendentemente dalla fonte del dato.
         peso_prezzo = stagionalita_turistica.smorza_peso_prezzo(peso)
         prezzo_mese = max(1, round(adr_annuale * peso_prezzo))
-        nuova_row = [row[0], row[1], prezzo_mese] + list(row[3:])
+        nuova_row = [row[0], row[1], prezzo_mese, _etichetta[i]] + list(row[4:])
         if occ_annuale is not None:
             # Sessione 67: smorzamento occupazione lato basso anche sulla
             # distribuzione mensile reale AirROI — nei mercati piccoli il suo
@@ -494,19 +511,27 @@ def aeroporto_row(lat, lon, max_km=120):
         return ["\u2014", "\u2014", "\u2014"]
 
     dist_km = round(best_dist)
-    if dist_km <= 30:
-        impatto = "Alto"
-    elif dist_km <= 70:
-        impatto = "Medio"
-    else:
-        impatto = "Basso"
 
     auto = territorio_gps.distanza_e_tempo_auto(lat, lon, best_lat, best_lon)
     if auto:
         km_auto, min_auto = auto
         distanza_str = f"{km_auto} km · {min_auto} min in auto"
+        km_impatto = km_auto
     else:
         distanza_str = f"{dist_km} km (linea d'aria)"
+        km_impatto = dist_km
+
+    # Impatto sui km REALI su strada (quando disponibili), non sulla linea
+    # d'aria — Sessione 67. Caso reale Atrani: 25 km in linea d'aria
+    # dall'aeroporto di Salerno -> "Alto", ma la strada della Costiera ne
+    # fa 44 in 68 minuti: per il lettore i due dati stridevano nella
+    # stessa riga. Ora etichetta e distanza mostrata usano lo stesso numero.
+    if km_impatto <= 30:
+        impatto = "Alto"
+    elif km_impatto <= 70:
+        impatto = "Medio"
+    else:
+        impatto = "Basso"
 
     return [distanza_str, best_name, impatto]
 
@@ -1455,6 +1480,26 @@ def page5(c, D):
 
 # ── Generatore PDF ────────────────────────────────────────────────────────────
 
+
+def _title_preserva_romani(testo):
+    """Come str.title() ma senza rompere i numeri romani gia' scritti in
+    maiuscolo nel dato originale — Sessione 67. Caso reale: "Rione IX
+    Pigna" (Google) diventava "Rione Ix Pigna" nel PDF. Un token viene
+    mantenuto MAIUSCOLO solo se (a) nell'originale era interamente
+    maiuscolo e (b) e' un numero romano plausibile (I-XXXIX): cosi' parole
+    come "DI"/"VI" scritte male dall'AI non restano urlate per errore ma
+    i municipi/rioni romani si'."""
+    _ROMANO = re.compile(r"^(X{0,3})(IX|IV|V?I{0,3})$")
+    parole = str(testo or "").split(" ")
+    out = []
+    for w in parole:
+        if w.isupper() and len(w) >= 2 and _ROMANO.match(w) and any(ch in w for ch in "IVX"):
+            out.append(w)
+        else:
+            out.append(w.title())
+    return " ".join(out)
+
+
 def normalize_data(data):
     if "tipologia" in data and "indirizzo" in data and "occupazione" in data:
         return data
@@ -1605,6 +1650,22 @@ def _pulisci_wikitext(testo):
     testo = re.sub(r'\[+|\]+', '', testo)
     testo = re.sub(r'\s+', ' ', testo).strip()
     testo = re.sub(r'^[,;.\s]+', '', testo)
+
+    # Sessione 67 — due residui osservati nei test reali:
+    # 1) Didascalie di immagini sopravvissute alla pulizia wiki e finite nel
+    #    testo come frasi orfane (Napoli: "Vista dal parco urbano dei
+    #    Camaldoli."). Le didascalie sono frasi brevi che iniziano con un
+    #    lessico descrittivo-fotografico: le eliminiamo solo se corte, per
+    #    non toccare frasi di contenuto vero.
+    # 2) Punti doppi da concatenazioni ("servizi turistici.." a Roccaraso).
+    _frasi = re.split(r'(?<=[.!?])\s+', testo)
+    _frasi = [f for f in _frasi if not (
+        len(f) < 80 and re.match(
+            r'(?i)^(vista|veduta|panorama|scorcio|facciata|interno|particolare|dettaglio)\s+(d|s)', f)
+    )]
+    testo = ' '.join(_frasi)
+    testo = re.sub(r'\.{2,}', '.', testo)
+    testo = re.sub(r'\s+', ' ', testo).strip()
     return testo
 
 
@@ -1798,7 +1859,14 @@ def _costi_per_tipologia(tipologia):
 
 def _calcola_costi_fissi_deterministici(data):
     pulizie, biancheria, utenze, manutenzione = _costi_per_tipologia(data.get("tipologia"))
-    dotazioni = set(data.get("dotazioni_presenti") or [])
+    # Sessione 67: normalizzazione dei nomi PRIMA del check piscina/giardino.
+    # Prima il confronto era sulle stringhe grezze scritte dall'AI
+    # ("piscina" minuscolo non matchava "Piscina"): il sovrapprezzo
+    # manutenzione scattava in modo casuale tra un run e l'altro (Quarto:
+    # €500 con nota giardino; i 7 test nazionali: €350 senza nota, con le
+    # stesse dotazioni). Stessa _norm_dotazione gia' usata dal
+    # moltiplicatore prezzo e dalla scheda immobile.
+    dotazioni = {_norm_dotazione(d) for d in (data.get("dotazioni_presenti") or [])}
     ha_piscina = "Piscina" in dotazioni
     ha_giardino = "Giardino" in dotazioni
 
@@ -1867,6 +1935,18 @@ def _impatto_deterministico(distanza_str, modalita="piedi"):
     if m_min:
         minuti = int(m_min.group(1))
         return "Alto" if minuti <= 10 else "Medio" if minuti <= 20 else "Basso"
+
+    # Distanze in soli METRI ("250 m a piedi", "800 m") — Sessione 67.
+    # Prima non venivano riconosciute (né km né min) e l'impatto restava
+    # quello scritto dall'AI, con incoerenze reali nello stesso report
+    # (Positano: "300 m" -> Alto ma "250 m" -> Basso). Il \b esclude "min".
+    m_metri = re.search(r"(\d+)\s*m\b", testo)
+    if m_metri:
+        metri = int(m_metri.group(1))
+        if modalita == "piedi":
+            return "Alto" if metri <= 1000 else "Medio" if metri <= 2500 else "Basso"
+        km_eq = metri / 1000
+        return "Alto" if km_eq <= 15 else "Medio" if km_eq <= 40 else "Basso"
 
     return None
 
@@ -2425,9 +2505,9 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             data[campo] = str(data[campo])
 
     if "comune" in data:
-        data["comune"] = data["comune"].title()
+        data["comune"] = _title_preserva_romani(data["comune"])
     if "zona" in data:
-        data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
+        data["zona"] = _title_preserva_romani(data["zona"]) if _zona_sembra_valida(data["zona"]) else "—"
 
     _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
     if _record_comune:
@@ -2449,7 +2529,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
         addr = _re2.sub(r',\s*,', ',', addr)
         addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
-        data["indirizzo"] = addr.title()
+        data["indirizzo"] = _title_preserva_romani(addr)
         if _record_comune and _record_comune.get("sigla_provincia"):
             _sigla_corretta = _record_comune["sigla_provincia"].upper()
             if _re.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
@@ -2817,9 +2897,9 @@ def generate_strategico():
                 data[campo] = str(data[campo])
 
         if "comune" in data:
-            data["comune"] = data["comune"].title()
+            data["comune"] = _title_preserva_romani(data["comune"])
         if "zona" in data:
-            data["zona"] = data["zona"].title() if _zona_sembra_valida(data["zona"]) else "—"
+            data["zona"] = _title_preserva_romani(data["zona"]) if _zona_sembra_valida(data["zona"]) else "—"
 
         _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
         data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
@@ -2836,7 +2916,7 @@ def generate_strategico():
             addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
             addr = _re2.sub(r',\s*,', ',', addr)
             addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
-            data["indirizzo"] = addr.title()
+            data["indirizzo"] = _title_preserva_romani(addr)
             if _record_comune and _record_comune.get("sigla_provincia"):
                 _sigla_corretta = _record_comune["sigla_provincia"].upper()
                 if _re2.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
