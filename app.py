@@ -271,7 +271,12 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
         prezzo_mese = max(1, round(adr_annuale * peso_prezzo))
         nuova_row = [row[0], row[1], prezzo_mese] + list(row[3:])
         if occ_annuale is not None:
-            nuova_row[1] = max(5, min(tetto_massimo, round(occ_annuale * peso)))
+            # Sessione 67: smorzamento occupazione lato basso anche sulla
+            # distribuzione mensile reale AirROI — nei mercati piccoli il suo
+            # dato di bassa stagione eredita la stessa sottostima che
+            # correggiamo altrove (stesso principio della curva bimodale).
+            peso_occ_mese = stagionalita_turistica.smorza_peso_occupazione(peso)
+            nuova_row[1] = max(5, min(tetto_massimo, round(occ_annuale * peso_occ_mese)))
         nuova.append(nuova_row)
     return nuova
 
