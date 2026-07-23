@@ -74,6 +74,39 @@ def _media_nazionale_da_percentili(percentili_revenue, occupazione_frazione, val
             f"{valuta} {round(p25)}-{round(p75)}", f"{occ_pct}%", "\u2014"]
 
 
+def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
+    """Calcola l'occupazione media dai singoli annunci comparabili REALI di
+    AirROI (non il dato percentili generico), quando ce ne sono abbastanza
+    per essere affidabili. Sessione 66: confrontando i due dati nello stesso
+    report — media percentili generica vs media annunci comparabili della
+    stessa zona/tipologia — il secondo risulta sistematicamente più alto e
+    più specifico (bilocali/monolocali veri della zona, non una media
+    nazionale astratta). Il correttivo fisso per categoria (1.10 etc.)
+    partiva dal dato più grezzo; qui, quando disponibile, usiamo il dato più
+    reale direttamente.
+
+    Lo sconto (default 0.90) tiene conto che un nuovo annuncio short-rental
+    parte senza recensioni/storico: realisticamente performa un po' sotto la
+    media di annunci già affermati, non identico. Ritorna None se i
+    comparabili non hanno abbastanza dati di occupazione (soglia minima 3,
+    stessa usata altrove per considerare il dato affidabile)."""
+    if not comparable_listings:
+        return None
+    occ_vals = []
+    for ann in comparable_listings:
+        if not isinstance(ann, dict):
+            continue
+        occ = _numero_da(ann, "occupancy", "occupancy_rate")
+        if occ is not None:
+            if occ <= 1:
+                occ = occ * 100
+            occ_vals.append(occ)
+    if len(occ_vals) < 3:
+        return None
+    media = sum(occ_vals) / len(occ_vals)
+    return media * sconto
+
+
 def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
     if not comparable_listings:
         return None
@@ -2437,13 +2470,22 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     if _airroi:
         _p_new = _airroi["prezzo_notte_stimato"]
         _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
-        _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
+        _occ_comparabili = _occupazione_da_comparabili(_airroi.get("comparable_listings"))
+        if _occ_comparabili is not None:
+            _occ_new = min(_tetto_occ, round(_occ_comparabili))
+            data["fonte_occupazione"] = "comparabili_reali"
+            print(f"[OCCUPAZIONE] uso media comparabili reali (scontata 10%): {round(_occ_comparabili)}% "
+                  f"invece del correttivo generico ({round(min(_tetto_occ, _airroi['occupazione_percent'] * _correttivo_occ))}%)")
+        else:
+            _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
+            data["fonte_occupazione"] = "correttivo_percentili"
         data["fonte_prezzo"] = "airroi"
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p_new = round(_p * _moltiplicatore) if _p else _p
         _occ_new = _occ_old
         _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
+        data["fonte_occupazione"] = "ai_stima"
         data["fonte_prezzo"] = "ai_stima"
 
     # Incremento per dotazioni di valore (Sessione 66) — applicato UNA VOLTA
