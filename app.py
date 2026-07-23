@@ -2484,6 +2484,18 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         data["kpi_prezzo"] = _p_new
         data["kpi_potenziale"] = _ricavo_lordo_new
 
+        # Range KPI ricalcolati sui valori REALI corretti (AirROI + smorzamento
+        # + dotazioni), non più lasciati come testo libero scritto dall'AI.
+        # Prima "kpi_occ_range"/"kpi_prezzo_range" restavano quello che l'AI
+        # aveva scritto nel suo JSON, scollegati dal valore finale corretto in
+        # Python — es. "Media zona: 65-72%" accanto a un'occupazione REALE del
+        # 47% per lo stesso immobile, un'incoerenza vistosa nello stesso
+        # report. Ora la fascia è sempre ancorata al valore vero. Sessione 66.
+        data["kpi_prezzo_range"] = f"Range zona: € {max(1, round(_p_new * 0.75))}-{round(_p_new * 1.25)}"
+        _occ_range_min = max(5, round(_occ_new * 0.75))
+        _occ_range_max = min(_tetto_occ, round(_occ_new * 1.25))
+        data["kpi_occ_range"] = f"Media zona: {_occ_range_min}-{_occ_range_max}%"
+
         try:
             _curva, _fonte_stagionalita = stagionalita_turistica.ottieni_curva_stagionale(
                 _sub, _cat, data.get("comune")
