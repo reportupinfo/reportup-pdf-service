@@ -359,6 +359,37 @@ def _moltiplicatore_dotazioni(dotazioni_presenti):
     return 1 + incremento
 
 
+# ── Camere per tipologia — Sessione 66 ───────────────────────────────────────
+# Prima il campo "camere" veniva lasciato calcolare liberamente all'AI dal
+# prompt ("[calcola da posti letto e superficie]"), senza nessuna verifica —
+# e l'AI può sbagliare: un "Bilocale" è per definizione 1 camera da letto
+# (due locali = camera + soggiorno/cucina), ma l'AI ha scritto "2" in un test
+# reale (Quarto, Sessione 66), gonfiando artificialmente la stima AirROI
+# (più camere dichiarate = stima più alta) rispetto al Quick, che usa questa
+# stessa mappa fissa e quindi restava corretto. Stesso principio già
+# applicato al Quick, ora deterministico anche nel Base: la tipologia
+# decide le camere, non l'AI.
+_CAMERE_PER_TIPOLOGIA = [
+    ("stanza singola", 0), ("stanza doppia", 0), ("monolocale", 0),
+    ("bilocale", 1),
+    ("trilocale", 2),
+    ("quadrilocale", 3), ("4 locali", 3), ("appartamento grande", 3),
+    ("villa", 4), ("casa indipendente", 4),
+]
+
+
+def _camere_deterministiche(tipologia, camere_ai):
+    """Ritorna il numero di camere corretto per la tipologia dichiarata,
+    ignorando quanto scritto dall'AI se riconosciamo la tipologia. Se la
+    tipologia non è tra quelle note (es. testo libero non standard),
+    manteniamo il valore dell'AI invece di inventare un fallback arbitrario."""
+    t = str(tipologia or "").strip().lower()
+    for frammento, n in _CAMERE_PER_TIPOLOGIA:
+        if frammento in t:
+            return str(n)
+    return camere_ai
+
+
 def _zona_sembra_valida(testo):
     t = str(testo or "").strip()
     if not t:
@@ -2380,6 +2411,11 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     _cat = data.get("categoria", "comune_minore")
     _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
     _p = data.get("prezzo_notte_stimato", 0)
+
+    # Camere corrette per tipologia (Sessione 66) — sovrascrive quanto
+    # scritto dall'AI PRIMA di mandarlo ad AirROI, così la stima di prezzo
+    # e la scheda immobile mostrata usano lo stesso numero corretto.
+    data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
 
     print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
 
