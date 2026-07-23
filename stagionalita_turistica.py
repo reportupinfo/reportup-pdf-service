@@ -305,6 +305,32 @@ TETTO_OCCUPAZIONE_PER_CATEGORIA = {
 OCCUPAZIONE_TETTO_MASSIMO = 85  # fallback per fonti non mappate, mantenuto per compatibilità
 
 
+# ── Durata media soggiorno per categoria — Sessione 67 ───────────────────────
+# Serve al calcolo dei CAMBI ospite (pulizie): prima il costo pulizia "per
+# cambio" veniva moltiplicato per le NOTTI, come se ogni ospite restasse una
+# sola notte — pulizie al ~53% del ricavo lordo e profitto sottostimato di
+# oltre il doppio (caso reale Quarto: €7.560 vs ~€3.000). Ora:
+# cambi = notti / soggiorno_medio, con durata differenziata per vocazione
+# territoriale (dati di mercato IT: città weekend/business ~2 notti, mare
+# vacanza ~3,5, montagna ~3, comuni generici ~2,5). Valori volutamente
+# CORTI/prudenziali: più cambi = più costi = profitto mai gonfiato.
+# Il Report Strategico differenzia poi per soggiorni brevi/medi/lunghi.
+SOGGIORNO_MEDIO_PER_CATEGORIA = {
+    "citta": 2.0,
+    "montano_invernale": 3.0,
+    "costiero": 3.5,
+    "lacuale": 3.0,
+    "montano_estivo": 3.0,
+    "generico": 2.5,
+}
+
+
+def soggiorno_medio(fonte):
+    """Durata media soggiorno (notti) per la fonte/categoria indicata
+    (stessa etichetta di correttivo_occupazione/tetto_occupazione)."""
+    return SOGGIORNO_MEDIO_PER_CATEGORIA.get(fonte, 2.5)
+
+
 def tetto_occupazione(fonte):
     """Ritorna il tetto massimo di occupazione (%) per la fonte/categoria
     indicata (stessa etichetta di ottieni_curva_stagionale/correttivo_occupazione).
