@@ -155,6 +155,61 @@ def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
     return righe, media_riga
 
 
+# ── Tabella competitor — deterministica, niente più AirROI/AI (Sessione 69) ──
+# Salvatore: mostrare "Bilocali zona €82" (AirROI, conservativo, o peggio
+# invenzione AI quando i comparabili mancano) accanto a "IL TUO IMMOBILE
+# €120" (calcolato con le nostre regole + bonus dotazioni) confonde il
+# cliente e non è nemmeno corretto — non sappiamo se i competitor abbiano
+# le stesse dotazioni. Soluzione: la tabella competitor non usa più NESSUN
+# dato esterno per il prezzo. La tipologia dichiarata mostra lo STESSO
+# numero di "IL TUO IMMOBILE" (stesso valore per costruzione), le altre 3
+# tipologie sono derivate con rapporti fissi decisi da noi — "aggressività"
+# tarabile a mano, zero AI, zero media AirROI conservativa.
+RATIO_PREZZO_TIPOLOGIA_COMPETITOR = {
+    "Monolocali": 0.80,
+    "Bilocali": 1.00,
+    "Trilocali": 1.30,
+    "B&B e camere": 0.65,
+}
+
+_BUCKET_COMPETITOR_PER_TIPOLOGIA = [
+    ("stanza singola", "B&B e camere"), ("stanza doppia", "B&B e camere"),
+    ("monolocale", "Monolocali"),
+    ("bilocale", "Bilocali"),
+    ("trilocale", "Trilocali"),
+    ("quadrilocale", "Trilocali"), ("4 locali", "Trilocali"), ("appartamento grande", "Trilocali"),
+    ("villa", "Trilocali"), ("casa indipendente", "Trilocali"),
+]
+
+
+def _bucket_competitor(tipologia):
+    t = str(tipologia or "").strip().lower()
+    for frammento, bucket in _BUCKET_COMPETITOR_PER_TIPOLOGIA:
+        if frammento in t:
+            return bucket
+    return "Bilocali"
+
+
+def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, valuta="€"):
+    """
+    Ritorna le 4 righe della tabella competitor, calcolate SOLO dal nostro
+    prezzo finale (prezzo_immobile, già corretto con AirROI + smorzamento +
+    dotazioni). Nessun dato esterno, nessuna invenzione AI. N., Occupazione
+    e Rating non vengono più mostrati per queste righe (mai avuti dati reali
+    per popolarli in modo onesto — meglio "\u2014" che un numero inventato).
+    """
+    if not prezzo_immobile:
+        return None
+    bucket_immobile = _bucket_competitor(tipologia)
+    base = prezzo_immobile / RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket_immobile]
+    righe = []
+    for bucket in ["Monolocali", "Bilocali", "Trilocali", "B&B e camere"]:
+        prezzo = (prezzo_immobile if bucket == bucket_immobile
+                  else round(base * RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket]))
+        righe.append([bucket, "\u2014", f"{valuta} {prezzo}", "\u2014", "\u2014"])
+    return righe
+
+
 def _prezzo_da_comparabili_stessa_tipologia(comparable_listings, n_camere_immobile, minimo=3):
     """
     Sessione 68: prima 'IL TUO IMMOBILE' usava il prezzo del modello AirROI
@@ -1304,20 +1359,7 @@ def page4(c, D):
     ]))
     tbl_comp.wrapOn(c, W - 28 * mm, 200)
     tbl_comp.drawOn(c, 14 * mm, y - tbl_comp._height)
-    y -= tbl_comp._height + 3 * mm
-
-    # Sessione 69: il disclaimer dotazioni causava testo accavallato dentro
-    # la cella "Prezzo med." (colonna troppo stretta per la frase intera).
-    # Spostato qui sotto come didascalia, stesso stile delle altre note
-    # della pagina — mostrato solo quando c'è davvero un bonus da spiegare.
-    _bonus_pct = D.get("dotazioni_bonus_pct", 0)
-    if _bonus_pct:
-        c.setFont("Helvetica-Oblique", 6.5)
-        c.setFillColor(MUTED)
-        c.drawString(14 * mm, y,
-                     f"Il prezzo del tuo immobile include un +{_bonus_pct}% per dotazioni superiori alla media della zona.")
-        y -= 5 * mm
-    y -= 4 * mm
+    y -= tbl_comp._height + 7 * mm
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Riepilogo indicatori di mercato")
     y -= 3 * mm
@@ -2697,59 +2739,12 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             # differire dalla media della stessa tipologia in tabella.
             data["dotazioni_bonus_pct"] = round((_mult_dotazioni - 1) * 100)
 
-    if _airroi and _airroi.get("comparable_listings"):
-        _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
-        if _comp_airroi:
-            _righe_comp, _media_comp = _comp_airroi
-            data["competitor"] = _righe_comp
-            data["media_nazionale"] = _media_comp
-            data["fonte_competitor"] = "airroi"
-        else:
-            data["fonte_competitor"] = "ai_stima"
-    else:
-        data["fonte_competitor"] = "ai_stima"
-
-    # Fallback intermedio: nessun annuncio comparabile individuale, ma AirROI
-    # fornisce comunque i percentili di ricavo reali del mercato — meglio di
-    # niente, usiamoli per la riga "Media nazionale" invece di lasciarla
-    # 100% inventata dall'AI. Le 4 righe competitor dettagliate restano AI
-    # (non ricostruibili senza annunci individuali). Sessione 64.
-    if data["fonte_competitor"] == "ai_stima" and _airroi and _airroi.get("percentili_revenue"):
-        _media_reale = _media_nazionale_da_percentili(
-            _airroi["percentili_revenue"], _airroi.get("occupazione_frazione")
-        )
-        if _media_reale:
-            data["media_nazionale"] = _media_reale
-            data["fonte_competitor"] = "airroi_percentili"
-
-    # Coerenza occupazione righe competitor AI — Sessione 67. Quando i
-    # comparabili reali mancano, le 4 righe competitor restano scritte
-    # dall'AI e mostravano occupazioni scollegate dal valore corretto in
-    # Python (es. 62-74% accanto a una stima reale del 46% nello stesso
-    # report — stessa incoerenza già eliminata sui range KPI in S66).
-    # Fix deterministico: riscala le occupazioni AI in modo che la loro
-    # media coincida col valore reale, preservando le differenze relative
-    # tra tipologie. Le righe da comparabili reali (fonte airroi) non
-    # vengono MAI toccate.
-    if (data.get("fonte_competitor") in ("ai_stima", "airroi_percentili")
-            and _occ_new and isinstance(data.get("competitor"), list)):
-        _occ_ai = []
-        for _riga in data["competitor"]:
-            try:
-                _m = re.search(r"\d+", str(_riga[3]))
-                _occ_ai.append(float(_m.group()) if _m else None)
-            except Exception:
-                _occ_ai.append(None)
-        _validi = [v for v in _occ_ai if v]
-        if _validi:
-            _fattore = _occ_new / (sum(_validi) / len(_validi))
-            for _riga, _v in zip(data["competitor"], _occ_ai):
-                if _v:
-                    try:
-                        _riga[3] = f"{max(5, min(_tetto_occ, round(_v * _fattore)))}%"
-                    except Exception:
-                        pass
-            print(f"[COMPETITOR] occupazioni AI riscalate attorno al valore reale {_occ_new}% (fattore {round(_fattore, 2)})")
+    # Sessione 69: tabella competitor tolta ad AirROI/AI del tutto — vedi
+    # _costruisci_competitor_deterministico. Nessun fallback su comparabili
+    # reali o percentili: la voce "stessa tipologia" deve combaciare SEMPRE
+    # con "IL TUO IMMOBILE", mai un dato esterno scollegato.
+    data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"))
+    data["fonte_competitor"] = "calcolo_interno"
 
     if _p:
         data["prezzo_notte_stimato"] = _p_new
