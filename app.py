@@ -22,7 +22,6 @@ from reportlab.lib.enums import TA_CENTER
 import comuni_lookup
 import territorio_gps
 import stagionalita_turistica
-import omi_canoni
 
 app = Flask(__name__)
 
@@ -154,6 +153,41 @@ def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
                   f"{media_occ}%" if media_occ != "\u2014" else "\u2014", str(media_rating)]
 
     return righe, media_riga
+
+
+def _prezzo_da_comparabili_stessa_tipologia(comparable_listings, n_camere_immobile, minimo=3):
+    """
+    Sessione 68: prima 'IL TUO IMMOBILE' usava il prezzo del modello AirROI
+    (/calculator/estimate, stima puntuale per lat/lng+camere) mentre la riga
+    competitor della STESSA tipologia in tabella usava la media dei
+    comparable_listings reali (endpoint diverso, campione diverso) — le due
+    fonti possono divergere parecchio (caso reale: Napoli bilocale, modello
+    €120 vs media reale annunci bilocali in zona €82, +46% ingiustificato
+    agli occhi del cliente). Quando ci sono abbastanza annunci comparabili
+    della STESSA tipologia dichiarata, ancoriamo il prezzo base a quella
+    media reale invece che al modello: dotazioni/smorzamento si applicano
+    comunque sopra, ma partendo dallo stesso numero mostrato in tabella
+    competitor — coerenza garantita per costruzione, non per coincidenza.
+    Ritorna il prezzo medio (float) o None se i comparabili della stessa
+    tipologia sono insufficienti (fallback al modello, invariato).
+    """
+    if not comparable_listings:
+        return None
+    prezzi = []
+    for ann in comparable_listings:
+        if not isinstance(ann, dict):
+            continue
+        camere = _numero_da(ann, "bedrooms", "beds", "num_bedrooms")
+        if camere is None:
+            continue
+        if _tipologia_da_camere(camere) != _tipologia_da_camere(n_camere_immobile):
+            continue
+        prezzo = _numero_da(ann, "average_daily_rate", "adr", "price", "daily_rate")
+        if prezzo is not None:
+            prezzi.append(prezzo)
+    if len(prezzi) < minimo:
+        return None
+    return sum(prezzi) / len(prezzi)
 
 
 def _numero_da_stringa(valore, default=1):
@@ -1043,6 +1077,12 @@ def page3(c, D):
         _formula_pulizie = f"€ {pulizia_unit}/cambio x {notti} notti = € {_pulizie_tot}"
     _tipologia_costi = D.get("tipologia", "immobile")
     _nota_costi_variabili = f"Media di mercato per tipologia: {_tipologia_costi}"
+    # Sessione 68: nota breve sul soggiorno medio anche per la biancheria,
+    # solo descrittiva — il valore resta fisso/anno per tipologia, NON
+    # scala con i cambi reali (a differenza delle pulizie): su immobili
+    # cittadini ad alta occupazione farlo scalare gonfierebbe il costo
+    # invece di ridurlo, l'opposto di quanto richiesto.
+    _sm_biancheria = f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else ""
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
     mutuo_annuo = rata_mutuo * 12
 
@@ -1096,7 +1136,7 @@ def page3(c, D):
         ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         _cella_media_mercato(D.get('costi_biancheria', 0)),
+         _cella_media_mercato(D.get('costi_biancheria', 0), extra=_sm_biancheria),
          f"- {fmt_eur(D.get('costi_biancheria', 0))}"],
         ["Utenze aggiuntive stimate",
          _cella_media_mercato(D.get('costi_utenze', 0)),
@@ -1241,25 +1281,27 @@ def page4(c, D):
     comp_data = [["Tipologia annunci - " + D.get("competitor_zona", ""), "N.", "Prezzo med.", "Occup.", "Rating"]]
     for row in D.get("competitor", []):
         comp_data.append(list(row))
-    mn = D.get("media_nazionale", ["Media nazionale B&B urbani", "\u2014", "€ 95", "64%", "4.5"])
-    comp_data.append(list(mn))
+    # Sessione 68: rimossa la riga "Media di mercato AirROI" — un range
+    # aggregato calcolato "dietro le quinte" che confondeva il cliente
+    # invece di aiutarlo, specie a fianco delle righe per tipologia già
+    # dettagliate sopra. Al suo posto, un disclaimer esplicito quando il
+    # prezzo del tuo immobile si scosta dalla tipologia corrispondente per
+    # via delle dotazioni dichiarate (vedi dotazioni_bonus_pct, Sessione 66).
+    _bonus_pct = D.get("dotazioni_bonus_pct", 0)
+    _nota_dotazioni = f" (+{_bonus_pct}% per dotazioni superiori alla media zona)" if _bonus_pct else ""
     comp_data.append(["IL TUO IMMOBILE (stima)", "\u2014",
-                      f"€ {D.get('kpi_prezzo', 0)}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
-    n_med = len(comp_data) - 2
+                      f"€ {D.get('kpi_prezzo', 0)}{_nota_dotazioni}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
     col_w_comp = [(W - 28 * mm) * 0.42, (W - 28 * mm) * 0.10, (W - 28 * mm) * 0.18,
                   (W - 28 * mm) * 0.15, (W - 28 * mm) * 0.15]
     tbl_comp = Table(comp_data, colWidths=col_w_comp)
     tbl_comp.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("FONTNAME", (0, 1), (-1, -3), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -3), BLUE_NIGHT),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -3), [WHITE, CREAM]),
+        ("FONTNAME", (0, 1), (-1, -2), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -2), BLUE_NIGHT),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, CREAM]),
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
         ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("BACKGROUND", (0, n_med), (-1, n_med), HexColor("#F0F0F0")),
-        ("TEXTCOLOR", (0, n_med), (-1, n_med), MUTED),
-        ("FONTNAME", (0, n_med), (-1, n_med), "Helvetica-Oblique"),
         ("BACKGROUND", (0, -1), (-1, -1), TEAL_LIGHT),
         ("TEXTCOLOR", (0, -1), (-1, -1), TEAL),
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
@@ -1308,7 +1350,7 @@ def page4(c, D):
                  "Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona.")
     y -= 9 * mm
 
-    upsell_h = 30 * mm
+    upsell_h = 32 * mm
     c.setFillColor(GOLD_LIGHT)
     c.roundRect(14 * mm, y - upsell_h, W - 28 * mm, upsell_h, 3 * mm, fill=1, stroke=0)
     c.setStrokeColor(GOLD)
@@ -1317,15 +1359,34 @@ def page4(c, D):
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(BLUE_NIGHT)
     c.drawString(18 * mm, y - 7 * mm, "Vuoi il piano d\u2019azione completo?")
+
+    # Sessione 68: badge "IN ARRIVO" — lo Strategico è attualmente in
+    # standby/sviluppo, non acquistabile. Le feature restano descritte per
+    # anticipare il lancio, ma deve essere evidente che non è ancora
+    # disponibile — nessuna ambiguità che porti a un acquisto impossibile.
+    _badge_testo = "IN ARRIVO"
+    c.setFont("Helvetica-Bold", 7)
+    _badge_w = c.stringWidth(_badge_testo, "Helvetica-Bold", 7) + 6 * mm
+    _badge_x = 14 * mm + (W - 28 * mm) - _badge_w - 4 * mm
+    _badge_y = y - 9 * mm
+    c.setFillColor(BLUE_NIGHT)
+    c.roundRect(_badge_x, _badge_y, _badge_w, 5.5 * mm, 2.5 * mm, fill=1, stroke=0)
+    c.setFillColor(WHITE)
+    c.drawCentredString(_badge_x + _badge_w / 2, _badge_y + 1.7 * mm, _badge_testo)
+
     upsell_text = ("Il Report Strategico (€ 149) include tutto il Base piu': pricing stagionale mese per mese, "
                    "3 scenari economici (pessimistico / realistico / ottimistico), piano d'azione 90 giorni, "
                    "cap rate e valore asset, normativa affitti brevi locale e l'analisi personale "
                    "dell'Arch. Salvatore Junior Sica.")
     uy = y - 13 * mm
     uy = draw_wrapped_text(c, upsell_text, 18 * mm, uy, W - 36 * mm, "Helvetica", 7.5, 5 * mm, BLUE_NIGHT)
-    c.setFont("Helvetica-Bold", 8)
-    c.setFillColor(GOLD)
-    c.drawString(18 * mm, uy, "Scopri il Report Strategico su reportup.it  |  € 149 - pagamento unico")
+    c.setFont("Helvetica-Oblique", 7)
+    c.setFillColor(MUTED)
+    uy = draw_wrapped_text(
+        c, "Il Report Strategico è attualmente in fase di sviluppo: le funzionalit\u00e0 descritte "
+           "sopra saranno presto disponibili su reportup.it.",
+        18 * mm, uy - 1 * mm, W - 36 * mm, "Helvetica-Oblique", 7, 4 * mm, MUTED,
+    )
     y -= upsell_h + 6 * mm
 
     c.setFont("Helvetica-Bold", 7)
@@ -1350,13 +1411,12 @@ def page5(c, D):
     draw_section_subtitle(c, 14 * mm, y, "Dati e metodologia alla base di questa analisi")
     y -= 6 * mm
 
-    _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_ai")
-    if _fonte_affitto == "omi_reale":
-        _desc_affitto = ("Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate, Semestre 2025/2. "
-                          "Canone di locazione medio EUR/m2 della zona, applicato alla superficie dichiarata.")
-    else:
-        _desc_affitto = ("Stima di mercato — dato OMI non disponibile per questo comune nel semestre corrente. "
-                          "Valore orientativo, non tratto dalla banca dati OMI.")
+    _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_airroi")
+    _sconto_affitto = D.get("sconto_affitto_tradizionale_pct", 40)
+    _desc_affitto = (f"Stima comparativa di mercato: prezzo/notte medio (fonte AirROI) x 30 giorni, "
+                      f"scontato del {_sconto_affitto}% per riflettere il differenziale tipico tra canone "
+                      f"di locazione tradizionale e tariffa di affitto breve sulla stessa unità nella stessa zona. "
+                      f"Valore orientativo, non tratto da atti o contratti registrati.")
 
     fonti = [
         ("Prezzi per notte e\ntasso di occupazione",
@@ -1840,12 +1900,17 @@ def _pulisci_distanza_per_frase(distanza):
 
 
 _COSTI_PER_TIPOLOGIA = [
-    ("villa", 85, 750, 1300, 900), ("casa indipendente", 85, 750, 1300, 900),
-    ("appartamento", 65, 600, 1000, 650), ("4+", 65, 600, 1000, 650), ("grande", 65, 600, 1000, 650),
-    ("trilocale", 55, 500, 850, 500),
-    ("bilocale", 45, 400, 650, 350),
-    ("doppia", 30, 280, 450, 220),
-    ("singola", 25, 220, 350, 180), ("stanza", 25, 220, 350, 180),
+    # Sessione 68: pulizie e biancheria ridotte del 20% rispetto ai valori
+    # originali (tarati su servizio esterno professionale) per riflettere
+    # lo scenario gestione diretta/informale, confermato da benchmark di
+    # mercato (€20-40/cambio per unita' piccole-medie). Utenze e
+    # manutenzione invariate su richiesta esplicita di Salvatore.
+    ("villa", 70, 600, 1300, 900), ("casa indipendente", 70, 600, 1300, 900),
+    ("appartamento", 50, 480, 1000, 650), ("4+", 50, 480, 1000, 650), ("grande", 50, 480, 1000, 650),
+    ("trilocale", 45, 400, 850, 500),
+    ("bilocale", 35, 320, 650, 350),
+    ("doppia", 25, 225, 450, 220),
+    ("singola", 20, 175, 350, 180), ("stanza", 20, 175, 350, 180),
 ]
 
 
@@ -1854,7 +1919,7 @@ def _costi_per_tipologia(tipologia):
     for frammento, pulizie, biancheria, utenze, manutenzione in _COSTI_PER_TIPOLOGIA:
         if frammento in t:
             return pulizie, biancheria, utenze, manutenzione
-    return 35, 300, 500, 300
+    return 30, 240, 500, 300
 
 
 def _calcola_costi_fissi_deterministici(data):
@@ -2541,36 +2606,11 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     _calcola_costi_fissi_deterministici(data)
 
-    # ── Confronto affitto tradizionale — dato OMI reale quando disponibile ──
-    # Sessione 62: prima questi 3 campi arrivavano interamente dall'AI (mai
-    # verificati, causa dell'errore Brera €1.000 vs reale €1.800-2.200 già
-    # segnalato in checklist). Ora, se il comune è coperto dal dataset OMI
-    # 2025/2, li ricalcoliamo in modo deterministico dal canone reale
-    # EUR/m2. Se il comune non è coperto, restano quelli dell'AI —
-    # dichiarati come stima, mai spacciati per OMI.
-    _istat = _record_comune.get("codice_istat") if _record_comune else None
-    _superficie_num = None
-    _sup_raw = data.get("superficie")
-    if _sup_raw is not None:
-        _match_sup = _re.search(r"[\d.,]+", str(_sup_raw))
-        if _match_sup:
-            try:
-                _superficie_num = float(_match_sup.group(0).replace(",", "."))
-            except ValueError:
-                _superficie_num = None
-    try:
-        _omi_affitto = omi_canoni.stima_affitto_tradizionale(
-            _istat, _superficie_num, data.get("tipologia")
-        ) if _istat else None
-    except Exception as _err_omi:
-        print(f"[OMI] errore imprevisto, fallback a stima AI: {_err_omi!r}")
-        _omi_affitto = None
-    if _omi_affitto:
-        data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], data["fonte_affitto_tradizionale"] = _omi_affitto
-        print(f"[OMI] canone reale applicato per comune={data.get('comune')!r} istat={_istat}")
-    else:
-        data["fonte_affitto_tradizionale"] = "stima_ai"
-        print(f"[OMI] comune={data.get('comune')!r} non coperto dal dataset OMI 2025/2 — resta stima AI")
+    # ── Confronto affitto tradizionale — ora da AirROI, non più da OMI ──
+    # Sessione 68: rimosso l'appoggio ai canoni OMI (dato Salvatore: fuori
+    # mercato su gran parte dei comuni). Il calcolo vero avviene più sotto,
+    # dopo la correzione finale del prezzo/notte AirROI — vedi
+    # stagionalita_turistica.stima_affitto_tradizionale().
 
     _cat = data.get("categoria", "comune_minore")
     _sub = data.get("sottocategoria", "residenziale_minore") or "residenziale_minore"
@@ -2599,7 +2639,23 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     )
 
     if _airroi:
-        _p_new = _airroi["prezzo_notte_stimato"]
+        # Sessione 68: se ci sono abbastanza comparabili REALI della stessa
+        # tipologia dichiarata (bilocale/trilocale/...), ancoriamo il prezzo
+        # base a quella media invece che al modello puntuale AirROI — stesso
+        # numero che finisce nella riga competitor corrispondente, quindi
+        # nessun gap ingiustificato tra "IL TUO IMMOBILE" e "Bilocali zona"
+        # nella stessa tabella. Vedi _prezzo_da_comparabili_stessa_tipologia.
+        _prezzo_comparabili = _prezzo_da_comparabili_stessa_tipologia(
+            _airroi.get("comparable_listings"), data.get("camere")
+        )
+        if _prezzo_comparabili is not None:
+            _p_new = round(_prezzo_comparabili)
+            data["fonte_prezzo"] = "comparabili_reali"
+            print(f"[PREZZO] uso media comparabili reali stessa tipologia: € {_p_new} "
+                  f"invece del modello AirROI (€ {round(_airroi['prezzo_notte_stimato'])})")
+        else:
+            _p_new = _airroi["prezzo_notte_stimato"]
+            data["fonte_prezzo"] = "airroi"
         _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
         _occ_comparabili = _occupazione_da_comparabili(_airroi.get("comparable_listings"))
         if _occ_comparabili is not None:
@@ -2610,7 +2666,6 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         else:
             _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
             data["fonte_occupazione"] = "correttivo_percentili"
-        data["fonte_prezzo"] = "airroi"
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p_new = round(_p * _moltiplicatore) if _p else _p
@@ -2628,6 +2683,10 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         _mult_dotazioni = _moltiplicatore_dotazioni(data.get("dotazioni_presenti"))
         if _mult_dotazioni != 1:
             _p_new = round(_p_new * _mult_dotazioni)
+            # Sessione 68: percentuale salvata per il disclaimer nella tabella
+            # competitor — spiega al cliente perché "IL TUO IMMOBILE" può
+            # differire dalla media della stessa tipologia in tabella.
+            data["dotazioni_bonus_pct"] = round((_mult_dotazioni - 1) * 100)
 
     if _airroi and _airroi.get("comparable_listings"):
         _comp_airroi = _costruisci_competitor_da_airroi(_airroi["comparable_listings"])
@@ -2782,6 +2841,16 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
                 data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva, tetto_massimo=_tetto_occ)
 
     data["mesi_affidabili_idx"] = _mesi_affidabili()
+
+    # Confronto affitto tradizionale — Sessione 68, da prezzo/notte AirROI
+    # (finale, già corretto) invece che da OMI. Usa la stessa etichetta
+    # categoria/zona già calcolata sopra (_fonte_correttivo) per coerenza
+    # con occupazione/stagionalità/soggiorno medio.
+    (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"],
+     data["sconto_affitto_tradizionale_pct"]) = stagionalita_turistica.stima_affitto_tradizionale(
+        data.get("prezzo_notte_stimato", 0), _fonte_correttivo
+    )
+    data["fonte_affitto_tradizionale"] = "stima_airroi"
 
     data["descrizione"] = genera_descrizione_standard(data)
 
