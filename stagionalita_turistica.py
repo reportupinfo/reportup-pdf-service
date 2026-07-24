@@ -398,7 +398,18 @@ def ottieni_curva_stagionale(sottocategoria, categoria, comune):
 # prudenzialmente minore (stima Claude, non da letteratura — va validata
 # con casi reali di Salvatore quando disponibili).
 SCONTO_AFFITTO_TRADIZIONALE_PER_CATEGORIA = {
-    "citta": 0.50,
+    # Sessione 69: "citta" ricalibrato da 0.50 a 0.65 sulla base di un test
+    # reale (Napoli, Via Toledo, bilocale) — Salvatore conferma che gli
+    # affitti tradizionali reali per bilocali in quella zona non superano
+    # ~1.200€/mese, contro i 1.800€/mese che uscivano con lo sconto 50%
+    # (120€/notte x 30gg x 0.50). Con 0.65 il calcolo dà 1.260€/mese: leggermente
+    # sopra il tetto osservato per scelta prudenziale — un correttivo più
+    # aggressivo rischierebbe di schiacciare troppo i comuni che NON hanno
+    # prezzi/notte così alti. Costiero/lacuale/montano/generico non ancora
+    # testati con casi reali: restano ai valori originari finché non
+    # arrivano altri riscontri (stesso approccio incrementale, un category
+    # alla volta).
+    "citta": 0.65,
     "costiero": 0.50,
     "lacuale": 0.45,
     "montano_estivo": 0.45,
