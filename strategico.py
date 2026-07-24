@@ -733,6 +733,22 @@ def page4(c, data):
     revpar = data["revpar"]
     ffe = data["ffe_reserve"]
 
+    # Sessione 68: la formula pulizie qui era rimasta "x notti", mai
+    # allineata al fix Sessione 67 (pulizie per CAMBIO, non per notte) gia'
+    # attivo nel Base — i valori in data["costi_pulizie"] erano gia' corretti
+    # (calcolati a monte in app.py), ma il testo mostrato al cliente era
+    # sbagliato/non coerente col totale. Stesso schema del Base.
+    _cambi = data.get("cambi_anno")
+    _sm = data.get("soggiorno_medio_notti")
+    _pulizie_tot = f"{data.get('costi_pulizie', 0):,}".replace(",", ".")
+    if _cambi and _sm:
+        _sm_txt = f"{_sm:g}".replace(".", ",")
+        _formula_pulizie = (f"€ {pulizia_unit}/cambio  x  {_cambi} cambi "
+                            f"(soggiorno medio {_sm_txt} notti)  =  € {_pulizie_tot}")
+    else:
+        _formula_pulizie = f"€ {pulizia_unit}/cambio  x  {notti} notti  =  € {_pulizie_tot}"
+    _sm_biancheria = f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else ""
+
     # 4 card dati principali situazione dichiarata
     sit_label = "Immobile vuoto" if data["situazione_vuoto"] else ("B&B attivo" if data["situazione_bnb"] else "Con inquilini")
     sit_cards = [
@@ -775,11 +791,10 @@ def page4(c, data):
         ["Commissioni piattaforma Airbnb",
          f"€ {data['ricavo_lordo']:,}  x  {comm_pct}%  =  € {data['costi_commissioni']:,}".replace(",","."),
          f"- {fmt_eu(data['costi_commissioni'])}"],
-        ["Pulizie per cambio ospite",
-         f"€ {pulizia_unit}/cambio  x  {notti} notti  =  € {data['costi_pulizie']:,}".replace(",","."),
+        ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eu(data['costi_pulizie'])}"],
         ["Biancheria e consumabili",
-         f"Range € 300-700/anno  |  conv. adottata: € {data['costi_biancheria']:,}".replace(",","."),
+         f"€ {data['costi_biancheria']:,}/anno (media di mercato per la tipologia{_sm_biancheria})".replace(",","."),
          f"- {fmt_eu(data['costi_biancheria'])}"],
         ["Utenze aggiuntive stimate",
          f"Range € 500-1.000/anno  |  conv. adottata: € {data['costi_utenze']:,}".replace(",","."),
@@ -1507,7 +1522,9 @@ def page11(c, data):
         ("Prezzi e tasso occupazione",
          "Elaborazione su dati aggregati Airbnb, Booking.com, VRBO. Medie di mercato per tipologia e zona alla data di generazione."),
         ("Canoni affitto tradizionale",
-         "OMI — Osservatorio Mercato Immobiliare, Agenzia delle Entrate. Aggiornamento semestrale."),
+         f"Stima comparativa: prezzo/notte medio (fonte AirROI) x 30 giorni, scontato del "
+         f"{data.get('sconto_affitto_tradizionale_pct', 40)}% per riflettere il differenziale tipico "
+         f"tra locazione tradizionale e affitto breve sulla stessa unità e zona."),
         ("Dati demografici e turistici",
          "ISTAT — Istituto Nazionale di Statistica. Movimento turistico, arrivi e presenze per comune."),
         ("Normativa affitti brevi",
