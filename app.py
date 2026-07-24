@@ -190,23 +190,29 @@ def _bucket_competitor(tipologia):
     return "Bilocali"
 
 
-def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, valuta="€"):
+def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, occupazione_immobile, valuta="€"):
     """
     Ritorna le 4 righe della tabella competitor, calcolate SOLO dal nostro
     prezzo finale (prezzo_immobile, già corretto con AirROI + smorzamento +
-    dotazioni). Nessun dato esterno, nessuna invenzione AI. N., Occupazione
-    e Rating non vengono più mostrati per queste righe (mai avuti dati reali
-    per popolarli in modo onesto — meglio "\u2014" che un numero inventato).
+    dotazioni). Nessun dato esterno, nessuna invenzione AI.
+    N. resta "\u2014" (non abbiamo un conteggio annunci reale da mostrare).
+    Occupazione: stesso valore reale calcolato per l'immobile (occupazione_immobile)
+    su tutte le righe — non abbiamo un dato differenziato per tipologia, ma
+    è comunque un numero VERO, non fabbricato, quindi meglio mostrarlo che
+    nasconderlo. Rating resta "\u2014": a differenza di prezzo/occupazione non
+    esiste alcuna fonte reale o regola nostra per calcolarlo — mostrarne uno
+    sarebbe di nuovo un'invenzione, lo stesso problema che abbiamo eliminato.
     """
     if not prezzo_immobile:
         return None
     bucket_immobile = _bucket_competitor(tipologia)
     base = prezzo_immobile / RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket_immobile]
+    occ_txt = f"{occupazione_immobile}%" if occupazione_immobile else "\u2014"
     righe = []
     for bucket in ["Monolocali", "Bilocali", "Trilocali", "B&B e camere"]:
         prezzo = (prezzo_immobile if bucket == bucket_immobile
                   else round(base * RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket]))
-        righe.append([bucket, "\u2014", f"{valuta} {prezzo}", "\u2014", "\u2014"])
+        righe.append([bucket, "\u2014", f"{valuta} {prezzo}", occ_txt, "\u2014"])
     return righe
 
 
@@ -2743,7 +2749,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     # _costruisci_competitor_deterministico. Nessun fallback su comparabili
     # reali o percentili: la voce "stessa tipologia" deve combaciare SEMPRE
     # con "IL TUO IMMOBILE", mai un dato esterno scollegato.
-    data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"))
+    data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"), _occ_new)
     data["fonte_competitor"] = "calcolo_interno"
 
     if _p:
