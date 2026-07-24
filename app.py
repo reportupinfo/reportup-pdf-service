@@ -1284,13 +1284,9 @@ def page4(c, D):
     # Sessione 68: rimossa la riga "Media di mercato AirROI" — un range
     # aggregato calcolato "dietro le quinte" che confondeva il cliente
     # invece di aiutarlo, specie a fianco delle righe per tipologia già
-    # dettagliate sopra. Al suo posto, un disclaimer esplicito quando il
-    # prezzo del tuo immobile si scosta dalla tipologia corrispondente per
-    # via delle dotazioni dichiarate (vedi dotazioni_bonus_pct, Sessione 66).
-    _bonus_pct = D.get("dotazioni_bonus_pct", 0)
-    _nota_dotazioni = f" (+{_bonus_pct}% per dotazioni superiori alla media zona)" if _bonus_pct else ""
+    # dettagliate sopra.
     comp_data.append(["IL TUO IMMOBILE (stima)", "\u2014",
-                      f"€ {D.get('kpi_prezzo', 0)}{_nota_dotazioni}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
+                      f"€ {D.get('kpi_prezzo', 0)}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
     col_w_comp = [(W - 28 * mm) * 0.42, (W - 28 * mm) * 0.10, (W - 28 * mm) * 0.18,
                   (W - 28 * mm) * 0.15, (W - 28 * mm) * 0.15]
     tbl_comp = Table(comp_data, colWidths=col_w_comp)
@@ -1308,7 +1304,20 @@ def page4(c, D):
     ]))
     tbl_comp.wrapOn(c, W - 28 * mm, 200)
     tbl_comp.drawOn(c, 14 * mm, y - tbl_comp._height)
-    y -= tbl_comp._height + 7 * mm
+    y -= tbl_comp._height + 3 * mm
+
+    # Sessione 69: il disclaimer dotazioni causava testo accavallato dentro
+    # la cella "Prezzo med." (colonna troppo stretta per la frase intera).
+    # Spostato qui sotto come didascalia, stesso stile delle altre note
+    # della pagina — mostrato solo quando c'è davvero un bonus da spiegare.
+    _bonus_pct = D.get("dotazioni_bonus_pct", 0)
+    if _bonus_pct:
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.setFillColor(MUTED)
+        c.drawString(14 * mm, y,
+                     f"Il prezzo del tuo immobile include un +{_bonus_pct}% per dotazioni superiori alla media della zona.")
+        y -= 5 * mm
+    y -= 4 * mm
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Riepilogo indicatori di mercato")
     y -= 3 * mm
