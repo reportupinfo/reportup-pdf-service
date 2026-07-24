@@ -190,29 +190,24 @@ def _bucket_competitor(tipologia):
     return "Bilocali"
 
 
-def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, occupazione_immobile, valuta="€"):
+def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, valuta="€"):
     """
-    Ritorna le 4 righe della tabella competitor, calcolate SOLO dal nostro
-    prezzo finale (prezzo_immobile, già corretto con AirROI + smorzamento +
-    dotazioni). Nessun dato esterno, nessuna invenzione AI.
-    N. resta "\u2014" (non abbiamo un conteggio annunci reale da mostrare).
-    Occupazione: stesso valore reale calcolato per l'immobile (occupazione_immobile)
-    su tutte le righe — non abbiamo un dato differenziato per tipologia, ma
-    è comunque un numero VERO, non fabbricato, quindi meglio mostrarlo che
-    nasconderlo. Rating resta "\u2014": a differenza di prezzo/occupazione non
-    esiste alcuna fonte reale o regola nostra per calcolarlo — mostrarne uno
-    sarebbe di nuovo un'invenzione, lo stesso problema che abbiamo eliminato.
+    Ritorna le 4 righe della tabella competitor (tipologia, prezzo medio),
+    calcolate SOLO dal nostro prezzo finale (prezzo_immobile, già corretto
+    con AirROI + smorzamento + dotazioni). Nessun dato esterno, nessuna
+    invenzione AI. Sessione 70: tolte anche le colonne N./Occupazione/Rating
+    — mai avuto un dato reale differenziato per tipologia da mettere lì,
+    meglio una tabella essenziale che fronzoli senza contenuto.
     """
     if not prezzo_immobile:
         return None
     bucket_immobile = _bucket_competitor(tipologia)
     base = prezzo_immobile / RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket_immobile]
-    occ_txt = f"{occupazione_immobile}%" if occupazione_immobile else "\u2014"
     righe = []
     for bucket in ["Monolocali", "Bilocali", "Trilocali", "B&B e camere"]:
         prezzo = (prezzo_immobile if bucket == bucket_immobile
                   else round(base * RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket]))
-        righe.append([bucket, "\u2014", f"{valuta} {prezzo}", occ_txt, "\u2014"])
+        righe.append([bucket, f"{valuta} {prezzo}"])
     return righe
 
 
@@ -1339,17 +1334,15 @@ def page4(c, D):
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Confronto diretto con gli annunci attivi nella zona")
     y -= 6 * mm
-    comp_data = [["Tipologia annunci - " + D.get("competitor_zona", ""), "N.", "Prezzo med.", "Occup.", "Rating"]]
+    comp_data = [["Tipologia annunci - " + D.get("competitor_zona", ""), "Prezzo med."]]
     for row in D.get("competitor", []):
         comp_data.append(list(row))
-    # Sessione 68: rimossa la riga "Media di mercato AirROI" — un range
-    # aggregato calcolato "dietro le quinte" che confondeva il cliente
-    # invece di aiutarlo, specie a fianco delle righe per tipologia già
-    # dettagliate sopra.
-    comp_data.append(["IL TUO IMMOBILE (stima)", "\u2014",
-                      f"€ {D.get('kpi_prezzo', 0)}", f"{D.get('kpi_occupazione', 0)}%", "\u2014"])
-    col_w_comp = [(W - 28 * mm) * 0.42, (W - 28 * mm) * 0.10, (W - 28 * mm) * 0.18,
-                  (W - 28 * mm) * 0.15, (W - 28 * mm) * 0.15]
+    # Sessione 70: tolte le colonne N./Occup./Rating — senza dati reali
+    # dietro (N. e Rating mai avuti, Occup. identica su tutte le righe)
+    # restavano solo fronzoli, non informazione. Resta solo tipologia e
+    # prezzo medio, l'unico dato che calcoliamo davvero riga per riga.
+    comp_data.append(["IL TUO IMMOBILE (stima)", f"€ {D.get('kpi_prezzo', 0)}"])
+    col_w_comp = [(W - 28 * mm) * 0.65, (W - 28 * mm) * 0.35]
     tbl_comp = Table(comp_data, colWidths=col_w_comp)
     tbl_comp.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
@@ -2749,7 +2742,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     # _costruisci_competitor_deterministico. Nessun fallback su comparabili
     # reali o percentili: la voce "stessa tipologia" deve combaciare SEMPRE
     # con "IL TUO IMMOBILE", mai un dato esterno scollegato.
-    data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"), _occ_new)
+    data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"))
     data["fonte_competitor"] = "calcolo_interno"
 
     if _p:
