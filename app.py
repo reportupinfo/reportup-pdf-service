@@ -2655,6 +2655,15 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
     _calcola_costi_fissi_deterministici(data)
+    # Sessione 69/70 — log diagnostico temporaneo: il sovrapprezzo piscina/
+    # giardino su manutenzione non scatta in produzione nonostante le pills
+    # mostrino le dotazioni corrette. Serve vedere la lista grezza ricevuta
+    # dall'AI per capire dove si perde il match. Da rimuovere una volta
+    # risolto.
+    print(f"[DOTAZIONI-DEBUG] raw={data.get('dotazioni_presenti')!r} "
+          f"normalizzate={[_norm_dotazione(d) for d in (data.get('dotazioni_presenti') or [])]!r} "
+          f"ha_piscina={data.get('_costi_ha_piscina')} ha_giardino={data.get('_costi_ha_giardino')} "
+          f"manutenzione={data.get('costi_manutenzione')}")
 
     # ── Confronto affitto tradizionale — ora da AirROI, non più da OMI ──
     # Sessione 68: rimosso l'appoggio ai canoni OMI (dato Salvatore: fuori
