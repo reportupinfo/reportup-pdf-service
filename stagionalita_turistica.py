@@ -379,3 +379,49 @@ def ottieni_curva_stagionale(sottocategoria, categoria, comune):
     if sub == "lacuale":
         return CURVA_LACUALE, "lacuale"
     return CURVA_GENERICA, "generico"
+
+
+# ── Confronto affitto tradizionale — da AirROI, non più da OMI (Sessione 68) ─
+# L'OMI è stato abbandonato per questa sezione: dato Salvatore (valutatore
+# professionista, 30.000+ perizie), le quotazioni OMI sono sistematicamente
+# fuori mercato su gran parte dei comuni italiani, essendo basate su atti
+# registrati e aggregate su fasce territoriali ampie. Nuovo approccio: si
+# parte dal prezzo/notte AirROI già corretto (la stessa fonte usata per
+# tutto il resto del report) e si applica uno sconto per stimare l'affitto
+# tradizionale mensile, perché il prezzo a notte di un breve termine è
+# sistematicamente più alto dell'equivalente mensile/30 di un affitto
+# tradizionale sulla stessa unità. Sconti calibrati su più fonti di mercato
+# (Rent2Cash, FD Apartments, Sole 24 Ore/Edilizia.com): nelle zone a
+# domanda turistica alta il prezzo/notte arriva fino al doppio
+# dell'equivalente mensile/30 (sconto ~50%); nei comuni generici, con meno
+# pressione turistica e meno mercato Airbnb di riferimento, lo sconto è
+# prudenzialmente minore (stima Claude, non da letteratura — va validata
+# con casi reali di Salvatore quando disponibili).
+SCONTO_AFFITTO_TRADIZIONALE_PER_CATEGORIA = {
+    "citta": 0.50,
+    "costiero": 0.50,
+    "lacuale": 0.45,
+    "montano_estivo": 0.45,
+    "montano_invernale": 0.45,
+    "generico": 0.35,
+}
+
+
+def stima_affitto_tradizionale(prezzo_notte, fonte):
+    """
+    Stima il confronto con l'affitto tradizionale a partire dal prezzo/notte
+    AirROI (già corretto), invece che dal canone OMI. Ritorna (affitto_ricavo,
+    affitto_costi, affitto_profitto, sconto_pct) — sconto_pct incluso per
+    trasparenza nel footer del report (fonte='stima_airroi', mai più
+    dichiarata come dato OMI).
+    """
+    if not prezzo_notte:
+        return 0, 0, 0, 0
+    sconto = SCONTO_AFFITTO_TRADIZIONALE_PER_CATEGORIA.get(fonte, 0.40)
+    canone_mensile = round(prezzo_notte * 30 * (1 - sconto))
+    affitto_ricavo = canone_mensile * 12
+    # Stesso criterio di prima: costi di gestione (assicurazione, IMU,
+    # manutenzione ordinaria) al 10% del canone annuo, min/max ragionevoli.
+    affitto_costi = max(500, min(2000, round(affitto_ricavo * 0.10)))
+    affitto_profitto = affitto_ricavo - affitto_costi
+    return affitto_ricavo, affitto_costi, affitto_profitto, round(sconto * 100)
