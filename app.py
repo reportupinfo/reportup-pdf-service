@@ -22,6 +22,7 @@ from reportlab.lib.enums import TA_CENTER
 import comuni_lookup
 import territorio_gps
 import stagionalita_turistica
+import omi_canoni
 
 app = Flask(__name__)
 
@@ -1462,11 +1463,16 @@ def page5(c, D):
     y -= 6 * mm
 
     _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_airroi")
-    _sconto_affitto = D.get("sconto_affitto_tradizionale_pct", 40)
-    _desc_affitto = (f"Stima comparativa di mercato: prezzo/notte medio (fonte AirROI) x 30 giorni, "
-                      f"scontato del {_sconto_affitto}% per riflettere il differenziale tipico tra canone "
-                      f"di locazione tradizionale e tariffa di affitto breve sulla stessa unità nella stessa zona. "
-                      f"Valore orientativo, non tratto da atti o contratti registrati.")
+    if _fonte_affitto == "omi_reale":
+        _desc_affitto = ("Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate. Canone di "
+                          "locazione medio al m² per la zona, ultimo semestre disponibile, applicato alla "
+                          "superficie dichiarata dell'immobile. Dato ufficiale, aggiornamento semestrale.")
+    else:
+        _sconto_affitto = D.get("sconto_affitto_tradizionale_pct", 40)
+        _desc_affitto = (f"Stima comparativa di mercato: prezzo/notte medio (fonte AirROI) x 30 giorni, "
+                          f"scontato del {_sconto_affitto}% per riflettere il differenziale tipico tra canone "
+                          f"di locazione tradizionale e tariffa di affitto breve sulla stessa unità nella stessa zona. "
+                          f"Valore orientativo, non tratto da atti o contratti registrati.")
 
     fonti = [
         ("Prezzi per notte e\ntasso di occupazione",
@@ -2854,15 +2860,52 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     data["mesi_affidabili_idx"] = _mesi_affidabili()
 
-    # Confronto affitto tradizionale — Sessione 68, da prezzo/notte AirROI
-    # (finale, già corretto) invece che da OMI. Usa la stessa etichetta
-    # categoria/zona già calcolata sopra (_fonte_correttivo) per coerenza
-    # con occupazione/stagionalità/soggiorno medio.
-    (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"],
-     data["sconto_affitto_tradizionale_pct"]) = stagionalita_turistica.stima_affitto_tradizionale(
-        data.get("prezzo_notte_stimato", 0), _fonte_correttivo
-    )
-    data["fonte_affitto_tradizionale"] = "stima_airroi"
+    # Confronto affitto tradizionale — Sessione 71: sistema MISTO.
+    # Solo per "generico" (comune minore SENZA vocazione turistica nota:
+    # non città/grande_città, non costiero/lacuale/montano) si tenta prima
+    # il canone OMI reale (Agenzia Entrate, per m2 di zona) — dato Salvatore,
+    # più affidabile dell'AirROI su questi comuni perché il mercato è
+    # omogeneo e non guidato da logiche di breve termine. Città e comuni a
+    # forte impronta turistica (costiero/lacuale/montano) restano SEMPRE sul
+    # calcolo AirROI di Sessione 68 (validato su Napoli, mercato reale di
+    # breve termine con cui l'OMI aggregato per zona non tiene il passo).
+    #
+    # Controllo di coerenza minima sulla superficie: una villa/casa con più
+    # camere ma pochi m2 dichiarati (es. 4 camere su 50 m2) produce un canone
+    # OMI sballato quanto l'AirROI di partenza — in quel caso si ignora il
+    # dato dichiarato e si usa la superficie tipica per tipologia già
+    # prevista in omi_canoni.py, più rappresentativa.
+    _omi_risultato = None
+    if _fonte_correttivo == "generico":
+        _codice_istat_omi = _record_comune.get("codice_istat") if _record_comune else None
+        try:
+            _superficie_omi = float(data.get("superficie") or 0) or None
+        except (TypeError, ValueError):
+            _superficie_omi = None
+        try:
+            _camere_omi = float(data.get("camere") or 1) or 1
+        except (TypeError, ValueError):
+            _camere_omi = 1
+        if _superficie_omi and _superficie_omi < _camere_omi * 20:
+            print(f"[AFFITTO-OMI] superficie dichiarata {_superficie_omi}m2 non plausibile per "
+                  f"{_camere_omi} camere: ignorata, uso superficie tipica per tipologia")
+            _superficie_omi = None
+        _omi_risultato = omi_canoni.stima_affitto_tradizionale(
+            _codice_istat_omi, _superficie_omi, data.get("tipologia")
+        )
+        print(f"[AFFITTO-OMI] comune={data.get('comune')!r} codice_istat={_codice_istat_omi!r} "
+              f"esito={'trovato' if _omi_risultato else 'non coperto, fallback AirROI'}")
+
+    if _omi_risultato:
+        (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], _) = _omi_risultato
+        data["sconto_affitto_tradizionale_pct"] = None
+        data["fonte_affitto_tradizionale"] = "omi_reale"
+    else:
+        (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"],
+         data["sconto_affitto_tradizionale_pct"]) = stagionalita_turistica.stima_affitto_tradizionale(
+            data.get("prezzo_notte_stimato", 0), _fonte_correttivo
+        )
+        data["fonte_affitto_tradizionale"] = "stima_airroi"
 
     data["descrizione"] = genera_descrizione_standard(data)
 
