@@ -378,6 +378,52 @@ def _mesi_affidabili(oggi=None):
     return [(mese_partenza + i) % 12 for i in range(3)]
 
 
+# ── Normalizzazione occupazione a 12 mesi — Sessione 72 ─────────────────────
+# Bug reale (Positano, Sessione 72): quando l'AI dimentica un mese nel suo
+# JSON (es. manca "Mag", 11 righe invece di 12), _applica_stagionalita_airroi
+# qui sotto ha una guardia di sicurezza "len(occ) != 12: return occ" che, con
+# un mese mancante, restituiva l'array INTATTO senza applicare nessuna
+# correzione — né la curva generica (applica_curva), né la stagionalità
+# reale AirROI. Il cliente vedeva la tabella segnaposto scritta nel prompt
+# AI, con prezzi bassissimi e del tutto scollegati dal resto del report
+# (es. prezzo/notte annuo € 284 ma tabella mensile che arrivava a € 112).
+# Fix: ricostruire SEMPRE 12 righe nei 12 mesi canonici, in ordine, prima
+# che qualunque logica di stagionalità venga applicata — così quella
+# guardia (voluta, e giusta di per sé) non scatta mai più per questo
+# motivo. I valori di un eventuale mese mancante sono solo un placeholder
+# (copiati dal mese precedente): non hanno importanza perché vengono
+# SEMPRE sovrascritti subito dopo da applica_curva o
+# _applica_stagionalita_airroi, che ricalcolano ogni riga dal livello
+# annuo reale (prezzo/occupazione corretti da AirROI). Su un report già
+# corretto (12 mesi, ordine giusto — es. Napoli, Milano) questa funzione
+# non cambia nulla: puro passthrough, zero rischio di regressione.
+_MESI_CANONICI = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+                   "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+
+
+def _normalizza_occupazione_12_mesi(occ):
+    per_mese = {}
+    for row in (occ or []):
+        if not row:
+            continue
+        nome = str(row[0]).strip()[:3].capitalize()
+        riga = list(row) + ["\u2014"] * max(0, 4 - len(row))
+        per_mese[nome] = riga[:4]
+
+    ricostruita = []
+    precedente = None
+    for nome in _MESI_CANONICI:
+        if nome in per_mese:
+            riga = [nome] + per_mese[nome][1:]
+        elif precedente is not None:
+            riga = [nome, precedente[1], precedente[2], precedente[3]]
+        else:
+            riga = [nome, 50, 0, "Media"]
+        ricostruita.append(riga)
+        precedente = riga
+    return ricostruita
+
+
 def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_annuale=None, tetto_massimo=85):
     if not occ or not distribuzione_mensile or len(occ) != 12:
         return occ
@@ -2611,6 +2657,18 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     data = _json.loads(cleaned)
     data = normalize_data(data)
+
+    # Sessione 72: l'AI a volte scrive un'occupazione con meno di 12 mesi
+    # (bug reale Positano — mancava "Mag"). Ricostruiamo sempre 12 righe
+    # canoniche PRIMA che curva/AirROI entrino in gioco — vedi commento
+    # dettagliato su _normalizza_occupazione_12_mesi() più sopra nel file.
+    if "occupazione" in data:
+        _occ_mesi_ricevuti = [str(r[0]) for r in (data.get("occupazione") or []) if r]
+        if len(_occ_mesi_ricevuti) != 12:
+            print(f"[STAGIONALITA-DEBUG] occupazione AI con {len(_occ_mesi_ricevuti)} mesi invece di 12 "
+                  f"(ricevuti: {_occ_mesi_ricevuti!r}) — ricostruita a 12 mesi canonici prima di applicare "
+                  f"curva/AirROI, indirizzo={data.get('indirizzo')!r}")
+        data["occupazione"] = _normalizza_occupazione_12_mesi(data.get("occupazione"))
 
     # Dotazioni assenti: pura sottrazione insiemistica (lista standard meno
     # quelle dichiarate presenti dal cliente) — zero margine di invenzione,
