@@ -2435,6 +2435,15 @@ def _geocode_indirizzo(indirizzo, timeout=5):
         risultato = dati["results"][0]
         loc = risultato["geometry"]["location"]
 
+        # Sessione 76: Google segnala partial_match=true quando ha dovuto
+        # "indovinare" per risolvere l'indirizzo (refuso corretto, civico
+        # impreciso, ecc). Non è un segnale perfetto — a volte scatta anche
+        # su indirizzi corretti ma poco mappati — quindi lo trattiamo come
+        # avviso morbido a valle (verify-address/quick-estimate), MAI come
+        # blocco: un falso allarme non deve mai impedire un pagamento
+        # legittimo. Il geocode resta comunque valido e utilizzabile.
+        partial_match = bool(risultato.get("partial_match", False))
+
         comune, provincia, cap = None, None, None
         for comp in risultato.get("address_components", []):
             tipi = comp.get("types", [])
@@ -2449,6 +2458,7 @@ def _geocode_indirizzo(indirizzo, timeout=5):
             "lat": loc["lat"], "lon": loc["lng"],
             "formatted_address": risultato.get("formatted_address"),
             "comune": comune, "provincia": provincia, "cap": cap,
+            "partial_match": partial_match,
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
@@ -2541,7 +2551,15 @@ def verify_address():
     """Chiamato dal form Base (Sessione 54) prima di mandare il cliente su
     Stripe: verifica che l'indirizzo sia realmente geolocalizzabile, per
     evitare pagamenti incassati senza che il report riesca mai a generarsi
-    più avanti nella pipeline Make (il geocode fallirebbe silenziosamente)."""
+    più avanti nella pipeline Make (il geocode fallirebbe silenziosamente).
+
+    Sessione 76: aggiunto "precisione_incerta" — segnala quando Google ha
+    dovuto correggere/indovinare l'indirizzo digitato (partial_match) invece
+    di trovare una corrispondenza esatta. È un avviso morbido, MAI un
+    blocco: "valido" resta l'unico campo che decide se procedere o no. Il
+    frontend può mostrare un "controlla che sia scritto giusto" senza mai
+    impedire il pagamento — Google trova comunque l'indirizzo, il rischio è
+    solo estetico (es. un refuso che resta visibile nel PDF finale)."""
     if request.method == "OPTIONS":
         resp = jsonify({"ok": True})
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -2557,10 +2575,13 @@ def verify_address():
     body = request.get_json(force=True, silent=True) or {}
     indirizzo = (body.get("indirizzo") or "").strip()
     if not indirizzo:
-        return _risposta({"valido": False})
+        return _risposta({"valido": False, "precisione_incerta": False})
 
     geo = _geocode_indirizzo(indirizzo)
-    return _risposta({"valido": bool(geo)})
+    return _risposta({
+        "valido": bool(geo),
+        "precisione_incerta": bool(geo and geo.get("partial_match")),
+    })
 
 
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
@@ -2702,6 +2723,12 @@ def quick_estimate():
         "posizionamento_messaggio": posizionamento_messaggio,
 
         "punti_interesse": punti_interesse,
+
+        # Sessione 76: stesso avviso morbido di /verify-address, gratis qui
+        # perché usa lo stesso geocode già fatto sopra. Il Quick può mostrare
+        # "verifica che l'indirizzo sia scritto giusto" senza mai bloccare —
+        # il report è comunque generato correttamente.
+        "precisione_incerta": bool(geo.get("partial_match")),
     })
 
 
