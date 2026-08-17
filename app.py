@@ -594,13 +594,58 @@ def _moltiplicatore_dotazioni(dotazioni_presenti):
 # stessa mappa fissa e quindi restava corretto. Stesso principio già
 # applicato al Quick, ora deterministico anche nel Base: la tipologia
 # decide le camere, non l'AI.
-_CAMERE_PER_TIPOLOGIA = [
-    ("stanza singola", 0), ("stanza doppia", 0), ("monolocale", 0),
-    ("bilocale", 1),
-    ("trilocale", 2),
-    ("quadrilocale", 3), ("4 locali", 3), ("appartamento grande", 3),
-    ("villa", 4), ("casa indipendente", 4),
+# ── Mappa unica Tipologia → Camere + Posti letto — Sessione 75 ────────────────
+# FONTE DI VERITÀ UNICA per la relazione tipologia→camere→posti letto in tutto
+# il sistema. Prima esistevano mappe parallele scollegate: questa mappa nel
+# backend (camere), una diversa nei form Quick in JS (stanza doppia = 1 camera
+# qui, 0 nel backend → disallineamento reale), e nessuna guida sui posti letto.
+# Ora un solo posto decide entrambi, e i 3 form HTML replicano ESATTAMENTE
+# questi stessi valori (mappa JS TIPOLOGIA_MAP con commento-sentinella:
+# qualunque modifica qui va riportata identica nei 3 file HTML).
+#
+# camere = camere DA LETTO separate → è ciò che AirROI riceve come `bedrooms`.
+#   Una stanza (singola/doppia) è essa stessa l'ambiente: 0 camere separate.
+#   Un bilocale = 2 locali = 1 camera + soggiorno → 1 camera. E così via.
+# posti_default = valore preselezionato nel form quando si sceglie la tipologia
+#   (modificabile liberamente dall'utente, non è un vincolo).
+#
+# Ordine: dal più specifico al più generico, il primo frammento che matcha
+# vince (es. "casa indipendente" prima di eventuali match parziali).
+_TIPOLOGIA_MAP = [
+    # (frammento_tipologia, camere, posti_default)
+    # I frammenti sono confrontati in minuscolo con `in`: mettere i più
+    # specifici PRIMA dei più generici. Le etichette reali inviate dai form
+    # sono "Stanza singola", "Stanza doppia", "Bilocale", "Trilocale",
+    # "Appartamento 4+ locali", "Villa / Casa indipendente" — i frammenti qui
+    # sotto devono matchare quelle stringhe (verificato: "4+ locali" cattura
+    # l'appartamento grande, "casa indipendente" e "villa" catturano l'ultima).
+    ("stanza singola", 0, 1),
+    ("stanza doppia", 0, 2),
+    ("monolocale", 0, 2),
+    ("bilocale", 1, 3),
+    ("trilocale", 2, 4),
+    ("quadrilocale", 3, 6),
+    ("4+ locali", 3, 6),
+    ("4 locali", 3, 6),
+    ("appartamento grande", 3, 6),
+    ("casa indipendente", 4, 8),
+    ("villa", 4, 8),
 ]
+
+
+def _match_tipologia(tipologia):
+    """Ritorna la tupla (camere, posti_default) per la tipologia dichiarata,
+    oppure None se non riconosciuta (testo libero non standard).
+
+    Accetta sia le etichette leggibili inviate da Base/Strategico
+    ("Appartamento 4+ locali") sia i value grezzi del select inviati dal Quick
+    ("appartamento_grande"): gli underscore vengono normalizzati in spazi prima
+    del confronto, così una sola mappa copre entrambe le forme."""
+    t = str(tipologia or "").strip().lower().replace("_", " ")
+    for frammento, camere, posti in _TIPOLOGIA_MAP:
+        if frammento in t:
+            return camere, posti
+    return None
 
 
 def _camere_deterministiche(tipologia, camere_ai):
@@ -608,11 +653,24 @@ def _camere_deterministiche(tipologia, camere_ai):
     ignorando quanto scritto dall'AI se riconosciamo la tipologia. Se la
     tipologia non è tra quelle note (es. testo libero non standard),
     manteniamo il valore dell'AI invece di inventare un fallback arbitrario."""
-    t = str(tipologia or "").strip().lower()
-    for frammento, n in _CAMERE_PER_TIPOLOGIA:
-        if frammento in t:
-            return str(n)
+    m = _match_tipologia(tipologia)
+    if m is not None:
+        return str(m[0])
     return camere_ai
+
+
+def _posti_letto_default(tipologia, posti_esistente=None):
+    """Ritorna il numero di posti letto di default per la tipologia dichiarata.
+    Se l'utente ha già fornito un valore di posti letto (posti_esistente),
+    quello vince SEMPRE: il default serve solo come fallback quando il campo
+    è vuoto/assente. Se la tipologia non è riconosciuta e non c'è un valore
+    esistente, ritorna posti_esistente così com'è (nessun default inventato)."""
+    if posti_esistente not in (None, "", "0"):
+        return posti_esistente
+    m = _match_tipologia(tipologia)
+    if m is not None:
+        return str(m[1])
+    return posti_esistente
 
 
 def _zona_sembra_valida(testo):
@@ -2536,14 +2594,23 @@ def quick_estimate():
     categoria = record_comune["categoria"] if record_comune else "comune_minore"
     sottocategoria = territorio_gps.classifica_sottocategoria(lat, lon)
 
+    # Normalizzazione camere + posti letto dalla mappa unica (Sessione 75) —
+    # rete di sicurezza backend: anche se il form Quick invia camere già
+    # calcolate, le ricduciamo alla stessa fonte di verità di Base/Strategico
+    # così AirROI riceve `bedrooms` e `guests` coerenti tra tutti i prodotti.
+    # Il valore posti letto scelto dall'utente vince sempre sul default.
+    _camere_quick = _camere_deterministiche(body.get("tipologia"), body.get("camere"))
+    _posti_quick = _posti_letto_default(body.get("tipologia"), body.get("posti_letto"))
+
     airroi = _airroi_lookup_e_stima(
         lat, lon,
-        camere_raw=body.get("camere"),
-        posti_letto_raw=body.get("posti_letto"),
+        camere_raw=_camere_quick,
+        posti_letto_raw=_posti_quick,
         bagni_raw=body.get("bagni"),
     )
     print(f"[QUICK] indirizzo={indirizzo!r} lat={lat!r} lon={lon!r} categoria={categoria!r} sottocategoria={sottocategoria!r} "
-          f"camere_raw={body.get('camere')!r} posti_letto_raw={body.get('posti_letto')!r} bagni_raw={body.get('bagni')!r} "
+          f"tipologia={body.get('tipologia')!r} camere_form={body.get('camere')!r}->norm={_camere_quick!r} "
+          f"posti_form={body.get('posti_letto')!r}->norm={_posti_quick!r} bagni_raw={body.get('bagni')!r} "
           f"airroi_trovato={bool(airroi)} distribuzione_mensile_presente={bool(airroi and airroi.get('distribuzione_mensile'))}")
 
     if airroi:
@@ -2571,7 +2638,7 @@ def quick_estimate():
     else:
         base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
         mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
-        mult_capacita = _moltiplicatore_capacita(body.get("posti_letto"))
+        mult_capacita = _moltiplicatore_capacita(_posti_quick)
         _prezzo_medio_grezzo = round(base * mult_zona * mult_capacita)
         prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
             _prezzo_medio_grezzo, sottocategoria, categoria,
@@ -2743,6 +2810,12 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     # scritto dall'AI PRIMA di mandarlo ad AirROI, così la stima di prezzo
     # e la scheda immobile mostrata usano lo stesso numero corretto.
     data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
+
+    # Posti letto: se il form non ha inviato un valore (campo vuoto), usa il
+    # default per tipologia dalla mappa unica (Sessione 75). Se l'utente ha
+    # scelto un valore, quello resta intatto. Così AirROI riceve sempre un
+    # `guests` sensato e la descrizione narrativa non resta senza posti letto.
+    data["posti_letto"] = _posti_letto_default(data.get("tipologia"), data.get("posti_letto"))
 
     print(f"[AIRROI] chiamata per indirizzo={data.get('indirizzo')!r} lat={data.get('lat')!r} long={data.get('long')!r} email_destinatario={data.get('email')!r}")
 
@@ -3077,6 +3150,12 @@ def generate_strategico():
         for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
             if campo in data and not isinstance(data[campo], str):
                 data[campo] = str(data[campo])
+
+        # Camere + posti letto dalla mappa unica (Sessione 75) — stessa fonte di
+        # verità di Base e Quick, così i tre prodotti restano allineati sul
+        # numero camere (bedrooms) e sul default posti letto (guests).
+        data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
+        data["posti_letto"] = _posti_letto_default(data.get("tipologia"), data.get("posti_letto"))
 
         if "comune" in data:
             data["comune"] = _title_preserva_romani(data["comune"])
