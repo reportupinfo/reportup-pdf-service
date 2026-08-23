@@ -30,6 +30,26 @@ app = Flask(__name__)
 AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
 AIRROI_BASE = "https://api.airroi.com"
 
+# ── Autenticazione endpoint server-to-server (chiamati solo da Make.com) ───────
+# Non applicato a /quick-estimate e /verify-address: quelli sono chiamati
+# direttamente dal browser (fetch lato client), quindi un segreto statico
+# sarebbe visibile nel JS e non protegge nulla.
+PDF_SECRET = os.environ.get("PDF_SECRET", "")
+
+
+def require_internal_secret(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not PDF_SECRET:
+            return jsonify({"error": "PDF_SECRET non configurato lato server"}), 500
+        if request.headers.get("X-Internal-Secret", "") != PDF_SECRET:
+            return jsonify({"error": "non autorizzato"}), 401
+        return fn(*args, **kwargs)
+
+    return wrapper
+
 
 def _numero_da(d, *chiavi, default=None):
     for k in chiavi:
@@ -2362,6 +2382,7 @@ def health():
 
 
 @app.route("/categoria-comune", methods=["GET"])
+@require_internal_secret
 def categoria_comune():
     comune_q = request.args.get("comune", "")
     provincia_q = request.args.get("provincia")
@@ -3091,6 +3112,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
 
 @app.route("/generate-pdf-direct", methods=["POST"])
+@require_internal_secret
 def generate_pdf_direct():
     raw = ""
     try:
@@ -3128,6 +3150,7 @@ _CAMPI_ECONOMICI_EMAIL = [
 
 
 @app.route("/extract-report-fields", methods=["POST"])
+@require_internal_secret
 def extract_report_fields():
     """Riceve {"testo": "<risposta grezza dell'AI, HTTP2>"} da Make (modulo HTTP24)
     ed estrae i campi economici finali (post-normalizzazione + AirROI) in un
@@ -3152,6 +3175,7 @@ def extract_report_fields():
 from strategico import build_strategico_pdf_bytes
 
 @app.route("/generate-strategico", methods=["POST"])
+@require_internal_secret
 def generate_strategico():
     import json as _json
     import re as _re
