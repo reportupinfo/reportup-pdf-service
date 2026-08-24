@@ -2122,19 +2122,26 @@ _PAROLE_MINUSCOLE_NOMI_POI = {"di", "del", "della", "dei", "delle", "dello", "da
 
 
 def _titolo_nome_poi(nome):
-    """Google/l'AI a volte restituiscono il nome di un punto di interesse
-    tutto minuscolo (es. "ciro amodio" invece di "Ciro Amodio", osservato in
-    produzione). Capitalizza SOLO in questo caso \u2014 se il nome ha gi\u00e0 almeno
-    una maiuscola lo lasciamo intatto, perch\u00e9 nomi come "Duomo di Milano"
-    sono gi\u00e0 corretti e un title-case naive li romperebbe ("Duomo Di
-    Milano")."""
+    """Google/l'AI a volte restituiscono il nome di un punto di interesse con
+    solo la PRIMA parola minuscola (es. "campo San Giacomo" invece di "Campo
+    San Giacomo", osservato in produzione \u2014 Sessione 78/79). Corregge parola
+    per parola, non l'intera stringa: una parola che ha gi\u00e0 una maiuscola al
+    suo interno resta intatta (gestisce "San Giacomo", "d'Italia" ecc. senza
+    romperli); una parola tutta minuscola viene capitalizzata, TRANNE le
+    preposizioni/articoli noti quando non sono la prima parola (cos\u00ec "Duomo
+    di Milano" resta "Duomo di Milano" e non diventa "Duomo Di Milano")."""
     t = str(nome or "").strip()
-    if not t or t in ("\u2014", "-") or any(ch.isupper() for ch in t):
+    if not t or t in ("\u2014", "-"):
         return nome
     parole = t.split(" ")
-    out = [parole[0].capitalize()]
-    for w in parole[1:]:
-        out.append(w if w.lower() in _PAROLE_MINUSCOLE_NOMI_POI else w.capitalize())
+    out = []
+    for idx, w in enumerate(parole):
+        if any(ch.isupper() for ch in w):
+            out.append(w)
+        elif idx > 0 and w.lower() in _PAROLE_MINUSCOLE_NOMI_POI:
+            out.append(w)
+        else:
+            out.append(w.capitalize())
     return " ".join(out)
 
 
