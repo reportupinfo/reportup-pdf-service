@@ -52,6 +52,34 @@ def require_internal_secret(fn):
     return wrapper
 
 
+# /quick-estimate e /verify-address restano pubblici per design (chiamati da
+# fetch lato browser, un segreto statico non li protegge — vedi sopra), ma
+# fanno chiamate esterne a pagamento/quota (Google, AirROI) per ogni
+# richiesta. Un controllo Origin leggero blocca lo scraping/abuso casuale da
+# fuori sito senza richiedere manutenzione ricorrente (audit 23/8, finding
+# #17). Non è una protezione forte (Origin è falsificabile da chi chiama via
+# script anziché browser), ma alza la barriera contro l'abuso involontario.
+ORIGINI_CONSENTITE_SUFFISSI = ("reportup.it", "netlify.app")
+
+
+def require_origin_reportup(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return fn(*args, **kwargs)
+        origine = request.headers.get("Origin") or request.headers.get("Referer") or ""
+        if origine:
+            host = origine.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+            if not any(host == s or host.endswith("." + s) for s in ORIGINI_CONSENTITE_SUFFISSI):
+                print(f"[ORIGIN-CHECK] rifiutata origine={origine!r} host={host!r}")
+                return jsonify({"error": "origine_non_consentita"}), 403
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def _numero_da(d, *chiavi, default=None):
     for k in chiavi:
         v = d.get(k)
@@ -1764,85 +1792,17 @@ def _title_preserva_romani(testo):
 
 
 def normalize_data(data):
-    if "tipologia" in data and "indirizzo" in data and "occupazione" in data:
-        return data
-
-    flat = {}
-
-    report = data.get("report", {})
-    immobile_nested = report.get("immobile", {})
-    immobile_flat   = data.get("immobile", {})
-    imm = immobile_nested if immobile_nested else immobile_flat
-
-    ident = imm.get("identificazione", {})
-    car   = imm.get("caratteristiche", {})
-
-    flat["indirizzo"] = (ident.get("indirizzo") or imm.get("indirizzo") or data.get("indirizzo", ""))
-    flat["comune"]    = (ident.get("comune") or imm.get("comune") or data.get("comune", ""))
-    flat["zona"]      = (ident.get("zona") or imm.get("zona") or flat["comune"])
-
-    flat["tipologia"] = (car.get("tipologia") or imm.get("tipologia") or data.get("tipologia", ""))
-    sup = (car.get("superficie") or imm.get("superficie") or data.get("superficie", ""))
-    flat["superficie"] = f"{sup} m\u00b2" if isinstance(sup, (int, float)) else str(sup)
-    flat["piano"]     = (car.get("piano") or imm.get("piano") or data.get("piano", ""))
-    flat["stato"]     = (car.get("stato") or imm.get("stato") or data.get("stato", ""))
-    flat["epoca"]     = (car.get("epoca") or imm.get("epoca") or data.get("epoca", ""))
-
-    camere = (car.get("numeroStanze") or imm.get("camere") or imm.get("numeroStanze") or data.get("camere", ""))
-    flat["camere"] = (f"{camere} camera" if isinstance(camere, int) and camere == 1
-                      else f"{camere} camere" if isinstance(camere, int) else str(camere))
-
-    bagni = (car.get("numeroBagni") or imm.get("bagni") or imm.get("numeroBagni") or data.get("bagni", ""))
-    flat["bagni"] = (f"{bagni} bagno" if isinstance(bagni, int) and bagni == 1
-                     else f"{bagni} bagni" if isinstance(bagni, int) else str(bagni))
-
-    posti = (car.get("postiLetto") or imm.get("posti_letto") or imm.get("postiLetto") or data.get("posti_letto", ""))
-    flat["posti_letto"] = f"{posti} posti" if isinstance(posti, int) else str(posti)
-
-    dot_raw = (imm.get("dotazioni") or data.get("dotazioni") or {})
-    _nomi = {
-        "wifi": "WiFi", "aria_condizionata": "Aria condizionata",
-        "ariaCondizionata": "Aria condizionata", "cucina": "Cucina",
-        "riscaldamento": "Riscaldamento", "televisione": "TV", "tv": "TV",
-        "ascensore": "Ascensore", "balcone": "Balcone", "terrazza": "Terrazza",
-        "giardino": "Giardino", "garage": "Garage", "cantina": "Cantina",
-        "parcheggio": "Parcheggio"
-    }
-    if isinstance(dot_raw, dict):
-        flat["dotazioni_presenti"] = (data.get("dotazioni_presenti")
-                                       or [_nomi.get(k, k) for k, v in dot_raw.items() if v])
-        flat["dotazioni_assenti"]  = (data.get("dotazioni_assenti")
-                                       or [_nomi.get(k, k) for k, v in dot_raw.items() if not v])
-    elif isinstance(dot_raw, list):
-        flat["dotazioni_presenti"] = [_nomi.get(d, d) for d in dot_raw]
-        flat["dotazioni_assenti"]  = []
-    else:
-        flat["dotazioni_presenti"] = data.get("dotazioni_presenti", [])
-        flat["dotazioni_assenti"]  = data.get("dotazioni_assenti", [])
-
-    for f in ["situazione_vuoto", "situazione_inquilini", "situazione_bnb", "situazione_mutuo"]:
-        flat[f] = data.get(f, imm.get(f, False))
-
-    flat["descrizione"] = (imm.get("descrizioneEstesa") or imm.get("descrizione") or data.get("descrizione", ""))
-
-    for field in [
-        "poi", "occupazione", "prezzo_notte_stimato", "occupazione_percent",
-        "notti_anno", "ricavo_lordo", "bonus_dirette", "bonus_dirette_pct",
-        "totale_ricavi", "costi_commissioni", "costi_commissioni_pct",
-        "costi_pulizie", "costi_pulizie_unit", "costi_biancheria",
-        "costi_utenze", "costi_manutenzione", "totale_costi",
-        "profitto_netto", "margine_percent", "mutuo_attivo", "rata_mutuo_mensile",
-        "affitto_ricavo", "affitto_costi", "affitto_profitto",
-        "competitor", "competitor_zona", "media_nazionale",
-        "kpi_prezzo", "kpi_prezzo_range", "kpi_occupazione",
-        "kpi_occ_range", "kpi_potenziale", "data_generazione", "lat", "long",
-        "categoria"
-    ]:
-        val = data.get(field, report.get(field, imm.get(field)))
-        if val is not None:
-            flat[field] = val
-
-    return flat
+    """Il prompt AI del Report Base (PROMPT_AI_REPORT_BASE.md) restituisce da
+    tempo un JSON piatto con indirizzo/tipologia/occupazione gi\u00e0 in cima \u2014
+    la guardia sotto \u00e8 quindi sempre vera nel flusso reale. Rimosso a
+    Sessione 77 (audit 23/8, finding #16) il ramo di conversione da un
+    vecchio formato annidato ("report.immobile.identificazione/
+    caratteristiche") mai pi\u00f9 prodotto dall'AI: era codice morto e il suo
+    dizionario sinonimi dotazioni era disallineato da _DOTAZIONI_SINONIMI
+    (mancava "piscina", "cucina" invece di "Cucina attrezzata") \u2014 se mai
+    fosse tornato raggiungibile avrebbe silenziosamente rotto il
+    sovrapprezzo piscina/manutenzione gi\u00e0 corretto altrove (Sessione 67)."""
+    return data
 
 
 def _join_lista_e(items):
@@ -2595,6 +2555,7 @@ def _punti_interesse_quick(lat, lon, sottocategoria):
 
 
 @app.route("/verify-address", methods=["POST", "OPTIONS"])
+@require_origin_reportup
 def verify_address():
     """Chiamato dal form Base (Sessione 54) prima di mandare il cliente su
     Stripe: verifica che l'indirizzo sia realmente geolocalizzabile, per
@@ -2622,7 +2583,7 @@ def verify_address():
 
     body = request.get_json(force=True, silent=True) or {}
     indirizzo = (body.get("indirizzo") or "").strip()
-    if not indirizzo:
+    if not indirizzo or len(indirizzo) > 200:
         return _risposta({"valido": False, "precisione_incerta": False})
 
     try:
@@ -2637,6 +2598,7 @@ def verify_address():
 
 
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
+@require_origin_reportup
 def quick_estimate():
     if request.method == "OPTIONS":
         resp = jsonify({"ok": True})
@@ -2654,6 +2616,8 @@ def quick_estimate():
     indirizzo = (body.get("indirizzo") or "").strip()
     if not indirizzo:
         return _risposta({"error": "indirizzo_mancante"}, 400)
+    if len(indirizzo) > 200:
+        return _risposta({"error": "indirizzo_troppo_lungo"}, 400)
 
     geo = _geocode_indirizzo(indirizzo)
     if not geo:

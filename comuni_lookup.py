@@ -47,7 +47,14 @@ def _carica_indice():
     with open(CSV_PATH, encoding="utf-8") as f:
         for riga in csv.DictReader(f):
             chiave = _normalizza(riga["comune"])
-            riga["_popolazione_num"] = int(riga.get("popolazione") or 0)
+            try:
+                riga["_popolazione_num"] = int(riga.get("popolazione") or 0)
+            except (ValueError, TypeError):
+                # Una riga con popolazione malformata non deve bloccare la
+                # costruzione dell'intero indice (audit 23/8, finding #18) —
+                # 0 la mette in fondo al fallback per popolazione più alta,
+                # senza impedire il lookup delle altre migliaia di comuni.
+                riga["_popolazione_num"] = 0
             indice.setdefault(chiave, []).append(riga)
 
     _INDEX = indice
