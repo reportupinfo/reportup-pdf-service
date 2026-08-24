@@ -7,6 +7,7 @@ Deploy su Render.com (piano free).
 import os
 import io
 import re
+import time
 import base64
 import math
 import requests
@@ -275,6 +276,20 @@ def _numero_da_stringa(valore, default=1):
         return default
 
 
+# /generate-pdf-direct e /extract-report-fields ricevono dallo stesso
+# scenario Make, per lo stesso ordine, il medesimo testo AI grezzo — e
+# chiamano entrambi _elabora_dati_report_base(), quindi entrambi finiscono
+# qui. Essendo due richieste HTTP indipendenti, senza cache ognuna fa la
+# propria chiamata ad AirROI: l'API può restituire risposte leggermente
+# diverse a parità di parametri (vedi commento sul retry comparable_listings
+# più sotto), e PDF/mail dello stesso ordine mostrano numeri economici
+# diversi. TTL breve: copre lo scarto tipico tra le due chiamate Make per
+# lo stesso ordine, senza rischiare dati stantii su richieste successive
+# reali alla stessa coordinata.
+_AIRROI_CACHE = {}
+_AIRROI_CACHE_TTL_SECONDI = 900
+
+
 def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagni_raw=None, timeout_lookup=4, timeout_stima=6):
     if not AIRROI_API_KEY or lat in (None, "") or lon in (None, ""):
         print(f"[AIRROI] skip — chiave assente o coordinate mancanti (lat={lat!r}, lon={lon!r})")
@@ -285,6 +300,16 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
     except (TypeError, ValueError):
         print(f"[AIRROI] skip — coordinate non convertibili in float (lat={lat!r}, lon={lon!r})")
         return None
+
+    bedrooms = _numero_da_stringa(camere_raw, default=1)
+    guests = _numero_da_stringa(posti_letto_raw, default=2)
+    baths = _numero_da_stringa(bagni_raw, default=1)
+
+    _cache_key = (round(lat_f, 5), round(lon_f, 5), bedrooms, guests, baths)
+    _cached = _AIRROI_CACHE.get(_cache_key)
+    if _cached and (time.monotonic() - _cached[0]) < _AIRROI_CACHE_TTL_SECONDI:
+        print(f"[AIRROI] cache hit — chiave={_cache_key!r}, evita chiamata duplicata per lo stesso ordine")
+        return _cached[1]
 
     try:
         r1 = requests.get(
@@ -299,10 +324,6 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
         if not mercato or not (mercato.get("locality") or mercato.get("region") or mercato.get("country")):
             print(f"[AIRROI] lookup non ha risolto nessuna localita': {mercato}")
             return None
-
-        bedrooms = _numero_da_stringa(camere_raw, default=1)
-        guests = _numero_da_stringa(posti_letto_raw, default=2)
-        baths = _numero_da_stringa(bagni_raw, default=1)
 
         r2 = requests.get(
             f"{AIRROI_BASE}/calculator/estimate",
@@ -378,7 +399,7 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
             }
 
         print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0} percentili_revenue={'presente' if percentili_revenue else 'assente'}")
-        return {
+        risultato = {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
             "distribuzione_mensile": distribuzione_mensile,
@@ -386,6 +407,8 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
             "percentili_revenue": percentili_revenue,
             "occupazione_frazione": float(occ),
         }
+        _AIRROI_CACHE[_cache_key] = (time.monotonic(), risultato)
+        return risultato
     except Exception as e:
         print(f"[AIRROI] eccezione: {e}")
         return None
@@ -2387,29 +2410,33 @@ def categoria_comune():
     comune_q = request.args.get("comune", "")
     provincia_q = request.args.get("provincia")
 
-    record = comuni_lookup.trova_comune(comune_q, provincia_q)
+    try:
+        record = comuni_lookup.trova_comune(comune_q, provincia_q)
 
-    if not record:
+        if not record:
+            return jsonify({
+                "trovato": False,
+                "categoria": "comune_minore",
+                "comune": comune_q,
+                "provincia": None,
+                "sigla_provincia": None,
+                "capoluogo": False,
+                "grande_citta": False,
+            })
+
         return jsonify({
-            "trovato": False,
-            "categoria": "comune_minore",
-            "comune": comune_q,
-            "provincia": None,
-            "sigla_provincia": None,
-            "capoluogo": False,
-            "grande_citta": False,
+            "trovato": True,
+            "categoria": record["categoria"],
+            "comune": record["comune"],
+            "provincia": record["provincia"],
+            "sigla_provincia": record["sigla_provincia"],
+            "capoluogo": str(record.get("capoluogo", "")).strip().upper() == "TRUE",
+            "grande_citta": str(record.get("grande_citta", "")).strip().upper() == "TRUE",
+            "popolazione": record.get("popolazione"),
         })
-
-    return jsonify({
-        "trovato": True,
-        "categoria": record["categoria"],
-        "comune": record["comune"],
-        "provincia": record["provincia"],
-        "sigla_provincia": record["sigla_provincia"],
-        "capoluogo": str(record.get("capoluogo", "")).strip().upper() == "TRUE",
-        "grande_citta": str(record.get("grande_citta", "")).strip().upper() == "TRUE",
-        "popolazione": record.get("popolazione"),
-    })
+    except Exception as e:
+        print(f"[CATEGORIA-COMUNE] eccezione: {e}")
+        return jsonify({"error": "errore_interno"}), 500
 
 
 # ── QUICK REPORT — dati reali, senza AI (Sessione 50) ────────────────────────
@@ -2598,11 +2625,15 @@ def verify_address():
     if not indirizzo:
         return _risposta({"valido": False, "precisione_incerta": False})
 
-    geo = _geocode_indirizzo(indirizzo)
-    return _risposta({
-        "valido": bool(geo),
-        "precisione_incerta": bool(geo and geo.get("partial_match")),
-    })
+    try:
+        geo = _geocode_indirizzo(indirizzo)
+        return _risposta({
+            "valido": bool(geo),
+            "precisione_incerta": bool(geo and geo.get("partial_match")),
+        })
+    except Exception as e:
+        print(f"[VERIFY-ADDRESS] eccezione: {e}")
+        return _risposta({"error": "errore_interno"}, 500)
 
 
 @app.route("/quick-estimate", methods=["POST", "OPTIONS"])
@@ -2631,126 +2662,130 @@ def quick_estimate():
             "message": "Non riusciamo a localizzare questo indirizzo. Controlla via, città e CAP."
         }, 422)
 
-    lat, lon = geo["lat"], geo["lon"]
-    record_comune = comuni_lookup.trova_comune(geo.get("comune") or "", geo.get("provincia"))
-    categoria = record_comune["categoria"] if record_comune else "comune_minore"
-    sottocategoria = territorio_gps.classifica_sottocategoria(lat, lon)
+    try:
+        lat, lon = geo["lat"], geo["lon"]
+        record_comune = comuni_lookup.trova_comune(geo.get("comune") or "", geo.get("provincia"))
+        categoria = record_comune["categoria"] if record_comune else "comune_minore"
+        sottocategoria = territorio_gps.classifica_sottocategoria(lat, lon)
 
-    # Normalizzazione camere + posti letto dalla mappa unica (Sessione 75) —
-    # rete di sicurezza backend: anche se il form Quick invia camere già
-    # calcolate, le ricduciamo alla stessa fonte di verità di Base/Strategico
-    # così AirROI riceve `bedrooms` e `guests` coerenti tra tutti i prodotti.
-    # Il valore posti letto scelto dall'utente vince sempre sul default.
-    _camere_quick = _camere_deterministiche(body.get("tipologia"), body.get("camere"))
-    _posti_quick = _posti_letto_default(body.get("tipologia"), body.get("posti_letto"))
+        # Normalizzazione camere + posti letto dalla mappa unica (Sessione 75) —
+        # rete di sicurezza backend: anche se il form Quick invia camere già
+        # calcolate, le ricduciamo alla stessa fonte di verità di Base/Strategico
+        # così AirROI riceve `bedrooms` e `guests` coerenti tra tutti i prodotti.
+        # Il valore posti letto scelto dall'utente vince sempre sul default.
+        _camere_quick = _camere_deterministiche(body.get("tipologia"), body.get("camere"))
+        _posti_quick = _posti_letto_default(body.get("tipologia"), body.get("posti_letto"))
 
-    airroi = _airroi_lookup_e_stima(
-        lat, lon,
-        camere_raw=_camere_quick,
-        posti_letto_raw=_posti_quick,
-        bagni_raw=body.get("bagni"),
-    )
-    print(f"[QUICK] indirizzo={indirizzo!r} lat={lat!r} lon={lon!r} categoria={categoria!r} sottocategoria={sottocategoria!r} "
-          f"tipologia={body.get('tipologia')!r} camere_form={body.get('camere')!r}->norm={_camere_quick!r} "
-          f"posti_form={body.get('posti_letto')!r}->norm={_posti_quick!r} bagni_raw={body.get('bagni')!r} "
-          f"airroi_trovato={bool(airroi)} distribuzione_mensile_presente={bool(airroi and airroi.get('distribuzione_mensile'))}")
-
-    if airroi:
-        _prezzo_medio_grezzo = airroi["prezzo_notte_stimato"]
-        _correttivo_occ, _fonte_occ = stagionalita_turistica.correttivo_occupazione(
-            sottocategoria, categoria, record_comune["comune"] if record_comune else geo.get("comune")
+        airroi = _airroi_lookup_e_stima(
+            lat, lon,
+            camere_raw=_camere_quick,
+            posti_letto_raw=_posti_quick,
+            bagni_raw=body.get("bagni"),
         )
-        _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_occ)
-        occupazione_percent = min(_tetto_occ, round(airroi["occupazione_percent"] * _correttivo_occ))
-        # Prezzo del MESE CORRENTE (non la media annua piatta) — stessa logica
-        # usata dal Base per la tabella mensile, così Quick e Base mostrano un
-        # numero coerente per lo stesso "oggi" invece di un piatto vs un picco
-        # non allineati. Sessione 66.
-        prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
-            _prezzo_medio_grezzo, sottocategoria, categoria,
-            record_comune["comune"] if record_comune else geo.get("comune"),
-            distribuzione_mensile=airroi.get("distribuzione_mensile"),
-        )
-        fonte_prezzo = "airroi"
-        n_comparabili = len(airroi["comparable_listings"]) if airroi.get("comparable_listings") else 0
-        print(f"[QUICK] fonte={_fonte_occ!r} correttivo_occ={_correttivo_occ} tetto_occ={_tetto_occ} "
-              f"occupazione_grezza_airroi={airroi['occupazione_percent']!r} occupazione_percent_corretta={occupazione_percent} "
-              f"prezzo_medio_grezzo={_prezzo_medio_grezzo} mese_idx={stagionalita_turistica.mese_corrente_idx()} "
-              f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
-    else:
-        base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
-        mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
-        mult_capacita = _moltiplicatore_capacita(_posti_quick)
-        _prezzo_medio_grezzo = round(base * mult_zona * mult_capacita)
-        prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
-            _prezzo_medio_grezzo, sottocategoria, categoria,
-            record_comune["comune"] if record_comune else geo.get("comune"),
-        )
-        occupazione_percent = OCCUPAZIONE_BASE_FALLBACK
-        fonte_prezzo = "stima_deterministica"
-        n_comparabili = 0
-        print(f"[QUICK] AirROI assente — fallback deterministico. prezzo_medio_grezzo={_prezzo_medio_grezzo} "
-              f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
+        print(f"[QUICK] indirizzo={indirizzo!r} lat={lat!r} lon={lon!r} categoria={categoria!r} sottocategoria={sottocategoria!r} "
+              f"tipologia={body.get('tipologia')!r} camere_form={body.get('camere')!r}->norm={_camere_quick!r} "
+              f"posti_form={body.get('posti_letto')!r}->norm={_posti_quick!r} bagni_raw={body.get('bagni')!r} "
+              f"airroi_trovato={bool(airroi)} distribuzione_mensile_presente={bool(airroi and airroi.get('distribuzione_mensile'))}")
 
-    # Il potenziale annuo lordo resta calcolato sul prezzo MEDIO annuo, non sul
-    # prezzo del mese corrente appena mostrato: mischiare un prezzo di un
-    # singolo mese con un numero di notti annuo darebbe un potenziale annuo
-    # falsato (gonfiato in alta stagione, sottostimato in bassa stagione).
-    notti_anno = round(365 * occupazione_percent / 100)
-    potenziale_lordo = _prezzo_medio_grezzo * notti_anno
+        if airroi:
+            _prezzo_medio_grezzo = airroi["prezzo_notte_stimato"]
+            _correttivo_occ, _fonte_occ = stagionalita_turistica.correttivo_occupazione(
+                sottocategoria, categoria, record_comune["comune"] if record_comune else geo.get("comune")
+            )
+            _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_occ)
+            occupazione_percent = min(_tetto_occ, round(airroi["occupazione_percent"] * _correttivo_occ))
+            # Prezzo del MESE CORRENTE (non la media annua piatta) — stessa logica
+            # usata dal Base per la tabella mensile, così Quick e Base mostrano un
+            # numero coerente per lo stesso "oggi" invece di un piatto vs un picco
+            # non allineati. Sessione 66.
+            prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
+                _prezzo_medio_grezzo, sottocategoria, categoria,
+                record_comune["comune"] if record_comune else geo.get("comune"),
+                distribuzione_mensile=airroi.get("distribuzione_mensile"),
+            )
+            fonte_prezzo = "airroi"
+            n_comparabili = len(airroi["comparable_listings"]) if airroi.get("comparable_listings") else 0
+            print(f"[QUICK] fonte={_fonte_occ!r} correttivo_occ={_correttivo_occ} tetto_occ={_tetto_occ} "
+                  f"occupazione_grezza_airroi={airroi['occupazione_percent']!r} occupazione_percent_corretta={occupazione_percent} "
+                  f"prezzo_medio_grezzo={_prezzo_medio_grezzo} mese_idx={stagionalita_turistica.mese_corrente_idx()} "
+                  f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
+        else:
+            base = PREZZO_BASE_CATEGORIA.get(categoria, PREZZO_BASE_CATEGORIA["comune_minore"])
+            mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(sottocategoria, 1.0)
+            mult_capacita = _moltiplicatore_capacita(_posti_quick)
+            _prezzo_medio_grezzo = round(base * mult_zona * mult_capacita)
+            prezzo_notte, _fonte_prezzo_mese = stagionalita_turistica.prezzo_mese_corrente(
+                _prezzo_medio_grezzo, sottocategoria, categoria,
+                record_comune["comune"] if record_comune else geo.get("comune"),
+            )
+            occupazione_percent = OCCUPAZIONE_BASE_FALLBACK
+            fonte_prezzo = "stima_deterministica"
+            n_comparabili = 0
+            print(f"[QUICK] AirROI assente — fallback deterministico. prezzo_medio_grezzo={_prezzo_medio_grezzo} "
+                  f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
 
-    if airroi and airroi.get("comparable_listings"):
-        prezzi_comparabili = [
-            _numero_da(a, "average_daily_rate", "adr", "price", "daily_rate")
-            for a in airroi["comparable_listings"] if isinstance(a, dict)
-        ]
-        prezzi_comparabili = [p for p in prezzi_comparabili if p]
-        media_locale = round(sum(prezzi_comparabili) / len(prezzi_comparabili)) if prezzi_comparabili else None
-    else:
-        media_locale = None
+        # Il potenziale annuo lordo resta calcolato sul prezzo MEDIO annuo, non sul
+        # prezzo del mese corrente appena mostrato: mischiare un prezzo di un
+        # singolo mese con un numero di notti annuo darebbe un potenziale annuo
+        # falsato (gonfiato in alta stagione, sottostimato in bassa stagione).
+        notti_anno = round(365 * occupazione_percent / 100)
+        potenziale_lordo = _prezzo_medio_grezzo * notti_anno
 
-    if media_locale:
-        _delta_percent_log = round((prezzo_notte - media_locale) / media_locale * 100)
-        print(f"[QUICK] posizionamento reale vs comparabili locali: {_delta_percent_log}%")
-        sopra_media = prezzo_notte >= media_locale
-    else:
-        sopra_media = None
+        if airroi and airroi.get("comparable_listings"):
+            prezzi_comparabili = [
+                _numero_da(a, "average_daily_rate", "adr", "price", "daily_rate")
+                for a in airroi["comparable_listings"] if isinstance(a, dict)
+            ]
+            prezzi_comparabili = [p for p in prezzi_comparabili if p]
+            media_locale = round(sum(prezzi_comparabili) / len(prezzi_comparabili)) if prezzi_comparabili else None
+        else:
+            media_locale = None
 
-    if sopra_media is True:
-        posizionamento_messaggio = "Il tuo immobile è già posizionato sopra la media della zona: un ottimo punto di partenza."
-    else:
-        posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
+        if media_locale:
+            _delta_percent_log = round((prezzo_notte - media_locale) / media_locale * 100)
+            print(f"[QUICK] posizionamento reale vs comparabili locali: {_delta_percent_log}%")
+            sopra_media = prezzo_notte >= media_locale
+        else:
+            sopra_media = None
 
-    punti_interesse = _punti_interesse_quick(lat, lon, sottocategoria)
+        if sopra_media is True:
+            posizionamento_messaggio = "Il tuo immobile è già posizionato sopra la media della zona: un ottimo punto di partenza."
+        else:
+            posizionamento_messaggio = "C'è margine di crescita per il tuo immobile in questa zona: il Report Base ti mostra esattamente come sfruttarlo."
 
-    print(f"[QUICK] RISPOSTA FINALE indirizzo={indirizzo!r} prezzo_notte={prezzo_notte} "
-          f"occupazione_percent={occupazione_percent} notti_anno={notti_anno} potenziale_lordo={potenziale_lordo} "
-          f"fonte_prezzo={fonte_prezzo!r}")
+        punti_interesse = _punti_interesse_quick(lat, lon, sottocategoria)
 
-    return _risposta({
-        "indirizzo": geo["formatted_address"],
-        "comune": record_comune["comune"] if record_comune else geo.get("comune"),
-        "categoria": categoria,
-        "sottocategoria": sottocategoria,
+        print(f"[QUICK] RISPOSTA FINALE indirizzo={indirizzo!r} prezzo_notte={prezzo_notte} "
+              f"occupazione_percent={occupazione_percent} notti_anno={notti_anno} potenziale_lordo={potenziale_lordo} "
+              f"fonte_prezzo={fonte_prezzo!r}")
 
-        "fonte_prezzo": fonte_prezzo,
-        "comparabili_airroi": n_comparabili,
+        return _risposta({
+            "indirizzo": geo["formatted_address"],
+            "comune": record_comune["comune"] if record_comune else geo.get("comune"),
+            "categoria": categoria,
+            "sottocategoria": sottocategoria,
 
-        "prezzo_notte": prezzo_notte,
-        "occupazione_percent": occupazione_percent,
-        "notti_anno": notti_anno,
-        "potenziale_lordo": potenziale_lordo,
+            "fonte_prezzo": fonte_prezzo,
+            "comparabili_airroi": n_comparabili,
 
-        "posizionamento_messaggio": posizionamento_messaggio,
+            "prezzo_notte": prezzo_notte,
+            "occupazione_percent": occupazione_percent,
+            "notti_anno": notti_anno,
+            "potenziale_lordo": potenziale_lordo,
 
-        "punti_interesse": punti_interesse,
+            "posizionamento_messaggio": posizionamento_messaggio,
 
-        # Sessione 76: stesso avviso morbido di /verify-address, gratis qui
-        # perché usa lo stesso geocode già fatto sopra. Il Quick può mostrare
-        # "verifica che l'indirizzo sia scritto giusto" senza mai bloccare —
-        # il report è comunque generato correttamente.
-        "precisione_incerta": bool(geo.get("partial_match")),
-    })
+            "punti_interesse": punti_interesse,
+
+            # Sessione 76: stesso avviso morbido di /verify-address, gratis qui
+            # perché usa lo stesso geocode già fatto sopra. Il Quick può mostrare
+            # "verifica che l'indirizzo sia scritto giusto" senza mai bloccare —
+            # il report è comunque generato correttamente.
+            "precisione_incerta": bool(geo.get("partial_match")),
+        })
+    except Exception as e:
+        print(f"[QUICK] eccezione: {e}")
+        return _risposta({"error": "errore_interno"}, 500)
 
 
 def _elabora_dati_report_base(raw, lat=None, long=None):

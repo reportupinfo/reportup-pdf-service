@@ -170,7 +170,13 @@ def elevazione_metri(lat, lon, timeout=3):
     except Exception:
         quota = None
 
-    _ELEVATION_CACHE[cache_key] = quota
+    # Cache solo il successo: la quota di un punto è un dato fisico, non
+    # cambia mai, quindi va bene tenerla per sempre. Un fallimento (timeout,
+    # chiave assente lato Google, errore di rete) NON va cachato — altrimenti
+    # un timeout una tantum blocca quella coordinata a "non montano" per
+    # tutta la vita del processo Render, e il prossimo request la riprova.
+    if quota is not None:
+        _ELEVATION_CACHE[cache_key] = quota
     return quota
 
 
@@ -221,7 +227,13 @@ def distanza_e_tempo_auto(lat1, lon1, lat2, lon2, timeout=4):
     except Exception:
         risultato = None
 
-    _DISTANCE_MATRIX_CACHE[cache_key] = risultato
+    # Stesso principio della cache elevazione: distanza/tempo auto tra due
+    # punti non cambia, va cachato per sempre — ma solo se ottenuto con
+    # successo. Un fallimento temporaneo (timeout, isola senza rotta
+    # risolta quella volta) non deve bloccare permanentemente la coppia di
+    # coordinate su "nessuna rotta".
+    if risultato is not None:
+        _DISTANCE_MATRIX_CACHE[cache_key] = risultato
     return risultato
 
 
