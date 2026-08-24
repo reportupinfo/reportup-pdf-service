@@ -100,29 +100,6 @@ def _tipologia_da_camere(n_camere):
     return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
 
 
-def _media_nazionale_da_percentili(percentili_revenue, occupazione_frazione, valuta="€"):
-    """
-    Costruisce la riga 'Media nazionale' da dati REALI AirROI (percentili di
-    ricavo annuo) quando non ci sono comparable_listings sufficienti per la
-    tabella dettagliata. Converte ricavo -> prezzo/notte implicito dividendo
-    per notti/anno stimate alla stessa occupazione. Meno preciso di annunci
-    comparabili reali, ma è dato di mercato vero, non invenzione. Sessione 64.
-    """
-    if not percentili_revenue or not occupazione_frazione:
-        return None
-    notti_anno = occupazione_frazione * 365
-    if notti_anno < 1:
-        return None
-    p25 = percentili_revenue.get("p25", 0) / notti_anno
-    p75 = percentili_revenue.get("p75", 0) / notti_anno
-    p50 = percentili_revenue.get("p50", 0) / notti_anno if percentili_revenue.get("p50") else (p25 + p75) / 2
-    if p25 <= 0 or p75 <= 0:
-        return None
-    occ_pct = round(occupazione_frazione * 100)
-    return ["Media di mercato AirROI (percentili)", "\u2014",
-            f"{valuta} {round(p25)}-{round(p75)}", f"{occ_pct}%", "\u2014"]
-
-
 def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
     """Calcola l'occupazione media dai singoli annunci comparabili REALI di
     AirROI (non il dato percentili generico), quando ce ne sono abbastanza
@@ -154,55 +131,6 @@ def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
         return None
     media = sum(occ_vals) / len(occ_vals)
     return media * sconto
-
-
-def _costruisci_competitor_da_airroi(comparable_listings, valuta="€"):
-    if not comparable_listings:
-        return None
-    gruppi = {}
-    tutti_prezzi, tutte_occ, tutti_rating = [], [], []
-    for ann in comparable_listings:
-        if not isinstance(ann, dict):
-            continue
-        prezzo = _numero_da(ann, "average_daily_rate", "adr", "price", "daily_rate")
-        occ = _numero_da(ann, "occupancy", "occupancy_rate")
-        rating = _numero_da(ann, "rating", "review_rating", "star_rating", "overall_rating")
-        camere = _numero_da(ann, "bedrooms", "beds", "num_bedrooms")
-        if prezzo is None:
-            continue
-        if occ is not None and occ <= 1:
-            occ = occ * 100
-        tipologia = _tipologia_da_camere(camere)
-        g = gruppi.setdefault(tipologia, {"prezzi": [], "occ": [], "rating": []})
-        g["prezzi"].append(prezzo)
-        tutti_prezzi.append(prezzo)
-        if occ is not None:
-            g["occ"].append(occ)
-            tutte_occ.append(occ)
-        if rating is not None:
-            g["rating"].append(rating)
-            tutti_rating.append(rating)
-
-    if len(tutti_prezzi) < 3:
-        return None
-
-    righe = []
-    for tipologia, g in sorted(gruppi.items(), key=lambda kv: -len(kv[1]["prezzi"])):
-        n = len(g["prezzi"])
-        prezzo_medio = round(sum(g["prezzi"]) / n)
-        occ_media = round(sum(g["occ"]) / len(g["occ"])) if g["occ"] else "\u2014"
-        rating_medio = round(sum(g["rating"]) / len(g["rating"]), 1) if g["rating"] else "\u2014"
-        righe.append([tipologia, str(n), f"{valuta} {prezzo_medio}",
-                      f"{occ_media}%" if occ_media != "\u2014" else "\u2014", str(rating_medio)])
-    righe = righe[:4]
-
-    media_prezzo = round(sum(tutti_prezzi) / len(tutti_prezzi))
-    media_occ = round(sum(tutte_occ) / len(tutte_occ)) if tutte_occ else "\u2014"
-    media_rating = round(sum(tutti_rating) / len(tutti_rating), 1) if tutti_rating else "\u2014"
-    media_riga = ["Media annunci comparabili AirROI", "\u2014", f"{valuta} {media_prezzo}",
-                  f"{media_occ}%" if media_occ != "\u2014" else "\u2014", str(media_rating)]
-
-    return righe, media_riga
 
 
 # ── Tabella competitor — deterministica, niente più AirROI/AI (Sessione 69) ──
@@ -3068,7 +2996,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             print(f"[AFFITTO-OMI] superficie dichiarata {_superficie_omi}m2 non plausibile per "
                   f"{_camere_omi} camere: ignorata, uso superficie tipica per tipologia")
             _superficie_omi = None
-        _omi_risultato = omi_canoni.stima_affitto_tradizionale(
+        _omi_risultato = omi_canoni.stima_canone_omi(
             _codice_istat_omi, _superficie_omi, data.get("tipologia")
         )
         print(f"[AFFITTO-OMI] comune={data.get('comune')!r} codice_istat={_codice_istat_omi!r} "

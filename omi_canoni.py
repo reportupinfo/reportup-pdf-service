@@ -78,13 +78,18 @@ def canone_omi_mq(codice_istat):
     return rec["loc_min_mq"], rec["loc_max_mq"], rec["n_zone"]
 
 
-def stima_affitto_tradizionale(codice_istat, superficie, tipologia):
+def stima_canone_omi(codice_istat, superficie, tipologia):
     """
     Calcola il confronto con l'affitto tradizionale usando il canone OMI
     reale. Ritorna (affitto_ricavo, affitto_costi, affitto_profitto, fonte)
     con fonte='omi_reale', oppure None se il comune non è coperto da OMI
     (il chiamante deve allora usare il fallback esistente, senza dichiarare
     la fonte come OMI).
+
+    Rinominata da stima_affitto_tradizionale (audit 23/8, finding #27):
+    stagionalita_turistica.py ha una funzione omonima ma diversa (fallback
+    su prezzo/notte AirROI invece che canone OMI reale) — stesso nome in
+    due moduli diversi creava rischio di confusione in manutenzione futura.
     """
     ris = canone_omi_mq(codice_istat)
     if ris is None:
