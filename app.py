@@ -903,10 +903,19 @@ def page1(c, D):
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Scheda immobile")
     y -= 2 * mm
     col_w = (W - 28 * mm) / 2
+    # Sessione 78 (audit 24/8): camere/bagni/posti letto arrivano come numero
+    # nudo ("1", "4" — corretti a monte da _camere_deterministiche/
+    # _posti_letto_default) mentre gli altri campi della scheda sono testo
+    # descrittivo pieno ("Ben tenuto e curato"). _concorda_numero aggiunge
+    # l'unità di misura solo per la resa grafica, senza toccare D — i calcoli
+    # a valle continuano a leggere il valore numerico originale da D.
     fields_l = [("Tipologia", D.get("tipologia", "")), ("Superficie", D.get("superficie", "")),
-                ("Piano", D.get("piano", "")), ("Stato", D.get("stato", "")), ("Camere", D.get("camere", ""))]
+                ("Piano", D.get("piano", "")), ("Stato", D.get("stato", "")),
+                ("Camere", _concorda_numero(D.get("camere", ""), "camera", "camere"))]
     fields_r = [("Comune", D.get("comune", "")), ("Zona", D.get("zona", "")),
-                ("Epoca", D.get("epoca", "")), ("Bagni", D.get("bagni", "")), ("Posti letto", D.get("posti_letto", ""))]
+                ("Epoca", D.get("epoca", "")),
+                ("Bagni", _concorda_numero(D.get("bagni", ""), "bagno", "bagni")),
+                ("Posti letto", _concorda_numero(D.get("posti_letto", ""), "posto letto", "posti letto"))]
     row_h = 7.5 * mm
     label_col_w = 28 * mm
     for i, ((ll, lv), (rl, rv)) in enumerate(zip(fields_l, fields_r)):
@@ -1281,7 +1290,7 @@ def page3(c, D):
         ["Voce", "Come viene calcolato", "Valore"],
         ["RICAVI", "", ""],
         ["Ricavo lordo annuo stimato",
-         f"€ {p}/notte x {occ_pct}% occ. x 365gg = € {p} x {notti} notti",
+         f"€ {p}/notte x {occ_pct}% occ. x 365gg = {notti} notti x € {p} = {fmt_eur(D.get('ricavo_lordo', 0))}",
          fmt_eur(D.get("ricavo_lordo", 0))],
         ["Bonus prenotazioni dirette",
          f"€ {D.get('ricavo_lordo',0):,} x {D.get('bonus_dirette_pct','5-10%')} = € {D.get('bonus_dirette',0):,}".replace(",", "."),
@@ -1395,7 +1404,7 @@ def page3(c, D):
     def _fmt_diff(delta):
         segno = "+" if delta >= 0 else "-"
         numero = f"{abs(int(delta)):,}".replace(",", ".")
-        return f"\u20ac {segno}{numero}"
+        return f"{segno}\u20ac {numero}"
 
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
@@ -2107,6 +2116,28 @@ def _impatto_deterministico(distanza_str, modalita="piedi"):
     return None
 
 
+_PAROLE_MINUSCOLE_NOMI_POI = {"di", "del", "della", "dei", "delle", "dello", "da", "dal", "dalla",
+                               "de", "e", "ed", "la", "le", "lo", "il", "i", "gli", "a", "al",
+                               "alla", "in"}
+
+
+def _titolo_nome_poi(nome):
+    """Google/l'AI a volte restituiscono il nome di un punto di interesse
+    tutto minuscolo (es. "ciro amodio" invece di "Ciro Amodio", osservato in
+    produzione). Capitalizza SOLO in questo caso \u2014 se il nome ha gi\u00e0 almeno
+    una maiuscola lo lasciamo intatto, perch\u00e9 nomi come "Duomo di Milano"
+    sono gi\u00e0 corretti e un title-case naive li romperebbe ("Duomo Di
+    Milano")."""
+    t = str(nome or "").strip()
+    if not t or t in ("\u2014", "-") or any(ch.isupper() for ch in t):
+        return nome
+    parole = t.split(" ")
+    out = [parole[0].capitalize()]
+    for w in parole[1:]:
+        out.append(w if w.lower() in _PAROLE_MINUSCOLE_NOMI_POI else w.capitalize())
+    return " ".join(out)
+
+
 def _correggi_poi_invertiti(poi):
     # Ordine fisso garantito dal prompt: 0=trasporto pubblico, 1=comune di
     # riferimento, 2=elemento caratteristico, 3=servizi essenziali.
@@ -2116,6 +2147,7 @@ def _correggi_poi_invertiti(poi):
         distanza, nome, impatto = (list(row) + ["\u2014", "\u2014", "\u2014"])[:3]
         if _sembra_etichetta_categoria(nome) and not _sembra_distanza(distanza):
             distanza, nome = nome, distanza
+        nome = _titolo_nome_poi(nome)
         modalita = _modalita_per_riga[idx] if idx < len(_modalita_per_riga) else "piedi"
         _impatto_calcolato = _impatto_deterministico(distanza, modalita)
         if _impatto_calcolato:
@@ -2231,9 +2263,13 @@ def genera_descrizione_standard(data):
     }
 
     if categoria == "grande_citta":
-        extra_territorio = f", {_chiusura_territorio[sottocateg]}," if sottocateg in _chiusura_territorio else ""
+        # Sessione 78 (audit 24/8): extra_territorio prima chiudeva con virgola
+        # propria E precedeva "da dentro,", producendo 3 virgole di fila
+        # ("città, affacciata sul mare, da dentro, con tutti..."). Spostato
+        # dopo "da dentro" per una lettura più scorrevole.
+        extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
         desc += (
-            f"Ideale per {target} che vogliono vivere la città{extra_territorio} da dentro, con tutti i comfort di casa. "
+            f"Ideale per {target} che vogliono vivere la città da dentro{extra_territorio}, con tutti i comfort di casa. "
             "La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ricche "
             "del paese, accessibile a piedi o con i mezzi direttamente dall'immobile."
         )
@@ -2761,15 +2797,11 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
     _calcola_costi_fissi_deterministici(data)
-    # Sessione 69/70 — log diagnostico temporaneo: il sovrapprezzo piscina/
-    # giardino su manutenzione non scatta in produzione nonostante le pills
-    # mostrino le dotazioni corrette. Serve vedere la lista grezza ricevuta
-    # dall'AI per capire dove si perde il match. Da rimuovere una volta
-    # risolto.
-    print(f"[DOTAZIONI-DEBUG] raw={data.get('dotazioni_presenti')!r} "
-          f"normalizzate={[_norm_dotazione(d) for d in (data.get('dotazioni_presenti') or [])]!r} "
-          f"ha_piscina={data.get('_costi_ha_piscina')} ha_giardino={data.get('_costi_ha_giardino')} "
-          f"manutenzione={data.get('costi_manutenzione')}")
+    # Sessione 69/70: il log diagnostico temporaneo che stava qui (dotazioni
+    # grezze/normalizzate/piscina/giardino) è stato rimosso in Sessione 78
+    # (audit 24/8) — il bug che doveva diagnosticare (normalizzazione dei
+    # nomi dotazioni PRIMA del check piscina/giardino) è già corretto sopra,
+    # in _calcola_costi_fissi_deterministici.
 
     # ── Confronto affitto tradizionale — ora da AirROI, non più da OMI ──
     # Sessione 68: rimosso l'appoggio ai canoni OMI (dato Salvatore: fuori
@@ -2866,6 +2898,17 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     data["competitor"] = _costruisci_competitor_deterministico(_p_new, data.get("tipologia"))
     data["fonte_competitor"] = "calcolo_interno"
 
+    # Sessione 78 (audit 24/8): il mutuo (rata mensile x 12 = costo annuo,
+    # invariato — il report ragiona sempre su base annua) veniva sommato ai
+    # costi qui sotto quando _p è valorizzato, E DI NUOVO in un blocco quasi
+    # identico a fine funzione, sempre se mutuo_attivo. Stesso risultato
+    # (nessun numero cambiava), solo calcolato due volte: rischio vero è che
+    # in futuro un costo aggiunto solo qui sopra sparisca silenziosamente,
+    # sovrascritto dal ricalcolo sotto che non lo conosce. Il flag evita la
+    # doppia esecuzione; il blocco a fine funzione resta SOLO per il caso
+    # _p mancante (fallback AI, mutuo mai sommato altrove in quel caso).
+    _mutuo_gia_incluso_nel_totale = False
+
     if _p:
         data["prezzo_notte_stimato"] = _p_new
         data["occupazione_percent"] = _occ_new
@@ -2895,6 +2938,8 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         _costi_utenze = data.get("costi_utenze", 0)
         _costi_manutenzione = data.get("costi_manutenzione", 0)
         _mutuo_annuo = data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0
+        if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
+            _mutuo_gia_incluso_nel_totale = True
 
         _totale_costi_new = (_costi_commissioni_new + _costi_pulizie_new
                               + _costi_biancheria + _costi_utenze
@@ -2919,9 +2964,14 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         # Python — es. "Media zona: 65-72%" accanto a un'occupazione REALE del
         # 47% per lo stesso immobile, un'incoerenza vistosa nello stesso
         # report. Ora la fascia è sempre ancorata al valore vero. Sessione 66.
-        data["kpi_prezzo_range"] = f"Range zona: € {max(1, round(_p_new * 0.75))}-{round(_p_new * 1.25)}"
-        _occ_range_min = max(5, round(_occ_new * 0.75))
-        _occ_range_max = min(_tetto_occ, round(_occ_new * 1.25))
+        # Banda ±25% -> ±20% (Sessione 78, audit 24/8): su richiesta di
+        # Salvatore, restretta di 5 punti perché troppo larga da sembrare
+        # poco credibile su un report a pagamento (es. "60-98%" di
+        # occupazione). Resta comunque un range simmetrico attorno al valore
+        # stimato, non un dato di mercato osservato riga per riga.
+        data["kpi_prezzo_range"] = f"Range zona: € {max(1, round(_p_new * 0.80))}-{round(_p_new * 1.20)}"
+        _occ_range_min = max(5, round(_occ_new * 0.80))
+        _occ_range_max = min(_tetto_occ, round(_occ_new * 1.20))
         data["kpi_occ_range"] = f"Media zona: {_occ_range_min}-{_occ_range_max}%"
 
         try:
@@ -3013,16 +3063,29 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
         )
         data["fonte_affitto_tradizionale"] = "stima_airroi"
 
+    # Sessione 78 (audit 24/8): la correzione POI (swap colonne invertite,
+    # impatto deterministico, casing nome) deve avvenire PRIMA della
+    # descrizione narrativa, non dopo — genera_descrizione_standard legge
+    # data["poi"] per le frasi su trasporto/servizi/elemento caratteristico,
+    # e prima girava sul dato grezzo non corretto (es. "ciro amodio" minuscolo
+    # finiva in descrizione anche quando la tabella POI mostrava già la
+    # versione sistemata).
+    if "poi" in data:
+        data["poi"] = _correggi_poi_invertiti(data["poi"])
+
     data["descrizione"] = genera_descrizione_standard(data)
 
     if "occupazione" in data:
         data["occupazione"] = [list(row) for row in data["occupazione"]]
-    if "poi" in data:
-        data["poi"] = _correggi_poi_invertiti(data["poi"])
     if "competitor" in data:
         data["competitor"] = [list(row) for row in data["competitor"]]
 
-    if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
+    # Fallback SOLO per il caso "_p" mancante (niente prezzo/notte, il ramo
+    # sopra non gira e il mutuo non è mai stato sommato): qui sotto è l'unico
+    # punto che lo aggiunge. Quando il ramo sopra è girato regolarmente
+    # (_mutuo_gia_incluso_nel_totale), il mutuo annuo (rata mensile x 12) è
+    # già nel totale — non si ricalcola una seconda volta.
+    if (not _mutuo_gia_incluso_nel_totale) and data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
         rata_annua = int(data["rata_mutuo_mensile"]) * 12
         costi_base = (
             data.get("costi_commissioni", 0) +
