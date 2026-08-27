@@ -396,19 +396,67 @@ def _calcola_moltiplicatori_dotazioni(data):
     data["moltiplicatori_dotazioni"] = righe
 
 
+def _calcola_scenari_durata_soggiorno(data):
+    """Solo Strategico (B7): stesso ricavo lordo/anno (occupazione e
+    prezzo/notte non cambiano — sono un dato di mercato, non una scelta
+    dell'host), ma cambi ospite/anno e quindi costi di pulizia molto diversi
+    a seconda della durata media soggiorno che l'host sceglie di accettare
+    (min-stay su Airbnb/Booking). Riusa la stessa formula cambi = notti /
+    durata già validata da _arricchisci_report_deterministico (Sessione 67)
+    — qui applicata a 3 durate fisse (breve/media reale di zona/lunga)
+    invece che alla sola media di categoria. Biancheria/utenze/manutenzione/
+    commissioni/mutuo restano costi fissi indipendenti dal numero di cambi
+    (nessun modello deterministico validato oggi per farli scalare)."""
+    prezzo = data.get("prezzo_notte_stimato") or 0
+    notti = data.get("notti_anno") or 0
+    ricavi_totali = data.get("totale_ricavi") or 0
+    if not (prezzo and notti and ricavi_totali):
+        return
+
+    pulizia_unit = data.get("costi_pulizie_unit", 35)
+    _costi_fissi = (
+        data.get("costi_commissioni", 0) + data.get("costi_biancheria", 0)
+        + data.get("costi_utenze", 0) + data.get("costi_manutenzione", 0)
+        + (data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0)
+    )
+    soggiorno_medio = data.get("soggiorno_medio_notti") or 2.5
+
+    def _scenario(label, durata, nota):
+        cambi = max(1, round(notti / durata))
+        costi_pulizie = round(pulizia_unit * cambi)
+        costi_totali = round(_costi_fissi + costi_pulizie)
+        profitto = ricavi_totali - costi_totali
+        return {
+            "label": label, "durata": durata, "cambi": cambi,
+            "costi_pulizie": costi_pulizie, "costi_totali": costi_totali,
+            "profitto_netto": profitto,
+            "margine": round(profitto / ricavi_totali * 100) if ricavi_totali else 0,
+            "nota": nota,
+        }
+
+    data["scenari_durata"] = [
+        _scenario("SOGGIORNI BREVI", 2,
+                  "Weekend, city break: min-stay 1-2 notti — massimo turnover, più pulizie"),
+        _scenario("SOGGIORNI MEDI", soggiorno_medio,
+                  f"Media reale della tua zona ({soggiorno_medio:g} notti) — scenario di riferimento del report"),
+        _scenario("SOGGIORNI LUNGHI", 7,
+                  "Min-stay settimanale: smart working, vacanze lunghe — turnover minimo"),
+    ]
+
+
 # Mappa statica (non generata dall'AI, come da principio del progetto: il
 # backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
 # obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
 # page_obiettivi in strategico.py. Numerazione allineata alla sequenza reale
-# in build_strategico_pdf_bytes (14 pagine): aggiornare qui se cambia
+# in build_strategico_pdf_bytes (15 pagine): aggiornare qui se cambia
 # l'ordine o il numero di pagine del PDF.
 _OBIETTIVI_PAGINE_STRATEGICO = {
-    "massimizzare_guadagno":    ("Pag. 6-8", "Moltiplicatori di valore e scenari economici"),
+    "massimizzare_guadagno":    ("Pag. 6-9", "Moltiplicatori di valore, scenari economici e durata soggiorno"),
     "confronto_affitto":        ("Pag. 7", "Confronto con l'affitto tradizionale"),
-    "primo_avvio":              ("Pag. 9", "Piano d'azione primi 90 giorni"),
+    "primo_avvio":              ("Pag. 10", "Piano d'azione primi 90 giorni"),
     "ottimizzare_esistente":    ("Pag. 6", "Moltiplicatori di valore — dotazioni"),
-    "valutazione_investimento": ("Pag. 11", "Valore immobile come asset B&B"),
-    "pianificazione_normativa": ("Pag. 10", "Normativa affitti brevi"),
+    "valutazione_investimento": ("Pag. 12", "Valore immobile come asset B&B"),
+    "pianificazione_normativa": ("Pag. 11", "Normativa affitti brevi"),
 }
 
 
@@ -3373,6 +3421,9 @@ def generate_strategico():
 
         # Moltiplicatori di valore (dotazioni) — solo Strategico, pag. 6.
         _calcola_moltiplicatori_dotazioni(data)
+
+        # 3 scenari per durata soggiorno (B7) — solo Strategico, pag. 9.
+        _calcola_scenari_durata_soggiorno(data)
 
         # Mappa obiettivo→pagina per page_obiettivi (deterministica, non AI).
         data["obiettivi_pagine"] = _OBIETTIVI_PAGINE_STRATEGICO

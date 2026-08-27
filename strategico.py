@@ -63,7 +63,7 @@ def draw_header(c, data):
     c.drawRightString(W - 14*mm, H - 13*mm,
         f"Generato: {data.get('data_generazione', '')}  \u00b7  Valido 90 giorni")
 
-def draw_footer(c, data, page_num, total=13):
+def draw_footer(c, data, page_num, total=15):
     footer_h = 9*mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(0, 0, W, footer_h, fill=1, stroke=0)
@@ -165,7 +165,7 @@ def wrap_simple(c, text, x, y, max_w, font, size, line_h, color=None):
 # ═══════════════════════════════════════════════════════════════════════════
 def page1(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 1, 14)
+    draw_footer(c, data, 1, 15)
     y = H - 22*mm
 
     # Pill REPORT STRATEGICO
@@ -315,7 +315,7 @@ def page1(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page2(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 2, 14)
+    draw_footer(c, data, 2, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Descrizione immobile")
@@ -354,7 +354,7 @@ def page2(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page3(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 3, 14)
+    draw_footer(c, data, 3, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Occupazione stagionale")
@@ -518,7 +518,7 @@ def page3(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4_manutenzione(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 5, 14)
+    draw_footer(c, data, 5, 15)
     y = H - 22*mm
 
     tipo = data.get('intervento_tipo', "nessuno")
@@ -757,7 +757,7 @@ def page4b_moltiplicatori(c, data):
     esiste un modello validato per quelli: aggiungerne uno qui sarebbe lo
     stesso problema appena tolto al resto del report (numeri inventati)."""
     draw_header(c, data)
-    draw_footer(c, data, 6, 14)
+    draw_footer(c, data, 6, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Moltiplicatori di valore - dotazioni")
@@ -826,7 +826,7 @@ def page4b_moltiplicatori(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 4, 14)
+    draw_footer(c, data, 4, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi economica annuale")
@@ -1026,7 +1026,7 @@ def page4(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page5(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 7, 14)
+    draw_footer(c, data, 7, 15)
     y = H - 22*mm
 
     # ── CONFRONTO AFFITTO TRADIZIONALE ──
@@ -1142,7 +1142,7 @@ def page5(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page6(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 10, 14)
+    draw_footer(c, data, 11, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
@@ -1200,7 +1200,7 @@ def page6(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page7(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 11, 14)
+    draw_footer(c, data, 12, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Valore immobile come asset B&B — Analisi professionale")
@@ -1315,7 +1315,7 @@ def page7(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page8(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 8, 14)
+    draw_footer(c, data, 8, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Tre scenari economici — proiezione annuale")
@@ -1432,12 +1432,118 @@ def page8(c, data):
     tbl_conf.drawOn(c, 14*mm, y - tbl_conf._height)
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PAG 8B — 3 scenari per durata soggiorno (B7)
+# ═══════════════════════════════════════════════════════════════════════════
+def page8b_durata(c, data):
+    """Solo Strategico (B7). Stesso ricavo lordo (occupazione/prezzo sono un
+    dato di mercato, non una scelta dell'host) nei 3 scenari — cambia solo
+    il numero di cambi ospite/anno e quindi i costi di pulizia, a seconda
+    del min-stay che l'host imposta su Airbnb/Booking. Dati precalcolati da
+    _calcola_scenari_durata_soggiorno in app.py."""
+    draw_header(c, data)
+    draw_footer(c, data, 9, 15)
+    y = H - 22*mm
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, "Quanto costa il turnover — 3 scenari per durata soggiorno")
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y, "Stesso ricavo lordo · costi di pulizia molto diversi a seconda del min-stay che scegli")
+    y -= 7*mm
+
+    scenari = data.get('scenari_durata') or []
+    if not scenari:
+        box_h = 22*mm
+        c.setFillColor(CREAM)
+        c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=1, stroke=0)
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(MUTED)
+        wrap_simple(c, "Dati insufficienti per calcolare gli scenari per durata soggiorno di questo immobile.", 18*mm, y - 12*mm, W - 40*mm, "Helvetica", 8.5, 4.5*mm, MUTED)
+        return
+
+    ricavi_lordi = data.get('totale_ricavi', 0)
+    colori = [GOLD, BLUE_PRIMARY, TEAL]
+    bg_col = [GOLD_LIGHT, HexColor("#E3F4FC"), TEAL_LIGHT]
+
+    box_w = (W - 34*mm) / 3
+    box_h = 90*mm
+
+    for i, (sc, col, bg) in enumerate(zip(scenari, colori, bg_col)):
+        bx = 14*mm + i*(box_w + 3*mm)
+        by = y - box_h
+        c.setFillColor(bg)
+        c.roundRect(bx, by, box_w, box_h, 3*mm, fill=1, stroke=0)
+        c.setStrokeColor(col)
+        c.setLineWidth(1.5)
+        c.roundRect(bx, by, box_w, box_h, 3*mm, fill=0, stroke=1)
+
+        c.setFillColor(col)
+        c.roundRect(bx, by+box_h-13*mm, box_w, 13*mm, 3*mm, fill=1, stroke=0)
+        c.rect(bx, by+box_h-13*mm, box_w, 6*mm, fill=1, stroke=0)
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(WHITE)
+        c.drawCentredString(bx+box_w/2, by+box_h-7*mm, sc["label"])
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(bx+box_w/2, by+box_h-11.5*mm, f"{sc['durata']:g} notti/soggiorno")
+
+        righe = [
+            ("Cambi ospite/anno",  str(sc["cambi"])),
+            ("Ricavi lordi",       fmt_eur(ricavi_lordi)),
+            ("Costi pulizia",      fmt_eur(sc["costi_pulizie"])),
+            ("Costi totali",       fmt_eur(sc["costi_totali"])),
+            ("Profitto netto",     fmt_eur(sc["profitto_netto"])),
+            ("Margine",            f"{sc['margine']}%"),
+        ]
+        dy = by + box_h - 18*mm
+        for lbl, val in righe:
+            c.setFont("Helvetica", 7)
+            c.setFillColor(MUTED)
+            c.drawString(bx+4*mm, dy, lbl)
+            c.setFont("Helvetica-Bold", 8)
+            c.setFillColor(col if lbl == "Profitto netto" else BLUE_NIGHT)
+            c.drawRightString(bx+box_w-4*mm, dy, val)
+            c.setStrokeColor(BORDER)
+            c.setLineWidth(0.3)
+            c.line(bx+4*mm, dy-2*mm, bx+box_w-4*mm, dy-2*mm)
+            dy -= 10*mm
+
+        words = sc["nota"].split()
+        line, ny = "", by + 8*mm
+        for w in words:
+            test = line + (" " if line else "") + w
+            if c.stringWidth(test, "Helvetica-Oblique", 6) > box_w - 8*mm:
+                c.setFont("Helvetica-Oblique", 6)
+                c.setFillColor(MUTED)
+                c.drawString(bx+4*mm, ny, line)
+                ny -= 3.5*mm
+                line = w
+            else:
+                line = test
+        if line:
+            c.setFont("Helvetica-Oblique", 6)
+            c.setFillColor(MUTED)
+            c.drawString(bx+4*mm, ny, line)
+
+    y -= box_h + 8*mm
+
+    disc_h = 16*mm
+    c.setFillColor(GOLD_LIGHT)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
+    c.setFont("Helvetica-Bold", 8)
+    c.setFillColor(GOLD)
+    c.drawString(18*mm, y - 6*mm, "Come leggere questa pagina")
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(BLUE_NIGHT)
+    wrap_simple(c, "Il ricavo lordo non cambia: occupazione e prezzo/notte sono un dato di mercato, non una scelta dell'host. A cambiare e' solo il numero di cambi ospite/anno (e quindi i costi di pulizia) in base al min-stay che imposti su Airbnb/Booking: piu' soggiorni brevi accetti, piu' pulizie paghi.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 9 — Piano d'azione 90 giorni
 # ═══════════════════════════════════════════════════════════════════════════
 def page9(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 9, 14)
+    draw_footer(c, data, 10, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano d’azione — primi 90 giorni")
@@ -1571,7 +1677,7 @@ def page9(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page10(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 12, 14)
+    draw_footer(c, data, 13, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi personale — Arch. Salvatore Junior Sica")
@@ -1634,7 +1740,7 @@ def page10(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page11(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 14, 14)
+    draw_footer(c, data, 15, 15)
     y = H - 22*mm
 
     y -= 5*mm
@@ -1751,7 +1857,7 @@ def page11(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page_obiettivi(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 13, 14)
+    draw_footer(c, data, 14, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "I tuoi obiettivi — dove trovare le risposte")
@@ -1852,7 +1958,7 @@ def build_strategico_pdf_bytes(data):
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle("ReportUp — Report Strategico")
     c.setAuthor("Arch. Salvatore Junior Sica · ReportUp")
-    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page9, page6, page7, page10, page_obiettivi, page11]:
+    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page8b_durata, page9, page6, page7, page10, page_obiettivi, page11]:
         page_fn(c, data)
         c.showPage()
     c.save()
