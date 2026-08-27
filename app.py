@@ -3390,6 +3390,50 @@ def extract_report_fields():
         return jsonify({"error": str(e), "raw_preview": raw[:500] if raw else ""}), 500
 
 
+@app.route("/extract-strategico-fields", methods=["POST"])
+@require_internal_secret
+def extract_strategico_fields():
+    """Come /extract-report-fields ma per lo Strategico: usa la pipeline
+    deterministica con gli stessi parametri di /generate-strategico
+    (generare_descrizione=False, correggere_poi=False), non quella del
+    Base — altrimenti le pillole economiche nell'email (prezzo/occupazione/
+    profitto) userebbero un motore diverso da quello che genera i numeri
+    reali nel PDF allegato alla stessa email, stesso bug di disallineamento
+    già risolto una volta tra Base e Strategico (riapertura cantiere,
+    27/8). Non genera nessun PDF."""
+    raw = ""
+    try:
+        import json as _json
+        import re as _re
+        body = request.get_json(force=True, silent=True) or {}
+        raw = body.get("testo", "")
+        if not raw:
+            return jsonify({"error": "Campo 'testo' mancante o vuoto nel body"}), 400
+
+        cleaned = raw.strip()
+        m = _re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, _re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+        else:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end+1]
+
+        data = _json.loads(cleaned)
+        data = normalize_data(data)
+        data = _arricchisci_report_deterministico(
+            data,
+            lat=request.args.get("lat"), long=request.args.get("long"),
+            generare_descrizione=False, correggere_poi=False,
+        )
+        risultato = {campo: data.get(campo) for campo in _CAMPI_ECONOMICI_EMAIL}
+        return jsonify(risultato)
+
+    except Exception as e:
+        return jsonify({"error": str(e), "raw_preview": raw[:500] if raw else ""}), 500
+
+
 @app.route("/debug-airroi-raw", methods=["GET"])
 @require_internal_secret
 def debug_airroi_raw():
