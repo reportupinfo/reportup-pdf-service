@@ -3317,6 +3317,49 @@ def extract_report_fields():
         return jsonify({"error": str(e), "raw_preview": raw[:500] if raw else ""}), 500
 
 
+@app.route("/debug-airroi-raw", methods=["GET"])
+@require_internal_secret
+def debug_airroi_raw():
+    """Diagnostico, non usato dal flusso di produzione (B9 - 'Punto 0'):
+    risposta AirROI GREZZA e NON troncata, senza passare da
+    _airroi_lookup_e_stima (che tiene solo adr/occupancy/distribuzione
+    mensile/comparable_listings/percentili revenue e scarta il resto). I log
+    di produzione troncano il body a 300 caratteri (vedi r2.text[:300] nella
+    lookup normale) — mai bastato per vedere se l'API offre anche percentili
+    prezzo/ADR, split host privati/gestionali, trend TTM/L90D prima di
+    costruire la pagina B9 del Report Strategico."""
+    lat = request.args.get("lat")
+    lng = request.args.get("lng") or request.args.get("long")
+    if not AIRROI_API_KEY:
+        return jsonify({"error": "AIRROI_API_KEY non configurata lato server"}), 500
+    if not lat or not lng:
+        return jsonify({"error": "Parametri 'lat' e 'lng' obbligatori"}), 400
+    try:
+        lat_f, lng_f = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return jsonify({"error": "lat/lng non convertibili in float"}), 400
+
+    bedrooms = _numero_da_stringa(request.args.get("bedrooms"), default=1)
+    guests = _numero_da_stringa(request.args.get("guests"), default=2)
+    baths = _numero_da_stringa(request.args.get("baths"), default=1)
+    headers = {"X-API-KEY": AIRROI_API_KEY}
+
+    r1 = requests.get(f"{AIRROI_BASE}/markets/lookup",
+                       params={"lat": lat_f, "lng": lng_f}, headers=headers, timeout=8)
+    r2 = requests.get(
+        f"{AIRROI_BASE}/calculator/estimate",
+        params={"lat": lat_f, "lng": lng_f, "bedrooms": bedrooms, "baths": baths,
+                 "guests": guests, "currency": "native"},
+        headers=headers, timeout=10,
+    )
+    return jsonify({
+        "markets_lookup": {"status": r1.status_code,
+                            "body": r1.json() if r1.status_code == 200 else r1.text},
+        "calculator_estimate": {"status": r2.status_code,
+                                 "body": r2.json() if r2.status_code == 200 else r2.text},
+    })
+
+
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
 from strategico import build_strategico_pdf_bytes
 
