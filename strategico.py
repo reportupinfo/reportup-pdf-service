@@ -63,7 +63,7 @@ def draw_header(c, data):
     c.drawRightString(W - 14*mm, H - 13*mm,
         f"Generato: {data.get('data_generazione', '')}  \u00b7  Valido 90 giorni")
 
-def draw_footer(c, data, page_num, total=15):
+def draw_footer(c, data, page_num, total=16):
     footer_h = 9*mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(0, 0, W, footer_h, fill=1, stroke=0)
@@ -165,7 +165,7 @@ def wrap_simple(c, text, x, y, max_w, font, size, line_h, color=None):
 # ═══════════════════════════════════════════════════════════════════════════
 def page1(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 1, 15)
+    draw_footer(c, data, 1, 16)
     y = H - 22*mm
 
     # Pill REPORT STRATEGICO
@@ -315,7 +315,7 @@ def page1(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page2(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 2, 15)
+    draw_footer(c, data, 2, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Descrizione immobile")
@@ -354,7 +354,7 @@ def page2(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page3(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 3, 15)
+    draw_footer(c, data, 3, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Occupazione stagionale")
@@ -518,7 +518,7 @@ def page3(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4_manutenzione(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 5, 15)
+    draw_footer(c, data, 5, 16)
     y = H - 22*mm
 
     tipo = data.get('intervento_tipo', "nessuno")
@@ -757,7 +757,7 @@ def page4b_moltiplicatori(c, data):
     esiste un modello validato per quelli: aggiungerne uno qui sarebbe lo
     stesso problema appena tolto al resto del report (numeri inventati)."""
     draw_header(c, data)
-    draw_footer(c, data, 6, 15)
+    draw_footer(c, data, 6, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Moltiplicatori di valore - dotazioni")
@@ -826,7 +826,7 @@ def page4b_moltiplicatori(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 4, 15)
+    draw_footer(c, data, 4, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi economica annuale")
@@ -1026,7 +1026,7 @@ def page4(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page5(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 7, 15)
+    draw_footer(c, data, 7, 16)
     y = H - 22*mm
 
     # ── CONFRONTO AFFITTO TRADIZIONALE ──
@@ -1142,7 +1142,7 @@ def page5(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page6(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 11, 15)
+    draw_footer(c, data, 12, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
@@ -1200,7 +1200,7 @@ def page6(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page7(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 12, 15)
+    draw_footer(c, data, 13, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Valore immobile come asset B&B — Analisi professionale")
@@ -1315,7 +1315,7 @@ def page7(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page8(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 8, 15)
+    draw_footer(c, data, 8, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Tre scenari economici — proiezione annuale")
@@ -1441,7 +1441,7 @@ def page8b_durata(c, data):
     del min-stay che l'host imposta su Airbnb/Booking. Dati precalcolati da
     _calcola_scenari_durata_soggiorno in app.py."""
     draw_header(c, data)
-    draw_footer(c, data, 9, 15)
+    draw_footer(c, data, 9, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Quanto costa il turnover — 3 scenari per durata soggiorno")
@@ -1538,12 +1538,167 @@ def page8b_durata(c, data):
     wrap_simple(c, "Il ricavo lordo non cambia: occupazione e prezzo/notte sono un dato di mercato, non una scelta dell'host. A cambiare e' solo il numero di cambi ospite/anno (e quindi i costi di pulizia) in base al min-stay che imposti su Airbnb/Booking: piu' soggiorni brevi accetti, piu' pulizie paghi.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PAG 8C — Dati di mercato extra (B9)
+# ═══════════════════════════════════════════════════════════════════════════
+def _posiziona_percentile(valore, perc):
+    p25, p50, p75, p90 = perc.get('p25', 0), perc.get('p50', 0), perc.get('p75', 0), perc.get('p90', 0)
+    if valore < p25:   return "sotto il 25° percentile di zona"
+    if valore < p50:   return "tra il 25° e il 50° percentile di zona"
+    if valore < p75:   return "tra il 50° e il 75° percentile di zona"
+    if valore < p90:   return "tra il 75° e il 90° percentile di zona"
+    return "sopra il 90° percentile di zona"
+
+def page8c_mercato(c, data):
+    """Solo Strategico (B9). Percentili prezzo/occupazione, split gestione
+    professionale/privata e posizionamento stagionale (ultimi 90gg vs media
+    12 mesi) sui comparabili reali AirROI della zona — dati sempre esistiti
+    nella risposta API ma mai letti fino a quando una chiamata reale via
+    /debug-airroi-raw non ne ha confermato la struttura (RU_Log_Sessione_
+    2026-08-27, 'Punto 0'). Ogni sezione si nasconde da sola se il dato non
+    e' disponibile per questa zona (AirROI non copre tutti i comuni)."""
+    draw_header(c, data)
+    draw_footer(c, data, 10, 16)
+    y = H - 22*mm
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, "Dati di mercato extra — comparabili reali della tua zona")
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y, "Percentili, tipo di gestione e stagionalità — stesso motore AirROI del resto del report")
+    y -= 7*mm
+
+    perc_p = data.get('percentili_prezzo')
+    perc_o = data.get('percentili_occupazione')
+    pct_gest = data.get('pct_gestione_professionale')
+    n_gest = data.get('n_comparabili_gestione') or 0
+    trend = data.get('trend_stagionale')
+
+    if not (perc_p or perc_o or pct_gest is not None or trend):
+        box_h = 26*mm
+        c.setFillColor(CREAM)
+        c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=1, stroke=0)
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillColor(MUTED)
+        c.drawString(18*mm, y - 8*mm, "Dati di mercato extra non disponibili per questa zona")
+        c.setFont("Helvetica", 8)
+        wrap_simple(c, "AirROI non ha comparabili sufficienti su questo comune per calcolare percentili, tipo di gestione o posizionamento stagionale. Il resto del report (prezzo, occupazione, scenari) resta affidabile: usa gli stessi dati di zona a livello aggregato, dove disponibili.", 18*mm, y - 14*mm, W - 40*mm, "Helvetica", 8, 4.5*mm, BLUE_NIGHT)
+        return
+
+    # ── Sezione A: percentili prezzo/occupazione ──
+    if perc_p or perc_o:
+        y = draw_section_header(c, 14*mm, y, W - 28*mm, "Percentili reali di zona — prezzo e occupazione")
+        y -= 5*mm
+        tbl_data = [["", "Prezzo/notte", "Occupazione"]]
+        for label, key in [("P25 (fascia bassa)", 'p25'), ("Mediana (P50)", 'p50'),
+                            ("P75 (fascia alta)", 'p75'), ("P90 (top di zona)", 'p90')]:
+            riga_prezzo = f"EUR {perc_p[key]}" if perc_p else "n/d"
+            riga_occ = f"{perc_o[key]}%" if perc_o else "n/d"
+            tbl_data.append([label, riga_prezzo, riga_occ])
+        col_w = [(W-28*mm)*0.42, (W-28*mm)*0.29, (W-28*mm)*0.29]
+        tbl = Table(tbl_data, colWidths=col_w)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
+            ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
+            ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0,0), (-1,-1), 8),
+            ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
+            ("TEXTCOLOR",     (0,1), (-1,-1), BLUE_NIGHT),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, CREAM]),
+            ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
+            ("TOPPADDING",    (0,0), (-1,-1), 4.5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4.5),
+            ("LEFTPADDING",   (0,0), (-1,-1), 5),
+            ("ALIGN",         (1,0), (-1,-1), "CENTER"),
+        ]))
+        tbl.wrapOn(c, W-28*mm, 200)
+        tbl.drawOn(c, 14*mm, y - tbl._height)
+        y -= tbl._height + 3*mm
+
+        note_bits = []
+        if perc_p and data.get('prezzo_notte_stimato'):
+            note_bits.append(f"Il tuo prezzo/notte (EUR {data['prezzo_notte_stimato']}) e' {_posiziona_percentile(data['prezzo_notte_stimato'], perc_p)}.")
+        if perc_o and data.get('occupazione_percent') is not None:
+            note_bits.append(f"La tua occupazione ({data['occupazione_percent']}%) e' {_posiziona_percentile(data['occupazione_percent'], perc_o)}.")
+        if note_bits:
+            c.setFont("Helvetica-Oblique", 7.5)
+            c.setFillColor(MUTED)
+            y = wrap_simple(c, " ".join(note_bits), 14*mm, y - 2*mm, W - 28*mm, "Helvetica-Oblique", 7.5, 4*mm, MUTED)
+        y -= 5*mm
+
+    # ── Sezione B: gestione professionale vs privata ──
+    if pct_gest is not None:
+        y = draw_section_header(c, 14*mm, y, W - 28*mm, "Chi gestisce gli annunci in questa zona")
+        y -= 3*mm
+        draw_section_subtitle(c, 14*mm, y, f"Campione: {n_gest} annunci comparabili reali")
+        y -= 7*mm
+
+        card_w = (W - 32*mm) / 2
+        card_h = 22*mm
+        cards = [("Gestione professionale", f"{pct_gest}%", GOLD, GOLD_LIGHT),
+                 ("Host privati", f"{100 - pct_gest}%", TEAL, TEAL_LIGHT)]
+        for i, (lbl, val, col, bg) in enumerate(cards):
+            cx = 14*mm + i*(card_w + 4*mm)
+            c.setFillColor(bg)
+            c.roundRect(cx, y - card_h, card_w, card_h, 3*mm, fill=1, stroke=0)
+            c.setStrokeColor(col)
+            c.setLineWidth(1)
+            c.roundRect(cx, y - card_h, card_w, card_h, 3*mm, fill=0, stroke=1)
+            c.setFont("Helvetica-Bold", 15)
+            c.setFillColor(col)
+            c.drawCentredString(cx + card_w/2, y - 10*mm, val)
+            c.setFont("Helvetica", 8)
+            c.setFillColor(BLUE_NIGHT)
+            c.drawCentredString(cx + card_w/2, y - 17*mm, lbl)
+        y -= card_h + 8*mm
+
+    # ── Sezione C: posizionamento stagionale ──
+    if trend:
+        y = draw_section_header(c, 14*mm, y, W - 28*mm, "Posizionamento stagionale — ultimi 90 giorni vs media 12 mesi")
+        y -= 3*mm
+        draw_section_subtitle(c, 14*mm, y, "Non e' un trend pluriennale: confronta la stagione corrente con la media dell'intero anno")
+        y -= 6*mm
+
+        trend_data = [
+            ["Indicatore", "Ultimi 90 giorni", "Media 12 mesi (TTM)"],
+            ["Occupazione media", f"{trend['occupazione_l90d']}%", f"{trend['occupazione_ttm']}%"],
+            ["Prezzo medio/notte", f"EUR {trend['prezzo_l90d']}", f"EUR {trend['prezzo_ttm']}"],
+            ["RevPAR", f"EUR {trend['revpar_l90d']}", f"EUR {trend['revpar_ttm']}"],
+        ]
+        col_w_t = [(W-28*mm)*0.34, (W-28*mm)*0.33, (W-28*mm)*0.33]
+        tbl_t = Table(trend_data, colWidths=col_w_t)
+        tbl_t.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
+            ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
+            ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0,0), (-1,-1), 8),
+            ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
+            ("TEXTCOLOR",     (0,1), (-1,-1), BLUE_NIGHT),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, CREAM]),
+            ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
+            ("TOPPADDING",    (0,0), (-1,-1), 4.5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4.5),
+            ("LEFTPADDING",   (0,0), (-1,-1), 5),
+            ("ALIGN",         (1,0), (-1,-1), "CENTER"),
+        ]))
+        tbl_t.wrapOn(c, W-28*mm, 200)
+        tbl_t.drawOn(c, 14*mm, y - tbl_t._height)
+        y -= tbl_t._height + 8*mm
+
+    disc_h = 14*mm
+    c.setFillColor(GOLD_LIGHT)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(BLUE_NIGHT)
+    wrap_simple(c, "Dati aggregati sui comparabili reali restituiti da AirROI per questa zona (stesso motore che calcola prezzo/occupazione del tuo immobile) — non stime AI.", 18*mm, y - 6*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 9 — Piano d'azione 90 giorni
 # ═══════════════════════════════════════════════════════════════════════════
 def page9(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 10, 15)
+    draw_footer(c, data, 11, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano d’azione — primi 90 giorni")
@@ -1677,7 +1832,7 @@ def page9(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page10(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 13, 15)
+    draw_footer(c, data, 14, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi personale — Arch. Salvatore Junior Sica")
@@ -1740,7 +1895,7 @@ def page10(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page11(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 15, 15)
+    draw_footer(c, data, 16, 16)
     y = H - 22*mm
 
     y -= 5*mm
@@ -1857,7 +2012,7 @@ def page11(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page_obiettivi(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 14, 15)
+    draw_footer(c, data, 15, 16)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "I tuoi obiettivi — dove trovare le risposte")
@@ -1958,7 +2113,7 @@ def build_strategico_pdf_bytes(data):
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle("ReportUp — Report Strategico")
     c.setAuthor("Arch. Salvatore Junior Sica · ReportUp")
-    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page8b_durata, page9, page6, page7, page10, page_obiettivi, page11]:
+    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page8b_durata, page8c_mercato, page9, page6, page7, page10, page_obiettivi, page11]:
         page_fn(c, data)
         c.showPage()
     c.save()

@@ -354,13 +354,75 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
                 "p75": float(_perc_rev["p75"]), "p90": float(_perc_rev.get("p90") or 0),
             }
 
-        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0} percentili_revenue={'presente' if percentili_revenue else 'assente'}")
+        # Percentili prezzo/occupazione zona (B9, Sessione 79) — stessa fonte
+        # di percentili_revenue sopra (mai usata nel PDF finora), qui invece
+        # letta anche per average_daily_rate/occupancy: catturata una
+        # risposta reale non troncata (via /debug-airroi-raw) per verificare
+        # che questi campi esistessero davvero prima di costruirci sopra una
+        # pagina — vedi RU_Log_Sessione_2026-08-27.
+        _perc = stima.get("percentiles") if isinstance(stima.get("percentiles"), dict) else {}
+        _perc_adr = _perc.get("average_daily_rate") if isinstance(_perc.get("average_daily_rate"), dict) else None
+        percentili_prezzo = None
+        if isinstance(_perc_adr, dict) and _perc_adr.get("p25") and _perc_adr.get("p75"):
+            percentili_prezzo = {
+                "p25": round(_perc_adr["p25"]), "p50": round(_perc_adr.get("p50") or 0),
+                "p75": round(_perc_adr["p75"]), "p90": round(_perc_adr.get("p90") or 0),
+            }
+        _perc_occ = _perc.get("occupancy") if isinstance(_perc.get("occupancy"), dict) else None
+        percentili_occupazione = None
+        if isinstance(_perc_occ, dict) and _perc_occ.get("p25") and _perc_occ.get("p75"):
+            percentili_occupazione = {
+                "p25": round(_perc_occ["p25"] * 100), "p50": round((_perc_occ.get("p50") or 0) * 100),
+                "p75": round(_perc_occ["p75"] * 100), "p90": round((_perc_occ.get("p90") or 0) * 100),
+            }
+
+        # Split gestione professionale/privata e posizionamento stagionale
+        # (ultimi 90gg vs media 12 mesi) sugli stessi comparable_listings
+        # reali già usati altrove (prezzo per tipologia). Soglia più alta (5)
+        # di quella per il prezzo (3): qui il dato è una percentuale/media
+        # aggregata, serve un campione un po' più solido per non essere
+        # rumore. NON è un trend pluriennale — L90D è la stagione corrente,
+        # TTM la media dell'intero anno: la pagina deve essere onesta su
+        # questo, non spacciarlo per "il mercato sta crescendo".
+        _cl_raw = stima.get("comparable_listings")
+        pct_gestione_professionale = None
+        n_comparabili_gestione = 0
+        trend_stagionale = None
+        if isinstance(_cl_raw, list) and len(_cl_raw) >= 5:
+            _annunci_dict = [a for a in _cl_raw if isinstance(a, dict)]
+            n_comparabili_gestione = len(_annunci_dict)
+            _prof = [1 for a in _annunci_dict
+                     if a.get("host_info", {}).get("professional_management") is True]
+            pct_gestione_professionale = round(100 * len(_prof) / n_comparabili_gestione) if n_comparabili_gestione else None
+
+            def _media_metrica(chiave):
+                valori = [a["performance_metrics"][chiave] for a in _annunci_dict
+                          if isinstance(a.get("performance_metrics"), dict)
+                          and isinstance(a["performance_metrics"].get(chiave), (int, float))]
+                return (sum(valori) / len(valori)) if valori else None
+
+            _occ_ttm, _occ_l90d = _media_metrica("ttm_occupancy"), _media_metrica("l90d_occupancy")
+            _adr_ttm, _adr_l90d = _media_metrica("ttm_avg_rate"), _media_metrica("l90d_avg_rate")
+            _revpar_ttm, _revpar_l90d = _media_metrica("ttm_revpar"), _media_metrica("l90d_revpar")
+            if None not in (_occ_ttm, _occ_l90d, _adr_ttm, _adr_l90d, _revpar_ttm, _revpar_l90d):
+                trend_stagionale = {
+                    "occupazione_ttm": round(_occ_ttm * 100), "occupazione_l90d": round(_occ_l90d * 100),
+                    "prezzo_ttm": round(_adr_ttm), "prezzo_l90d": round(_adr_l90d),
+                    "revpar_ttm": round(_revpar_ttm), "revpar_l90d": round(_revpar_l90d),
+                }
+
+        print(f"[AIRROI] OK — prezzo={round(float(adr))} occupazione={round(float(occ) * 100)}% distribuzione_mensile={'presente' if distribuzione_mensile else 'assente'} comparable_listings={len(comparable_listings) if comparable_listings else 0} percentili_revenue={'presente' if percentili_revenue else 'assente'} percentili_prezzo={'presente' if percentili_prezzo else 'assente'} gestione_prof={pct_gestione_professionale} trend_stagionale={'presente' if trend_stagionale else 'assente'}")
         risultato = {
             "prezzo_notte_stimato": round(float(adr)),
             "occupazione_percent": round(float(occ) * 100),
             "distribuzione_mensile": distribuzione_mensile,
             "comparable_listings": comparable_listings,
             "percentili_revenue": percentili_revenue,
+            "percentili_prezzo": percentili_prezzo,
+            "percentili_occupazione": percentili_occupazione,
+            "pct_gestione_professionale": pct_gestione_professionale,
+            "n_comparabili_gestione": n_comparabili_gestione,
+            "trend_stagionale": trend_stagionale,
             "occupazione_frazione": float(occ),
         }
         _AIRROI_CACHE[_cache_key] = (time.monotonic(), risultato)
@@ -448,15 +510,15 @@ def _calcola_scenari_durata_soggiorno(data):
 # backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
 # obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
 # page_obiettivi in strategico.py. Numerazione allineata alla sequenza reale
-# in build_strategico_pdf_bytes (15 pagine): aggiornare qui se cambia
+# in build_strategico_pdf_bytes (16 pagine): aggiornare qui se cambia
 # l'ordine o il numero di pagine del PDF.
 _OBIETTIVI_PAGINE_STRATEGICO = {
-    "massimizzare_guadagno":    ("Pag. 6-9", "Moltiplicatori di valore, scenari economici e durata soggiorno"),
+    "massimizzare_guadagno":    ("Pag. 6-10", "Moltiplicatori di valore, scenari economici, durata soggiorno e dati di mercato extra"),
     "confronto_affitto":        ("Pag. 7", "Confronto con l'affitto tradizionale"),
-    "primo_avvio":              ("Pag. 10", "Piano d'azione primi 90 giorni"),
+    "primo_avvio":              ("Pag. 11", "Piano d'azione primi 90 giorni"),
     "ottimizzare_esistente":    ("Pag. 6", "Moltiplicatori di valore — dotazioni"),
-    "valutazione_investimento": ("Pag. 12", "Valore immobile come asset B&B"),
-    "pianificazione_normativa": ("Pag. 11", "Normativa affitti brevi"),
+    "valutazione_investimento": ("Pag. 13", "Valore immobile come asset B&B"),
+    "pianificazione_normativa": ("Pag. 12", "Normativa affitti brevi"),
 }
 
 
@@ -2988,6 +3050,17 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         camere_raw=data.get("camere"), posti_letto_raw=data.get("posti_letto"),
         bagni_raw=data.get("bagni"),
     )
+
+    # Dati di mercato extra (B9) — solo Strategico li mostra (nuova pagina
+    # in strategico.py), ma il campo viene popolato qui perché è la stessa
+    # chiamata AirROI condivisa col Base; il Base semplicemente non li legge
+    # mai (hardening .get() ovunque), zero rischio di regressione su di lui.
+    if _airroi:
+        for _campo in ("percentili_prezzo", "percentili_occupazione",
+                       "pct_gestione_professionale", "n_comparabili_gestione",
+                       "trend_stagionale"):
+            if _airroi.get(_campo) is not None:
+                data[_campo] = _airroi[_campo]
 
     # Correttivo occupazione AirROI — Sessione 65, differenziato per
     # categoria (vedi stagionalita_turistica.py per fonti e ragionamento).
