@@ -61,7 +61,7 @@ def draw_header(c, data):
     c.setFont("Helvetica", 7)
     c.setFillColor(HexColor("#A8BCC8"))
     c.drawRightString(W - 14*mm, H - 13*mm,
-        f"Generato: {data['data_generazione']}  \u00b7  Valido 90 giorni")
+        f"Generato: {data.get('data_generazione', '')}  \u00b7  Valido 90 giorni")
 
 def draw_footer(c, data, page_num, total=13):
     footer_h = 9*mm
@@ -165,7 +165,7 @@ def wrap_simple(c, text, x, y, max_w, font, size, line_h, color=None):
 # ═══════════════════════════════════════════════════════════════════════════
 def page1(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 1, 13)
+    draw_footer(c, data, 1, 14)
     y = H - 22*mm
 
     # Pill REPORT STRATEGICO
@@ -196,7 +196,7 @@ def page1(c, data):
     c.rect(14*mm, y - box_h, W - 28*mm, box_h, fill=1, stroke=0)
     c.setFont("Helvetica-Bold", 20)
     c.setFillColor(WHITE)
-    c.drawCentredString(W/2, y - box_h/2 - 3.5*mm, data["indirizzo"])
+    c.drawCentredString(W/2, y - box_h/2 - 3.5*mm, data.get('indirizzo', ''))
     y -= box_h + 5*mm
 
     # Placeholder mappa
@@ -211,7 +211,7 @@ def page1(c, data):
     c.drawCentredString(W/2, y - map_h/2 + 3*mm, "\U0001f4cd  Posizione geografica immobile")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(MUTED)
-    c.drawCentredString(W/2, y - map_h/2 - 3*mm, f"{data['indirizzo']}  \u00b7  {data['zona']}")
+    c.drawCentredString(W/2, y - map_h/2 - 3*mm, f"{data.get('indirizzo', '')}  \u00b7  {data.get('zona', '')}")
     c.setFont("Helvetica-Oblique", 7)
     c.drawCentredString(W/2, y - map_h/2 - 8*mm, "La mappa interattiva sar\u00e0 integrata nella versione finale")
     y -= map_h + 5*mm
@@ -223,18 +223,18 @@ def page1(c, data):
     col_w = (W - 28*mm) / 2
     label_col_w = 28*mm
     fields_l = [
-        ("Tipologia",  data["tipologia"]),
-        ("Superficie", data["superficie"]),
-        ("Piano",      data["piano"]),
-        ("Stato",      data["stato"]),
-        ("Camere",     data["camere"]),
+        ("Tipologia",  data.get('tipologia', '')),
+        ("Superficie", data.get('superficie', '')),
+        ("Piano",      data.get('piano', '')),
+        ("Stato",      data.get('stato', '')),
+        ("Camere",     data.get('camere', '')),
     ]
     fields_r = [
-        ("Comune",      data["comune"]),
-        ("Zona",        data["zona"]),
-        ("Epoca",       data["epoca"]),
-        ("Bagni",       data["bagni"]),
-        ("Posti letto", data["posti_letto"]),
+        ("Comune",      data.get('comune', '')),
+        ("Zona",        data.get('zona', '')),
+        ("Epoca",       data.get('epoca', '')),
+        ("Bagni",       data.get('bagni', '')),
+        ("Posti letto", data.get('posti_letto', '')),
     ]
 
     row_h = 7.5*mm
@@ -273,8 +273,8 @@ def page1(c, data):
     y -= 5*mm
     px = 14*mm
     pill_h = 5.5*mm
-    for d in data["dotazioni_presenti"] + data["dotazioni_assenti"]:
-        presente = d in data["dotazioni_presenti"]
+    for d in data.get('dotazioni_presenti', []) + data.get('dotazioni_assenti', []):
+        presente = d in data.get('dotazioni_presenti', [])
         c.setFont("Helvetica-Bold" if presente else "Helvetica", 7)
         tw = c.stringWidth(d, "Helvetica-Bold" if presente else "Helvetica", 7)
         pw = tw + 6*mm
@@ -294,10 +294,10 @@ def page1(c, data):
     c.drawString(14*mm, y, "Situazione attuale dichiarata")
     y -= 5*mm
     situazioni = [
-        (f"Immobile vuoto: {'SI' if data['situazione_vuoto'] else 'NO'}",      data["situazione_vuoto"]),
-        (f"Inquilini attivi: {'SI' if data['situazione_inquilini'] else 'NO'}", data["situazione_inquilini"]),
-        (f"B&B gi\u00e0 attivo: {'SI' if data['situazione_bnb'] else 'NO'}",   data["situazione_bnb"]),
-        (f"Mutuo attivo: {'SI' if data['situazione_mutuo'] else 'NO'}",         data["situazione_mutuo"]),
+        (f"Immobile vuoto: {'SI' if data.get('situazione_vuoto', False) else 'NO'}",      data.get('situazione_vuoto', False)),
+        (f"Inquilini attivi: {'SI' if data.get('situazione_inquilini', False) else 'NO'}", data.get('situazione_inquilini', False)),
+        (f"B&B gi\u00e0 attivo: {'SI' if data.get('situazione_bnb', False) else 'NO'}",   data.get('situazione_bnb', False)),
+        (f"Mutuo attivo: {'SI' if data.get('situazione_mutuo', False) else 'NO'}",         data.get('situazione_mutuo', False)),
     ]
     px = 14*mm
     for label, attivo in situazioni:
@@ -315,12 +315,12 @@ def page1(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page2(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 2, 13)
+    draw_footer(c, data, 2, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Descrizione immobile")
     y -= 5*mm
-    y = wrap_text(c, data["descrizione"], 14*mm, y, W - 28*mm, "Helvetica", 8, 5.5*mm)
+    y = wrap_text(c, data.get('descrizione', ''), 14*mm, y, W - 28*mm, "Helvetica", 8, 5.5*mm)
     y -= 8*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Posizione e punti di interesse")
@@ -329,7 +329,7 @@ def page2(c, data):
     y -= 6*mm
 
     poi_data = [["Punto di interesse", "A piedi", "Mezzo pubblico", "Impatto"]]
-    for row in data["poi"]:
+    for row in data.get('poi', []):
         poi_data.append(list(row))
     col_w_poi = [(W-28*mm)*0.35, (W-28*mm)*0.13, (W-28*mm)*0.33, (W-28*mm)*0.19]
     tbl_poi = Table(poi_data, colWidths=col_w_poi)
@@ -354,7 +354,7 @@ def page2(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page3(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 3, 13)
+    draw_footer(c, data, 3, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Occupazione stagionale")
@@ -362,7 +362,7 @@ def page3(c, data):
     draw_section_subtitle(c, 14*mm, y, "Andamento mensile stimato - prezzi e tassi di riempimento")
     y -= 6*mm
 
-    occ = data["occupazione"]
+    occ = data.get('occupazione', [])
     header_half = ["Mese", "Occup.", "EUR/notte", "Stage"]
     data_sx, data_dx = [], []
     for i in range(6):
@@ -473,6 +473,43 @@ def page3(c, data):
         c.setFillColor(MUTED)
         c.drawCentredString(px_dot, gy + 1*mm, f"EUR {eur}")
 
+    # Media prossimo trimestre (ToDo Sessione 65) — si affianca alla curva a
+    # 12 mesi sopra, non la sostituisce. Calcolata dal backend sugli stessi
+    # 3 mesi già evidenziati in verde nel grafico (dato AirROI più
+    # affidabile, non stima annua diluita) — vedi _calcola_trimestre_
+    # affidabile in app.py. Se il backend non l'ha calcolata (dato mancante
+    # o malformato), la sezione viene omessa invece di mostrare zeri.
+    if "trimestre_ricavo_atteso" in data:
+        y = gy - 10*mm
+        y = draw_section_header(c, 14*mm, y, W - 28*mm,
+            f"Prossimi 3 mesi ({data.get('trimestre_mesi_label', '')}) — dato più affidabile")
+        y -= 3*mm
+        draw_section_subtitle(c, 14*mm, y, "Media calcolata solo sul trimestre in arrivo, non sull'anno intero")
+        y -= 7*mm
+
+        card_gap = 4*mm
+        card_w = (W - 28*mm - 2*card_gap) / 3
+        card_h = 20*mm
+        trimestre_cards = [
+            ("Prezzo medio/notte",   f"EUR {data.get('trimestre_prezzo_medio', 0)}",   TEAL_LIGHT, TEAL),
+            ("Occupazione media",    f"{data.get('trimestre_occupazione_media', 0)}%", HexColor("#E3F4FC"), BLUE_PRIMARY),
+            ("Ricavo atteso trimestre", fmt_eur(data.get('trimestre_ricavo_atteso', 0)), GOLD_LIGHT, GOLD),
+        ]
+        cx = 14*mm
+        for lbl, val, bg, tc in trimestre_cards:
+            c.setFillColor(bg)
+            c.roundRect(cx, y - card_h, card_w, card_h, 2*mm, fill=1, stroke=0)
+            c.setStrokeColor(tc)
+            c.setLineWidth(0.8)
+            c.roundRect(cx, y - card_h, card_w, card_h, 2*mm, fill=0, stroke=1)
+            c.setFont("Helvetica", 7)
+            c.setFillColor(MUTED)
+            c.drawCentredString(cx + card_w/2, y - 6*mm, lbl)
+            c.setFont("Helvetica-Bold", 12)
+            c.setFillColor(tc)
+            c.drawCentredString(cx + card_w/2, y - 14*mm, val)
+            cx += card_w + card_gap
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 4 — Analisi economica
 # ═══════════════════════════════════════════════════════════════════════════
@@ -481,13 +518,13 @@ def page3(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4_manutenzione(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 5, 13)
+    draw_footer(c, data, 5, 14)
     y = H - 22*mm
 
-    tipo = data["intervento_tipo"]
-    importo = data["intervento_importo"]
-    mesi = data["intervento_mesi"]
-    mensile = data["intervento_mensile"]
+    tipo = data.get('intervento_tipo', "nessuno")
+    importo = data.get('intervento_importo', 0)
+    mesi = data.get('intervento_mesi', 0)
+    mensile = data.get('intervento_mensile', 0)
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Interventi sull’immobile — impatto su costi e valore")
     y -= 3*mm
@@ -569,8 +606,8 @@ def page4_manutenzione(c, data):
              f"€ {mensile:,}/mese × 12 mesi".replace(",","."),
              f"- € {mensile*12:,}".replace(",",".")],
             ["Profitto netto DOPO intervento",
-             f"€ {data['profitto_netto']:,} - € {mensile*12:,} = nel periodo di diluizione".replace(",","."),
-             f"€ {data['profitto_netto'] - mensile*12:,}".replace(",",".")],
+             f"€ {data.get('profitto_netto', 0):,} - € {mensile*12:,} = nel periodo di diluizione".replace(",","."),
+             f"€ {data.get('profitto_netto', 0) - mensile*12:,}".replace(",",".")],
         ]
 
         col_w_int = [(W-28*mm)*0.30, (W-28*mm)*0.50, (W-28*mm)*0.20]
@@ -633,13 +670,13 @@ def page4_manutenzione(c, data):
     draw_section_subtitle(c, 14*mm, y, "Non obbligatori \u00b7 si sottraggono al profitto netto se presenti")
     y -= 6*mm
 
-    profitto  = data["profitto_netto"]
-    ricavo_lordo = data["ricavo_lordo"]
-    pm_bassa  = data["pm_perc_bassa"]
-    pm_alta   = data["pm_perc_alta"]
-    has_pm    = data["property_manager"]
-    has_int   = data["intervento_tipo"] != "nessuno"
-    mens      = data["intervento_mensile"]
+    profitto  = data.get('profitto_netto', 0)
+    ricavo_lordo = data.get('ricavo_lordo', 0)
+    pm_bassa  = data.get('pm_perc_bassa', 15)
+    pm_alta   = data.get('pm_perc_alta', 20)
+    has_pm    = data.get('property_manager', False)
+    has_int   = data.get('intervento_tipo', "nessuno") != "nessuno"
+    mens      = data.get('intervento_mensile', 0)
     costo_int_anno = mens * 12 if has_int else 0
     costo_pm_medio = int(ricavo_lordo * (pm_bassa + pm_alta) / 2 / 100) if has_pm else 0
 
@@ -709,12 +746,87 @@ def page4_manutenzione(c, data):
     y -= 4.5*mm
     c.drawString(14*mm, y, "  Il costo standard di mercato varia tra il 15% e il 20% dei ricavi lordi. \u00c8 una scelta opzionale: molti host gestiscono in autonomia.")
 
+
+def page4b_moltiplicatori(c, data):
+    """Solo Strategico (CORE parlava di 'TABELLA MOLTIPLICATORI STRATEGICO').
+    Usa SOLO il modello di incremento gia' applicato al calcolo
+    deterministico del prezzo/notte reale (INCREMENTO_PREZZO_PER_DOTAZIONE
+    in app.py, la stessa tabella che ha gia' corretto il prezzo mostrato nel
+    resto del report) - nessun coefficiente nuovo o inventato per stato o
+    posti letto, perche' nel motore deterministico attuale (AirROI) non
+    esiste un modello validato per quelli: aggiungerne uno qui sarebbe lo
+    stesso problema appena tolto al resto del report (numeri inventati)."""
+    draw_header(c, data)
+    draw_footer(c, data, 6, 14)
+    y = H - 22*mm
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, "Moltiplicatori di valore - dotazioni")
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y, "Quanto guadagneresti aggiungendo le dotazioni che il mercato di zona premia di piu'")
+    y -= 7*mm
+
+    righe = data.get('moltiplicatori_dotazioni') or []
+
+    if not righe:
+        box_h = 22*mm
+        c.setFillColor(TEAL_LIGHT)
+        c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=1, stroke=0)
+        c.setStrokeColor(TEAL)
+        c.setLineWidth(1)
+        c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=0, stroke=1)
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(TEAL)
+        c.drawString(18*mm, y - 8*mm, "Il tuo immobile ha gia' le dotazioni che il mercato premia di piu'")
+        c.setFont("Helvetica", 8)
+        c.setFillColor(BLUE_NIGHT)
+        wrap_simple(c, "Nessun margine residuo su questo fronte: il prezzo/notte gia' mostrato nel report include per intero il bonus dotazioni calcolato per il tuo immobile.", 18*mm, y - 14*mm, W - 40*mm, "Helvetica", 8, 4.5*mm, BLUE_NIGHT)
+        return
+
+    tbl_data = [["Dotazione da aggiungere", "Incremento stimato", "Impatto su prezzo/notte", "Impatto su ricavo annuo"]]
+    for nome, pct_label, delta_prezzo, delta_ricavo in righe:
+        tbl_data.append([nome, pct_label, f"+EUR {delta_prezzo}", f"+{fmt_eur(delta_ricavo)}"])
+
+    col_w = [(W-28*mm)*0.34, (W-28*mm)*0.20, (W-28*mm)*0.23, (W-28*mm)*0.23]
+    tbl = Table(tbl_data, colWidths=col_w)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
+        ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
+        ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0,0), (-1,-1), 8),
+        ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
+        ("TEXTCOLOR",     (0,1), (-1,-1), BLUE_NIGHT),
+        ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, CREAM]),
+        ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 5),
+        ("ALIGN",         (1,0), (-1,-1), "CENTER"),
+        ("TEXTCOLOR",     (2,1), (3,-1), TEAL),
+        ("FONTNAME",      (2,1), (3,-1), "Helvetica-Bold"),
+    ]))
+    tbl.wrapOn(c, W-28*mm, 300)
+    tbl.drawOn(c, 14*mm, y - tbl._height)
+    y -= tbl._height + 8*mm
+
+    disc_h = 16*mm
+    c.setFillColor(GOLD_LIGHT)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
+    c.setFont("Helvetica-Bold", 8)
+    c.setFillColor(GOLD)
+    c.drawString(18*mm, y - 6*mm, "Come leggere questa tabella")
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(BLUE_NIGHT)
+    wrap_simple(c, "Impatti calcolati sullo stesso modello gia' usato per correggere il prezzo/notte reale del tuo immobile (non stime generiche): riflettono l'aumento medio di mercato osservato per ciascuna dotazione, cumulabile se ne aggiungi piu' di una.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 4 — Analisi economica annuale
 # ═══════════════════════════════════════════════════════════════════════════
 def page4(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 4, 13)
+    draw_footer(c, data, 4, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi economica annuale")
@@ -722,20 +834,20 @@ def page4(c, data):
     draw_section_subtitle(c, 14*mm, y, "Proiezione costi e ricavi basata sulla situazione dichiarata")
     y -= 6*mm
 
-    p = data["prezzo_notte_stimato"]
-    occ_pct = data["occupazione_percent"]
-    notti = data["notti_anno"]
-    comm_pct = data["costi_commissioni_pct"]
-    pulizia_unit = data["costi_pulizie_unit"]
-    rata_mutuo = data["rata_mutuo_mensile"]
+    p = data.get('prezzo_notte_stimato', 0)
+    occ_pct = data.get('occupazione_percent', 0)
+    notti = data.get('notti_anno', 0)
+    comm_pct = data.get('costi_commissioni_pct', 15)
+    pulizia_unit = data.get('costi_pulizie_unit', 0)
+    rata_mutuo = data.get('rata_mutuo_mensile', 0)
     mutuo_annuo = rata_mutuo * 12
-    adr = data["adr"]
-    revpar = data["revpar"]
-    ffe = data["ffe_reserve"]
+    adr = data.get('adr', 0)
+    revpar = data.get('revpar', 0)
+    ffe = data.get('ffe_reserve', 0)
 
     # Sessione 68: la formula pulizie qui era rimasta "x notti", mai
     # allineata al fix Sessione 67 (pulizie per CAMBIO, non per notte) gia'
-    # attivo nel Base — i valori in data["costi_pulizie"] erano gia' corretti
+    # attivo nel Base — i valori in data.get('costi_pulizie', 0) erano gia' corretti
     # (calcolati a monte in app.py), ma il testo mostrato al cliente era
     # sbagliato/non coerente col totale. Stesso schema del Base.
     _cambi = data.get("cambi_anno")
@@ -750,7 +862,7 @@ def page4(c, data):
     _sm_biancheria = f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else ""
 
     # 4 card dati principali situazione dichiarata
-    sit_label = "Immobile vuoto" if data["situazione_vuoto"] else ("B&B attivo" if data["situazione_bnb"] else "Con inquilini")
+    sit_label = "Immobile vuoto" if data.get('situazione_vuoto', False) else ("B&B attivo" if data.get('situazione_bnb', False) else "Con inquilini")
     sit_cards = [
         ("Situazione",           sit_label,  BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}",  TEAL,         TEAL_LIGHT),
@@ -780,45 +892,45 @@ def page4(c, data):
         ["RICAVI", "", ""],
         ["Ricavo lordo annuo stimato",
          f"€ {p}/notte  x  {occ_pct}% occ.  x  365gg  =  € {p}  x  {notti} notti",
-         fmt_eu(data["ricavo_lordo"])],
+         fmt_eu(data.get('ricavo_lordo', 0))],
         ["Bonus prenotazioni dirette",
-         f"€ {data['ricavo_lordo']:,}  x  {data['bonus_dirette_pct']}  =  € {data['bonus_dirette']:,}".replace(",","."),
-         fmt_eu(data["bonus_dirette"])],
+         f"€ {data.get('ricavo_lordo', 0):,}  x  {data.get('bonus_dirette_pct', '')}  =  € {data.get('bonus_dirette', 0):,}".replace(",","."),
+         fmt_eu(data.get('bonus_dirette', 0))],
         ["TOTALE RICAVI",
-         f"{fmt_eu(data['ricavo_lordo'])}  +  {fmt_eu(data['bonus_dirette'])}",
-         fmt_eu(data["totale_ricavi"])],
+         f"{fmt_eu(data.get('ricavo_lordo', 0))}  +  {fmt_eu(data.get('bonus_dirette', 0))}",
+         fmt_eu(data.get('totale_ricavi', 0))],
         ["COSTI VARIABILI", "", ""],
         ["Commissioni piattaforma Airbnb",
-         f"€ {data['ricavo_lordo']:,}  x  {comm_pct}%  =  € {data['costi_commissioni']:,}".replace(",","."),
-         f"- {fmt_eu(data['costi_commissioni'])}"],
+         f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct}%  =  € {data.get('costi_commissioni', 0):,}".replace(",","."),
+         f"- {fmt_eu(data.get('costi_commissioni', 0))}"],
         ["Pulizie per cambio ospite", _formula_pulizie,
-         f"- {fmt_eu(data['costi_pulizie'])}"],
+         f"- {fmt_eu(data.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         f"€ {data['costi_biancheria']:,}/anno (media di mercato per la tipologia{_sm_biancheria})".replace(",","."),
-         f"- {fmt_eu(data['costi_biancheria'])}"],
+         f"€ {data.get('costi_biancheria', 0):,}/anno (media di mercato per la tipologia{_sm_biancheria})".replace(",","."),
+         f"- {fmt_eu(data.get('costi_biancheria', 0))}"],
         ["Utenze aggiuntive stimate",
-         f"Range € 500-1.000/anno  |  conv. adottata: € {data['costi_utenze']:,}".replace(",","."),
-         f"- {fmt_eu(data['costi_utenze'])}"],
+         f"Range € 500-1.000/anno  |  conv. adottata: € {data.get('costi_utenze', 0):,}".replace(",","."),
+         f"- {fmt_eu(data.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         f"Range € 200-600/anno  |  conv. adottata: € {data['costi_manutenzione']:,}".replace(",","."),
-         f"- {fmt_eu(data['costi_manutenzione'])}"],
+         f"Range € 200-600/anno  |  conv. adottata: € {data.get('costi_manutenzione', 0):,}".replace(",","."),
+         f"- {fmt_eu(data.get('costi_manutenzione', 0))}"],
         ["FF&E Reserve (manutenzione straord.)",
          f"Fondo manutenzione straordinaria  |  conv. adottata: € {ffe:,}".replace(",","."),
          f"- {fmt_eu(ffe)}"],
         ["Rata mutuo (se presente)",
-         "Nessun mutuo dichiarato" if not data["mutuo_attivo"] else f"€ {rata_mutuo}/mese  x  12 mesi",
-         "€ 0" if not data["mutuo_attivo"] else f"- {fmt_eu(mutuo_annuo)}"],
+         "Nessun mutuo dichiarato" if not data.get('mutuo_attivo', False) else f"€ {rata_mutuo}/mese  x  12 mesi",
+         "€ 0" if not data.get('mutuo_attivo', False) else f"- {fmt_eu(mutuo_annuo)}"],
         ["TOTALE COSTI VARIABILI",
-         f"{fmt_eu(data['costi_commissioni'])} + {fmt_eu(data['costi_pulizie'])} + {fmt_eu(data['costi_biancheria'])} + {fmt_eu(data['costi_utenze'])} + {fmt_eu(data['costi_manutenzione'])} + {fmt_eu(ffe)}",
-         f"- {fmt_eu(data['totale_costi'])}"],
+         f"{fmt_eu(data.get('costi_commissioni', 0))} + {fmt_eu(data.get('costi_pulizie', 0))} + {fmt_eu(data.get('costi_biancheria', 0))} + {fmt_eu(data.get('costi_utenze', 0))} + {fmt_eu(data.get('costi_manutenzione', 0))} + {fmt_eu(ffe)}",
+         f"- {fmt_eu(data.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO",
-         f"{fmt_eu(data['totale_ricavi'])}  -  {fmt_eu(data['totale_costi'])}",
-         fmt_eu(data["profitto_netto"])],
+         f"{fmt_eu(data.get('totale_ricavi', 0))}  -  {fmt_eu(data.get('totale_costi', 0))}",
+         fmt_eu(data.get('profitto_netto', 0))],
         ["Margine netto su ricavi lordi",
-         f"{fmt_eu(data['profitto_netto'])}  /  {fmt_eu(data['totale_ricavi'])}  x  100",
-         f"{data['margine_percent']}%"],
+         f"{fmt_eu(data.get('profitto_netto', 0))}  /  {fmt_eu(data.get('totale_ricavi', 0))}  x  100",
+         f"{data.get('margine_percent', 0)}%"],
         ["KPI — ADR (Average Daily Rate)",
-         f"Ricavo lordo  /  Notti occupate  =  € {data['ricavo_lordo']:,}  /  {notti}".replace(",","."),
+         f"Ricavo lordo  /  Notti occupate  =  € {data.get('ricavo_lordo', 0):,}  /  {notti}".replace(",","."),
          f"€ {adr}"],
         ["KPI — RevPAR",
          f"ADR  x  Occupazione%  =  \u20ac {adr}  x  {occ_pct}%",
@@ -852,7 +964,7 @@ def page4(c, data):
         ("TEXTCOLOR",     (0,5),  (0,5),   RED),
         ("FONTNAME",      (0,5),  (0,5),   "Helvetica-Bold"),
         ("TEXTCOLOR",     (2,6),  (2,13),  RED),
-        ("TEXTCOLOR",     (2,13), (2,13),  MUTED if not data["mutuo_attivo"] else RED),
+        ("TEXTCOLOR",     (2,13), (2,13),  MUTED if not data.get('mutuo_attivo', False) else RED),
         ("BACKGROUND",    (0,13), (-1,13), RED_LIGHT),
         ("TEXTCOLOR",     (0,13), (-1,13), RED),
         ("FONTNAME",      (0,13), (-1,13), "Helvetica-Bold"),
@@ -882,10 +994,10 @@ def page4(c, data):
     big_h   = 24*mm
 
     cards4 = [
-        ("Margine netto",          f"{data['margine_percent']}%",          WHITE,      BLUE_NIGHT, small_w, small_h),
-        ("Ricavo lordo stimato",   fmt_eur(data["ricavo_lordo"]),           TEAL_LIGHT, TEAL,       small_w, small_h),
-        ("Costi variabili totali", f"- {fmt_eur(data['totale_costi'])}",   RED_LIGHT,  RED,        small_w, small_h),
-        ("Il tuo guadagno stimato",fmt_eur(data["profitto_netto"]),         GOLD_LIGHT, GOLD,       big_w,   big_h),
+        ("Margine netto",          f"{data.get('margine_percent', 0)}%",          WHITE,      BLUE_NIGHT, small_w, small_h),
+        ("Ricavo lordo stimato",   fmt_eur(data.get('ricavo_lordo', 0)),           TEAL_LIGHT, TEAL,       small_w, small_h),
+        ("Costi variabili totali", f"- {fmt_eur(data.get('totale_costi', 0))}",   RED_LIGHT,  RED,        small_w, small_h),
+        ("Il tuo guadagno stimato",fmt_eur(data.get('profitto_netto', 0)),         GOLD_LIGHT, GOLD,       big_w,   big_h),
     ]
     cx = 14*mm
     for lbl, val, bg, tc, cw, ch in cards4:
@@ -914,7 +1026,7 @@ def page4(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page5(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 6, 13)
+    draw_footer(c, data, 7, 14)
     y = H - 22*mm
 
     # ── CONFRONTO AFFITTO TRADIZIONALE ──
@@ -926,13 +1038,13 @@ def page5(c, data):
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
         ["Ricavo annuo lordo",
-         fmt_eu(data["affitto_ricavo"]), fmt_eu(data["ricavo_lordo"]),
-         f"+{fmt_eu(data['ricavo_lordo'] - data['affitto_ricavo'])}"],
+         fmt_eu(data.get('affitto_ricavo', 0)), fmt_eu(data.get('ricavo_lordo', 0)),
+         f"+{fmt_eu(data.get('ricavo_lordo', 0) - data.get('affitto_ricavo', 0))}"],
         ["Costi di gestione",
-         fmt_eu(data["affitto_costi"]), fmt_eu(data["totale_costi"]), "--"],
+         fmt_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)), "--"],
         ["Profitto netto",
-         fmt_eu(data["affitto_profitto"]), fmt_eu(data["profitto_netto"]),
-         f"+{fmt_eu(data['profitto_netto'] - data['affitto_profitto'])}"],
+         fmt_eu(data.get('affitto_profitto', 0)), fmt_eu(data.get('profitto_netto', 0)),
+         f"+{fmt_eu(data.get('profitto_netto', 0) - data.get('affitto_profitto', 0))}"],
         ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
         ["Rischio morosit\u00e0",       "Alto",  "Nullo", "Eliminato"],
     ]
@@ -966,7 +1078,7 @@ def page5(c, data):
     y -= 6*mm
 
     pr_data = [["Mese / Month", "Prezzo notte", "Occup.", "Ricavo stimato", "Evento / Note"]]
-    for mese_it, mese_en, prezzo, occ_p, ricavo, evento in data["pricing_mensile"]:
+    for mese_it, mese_en, prezzo, occ_p, ricavo, evento in data.get('pricing_mensile', []):
         pr_data.append([
             f"{mese_it} / {mese_en}",
             f"\u20ac {prezzo}",
@@ -976,7 +1088,7 @@ def page5(c, data):
         ])
 
     # Totali
-    tot_ricavo = sum(r[4] for r in data["pricing_mensile"])
+    tot_ricavo = sum(r[4] for r in data.get('pricing_mensile', []))
     pr_data.append(["TOTALE ANNUO", "", "", f"\u20ac {tot_ricavo:,}".replace(",","."), "Scenario ottimistico"])
 
     col_w_pr = [(W-28*mm)*0.20, (W-28*mm)*0.13, (W-28*mm)*0.09, (W-28*mm)*0.15, (W-28*mm)*0.43]
@@ -1006,7 +1118,7 @@ def page5(c, data):
     ]
 
     # Colori Peak e Alta sulla colonna occupazione
-    for ri, row in enumerate(data["pricing_mensile"]):
+    for ri, row in enumerate(data.get('pricing_mensile', [])):
         occ_p = row[3]
         if occ_p >= 80:
             style_pr.append(("TEXTCOLOR", (2, ri+1), (2, ri+1), GOLD if occ_p >= 85 else TEAL))
@@ -1020,8 +1132,8 @@ def page5(c, data):
     # Nota ADR
     c.setFont("Helvetica-Oblique", 7.5)
     c.setFillColor(MUTED)
-    adr = data["adr"]
-    revpar = data["revpar"]
+    adr = data.get('adr', 0)
+    revpar = data.get('revpar', 0)
     nota_pr = f"ADR (Average Daily Rate) ponderato annuo: \u20ac {adr}  \u00b7  RevPAR: \u20ac {revpar}  \u00b7  I prezzi si aggiornano automaticamente in base ai dati di mercato della zona al momento della generazione del report."
     wrap_simple(c, nota_pr, 14*mm, y, W-28*mm, "Helvetica-Oblique", 7, 4.5*mm, MUTED)
 
@@ -1030,17 +1142,17 @@ def page5(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page6(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 9, 13)
+    draw_footer(c, data, 10, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
-        f"Normativa affitti brevi — {data['comune_normativa']} / {data['regione_normativa']} \u00b7 2025")
+        f"Normativa affitti brevi — {data.get('comune_normativa', '')} / {data.get('regione_normativa', '')} \u00b7 2025")
     y -= 3*mm
     draw_section_subtitle(c, 14*mm, y, "Obblighi normativi vigenti alla data di generazione del report")
     y -= 6*mm
 
     norm_data = [["Obbligo / Voce", "Dettaglio", "Stato"]]
-    for voce, dettaglio, stato in data["normativa_extra"]:
+    for voce, dettaglio, stato in data.get('normativa_extra', []):
         norm_data.append([voce, dettaglio, stato])
 
     col_w_norm = [(W-28*mm)*0.28, (W-28*mm)*0.52, (W-28*mm)*0.20]
@@ -1088,7 +1200,7 @@ def page6(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page7(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 10, 13)
+    draw_footer(c, data, 11, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Valore immobile come asset B&B — Analisi professionale")
@@ -1096,10 +1208,10 @@ def page7(c, data):
     draw_section_subtitle(c, 14*mm, y, "Metodologia da modello di valutazione bancaria professionale")
     y -= 7*mm
 
-    saggio = data["saggio_capitalizzazione"]
-    ebitda = data["ebitda_stimato"]
-    valore = data["valore_mercato"]
-    v_stimato = data["valore_immobile_stimato"]
+    saggio = data.get('saggio_capitalizzazione', 0)
+    ebitda = data.get('ebitda_stimato', 0)
+    valore = data.get('valore_mercato', 0)
+    v_stimato = data.get('valore_immobile_stimato', 0)
 
     asset_data = [
         ["Indicatore", "Come viene calcolato", "Valore"],
@@ -1203,7 +1315,7 @@ def page7(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page8(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 7, 13)
+    draw_footer(c, data, 8, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Tre scenari economici — proiezione annuale")
@@ -1211,7 +1323,7 @@ def page8(c, data):
     draw_section_subtitle(c, 14*mm, y, "Basati sui dati reali dell\u2019analisi economica · Lo scenario realistico \u00e8 il riferimento principale")
     y -= 7*mm
 
-    scenari = [data["scenario_pess"], data["scenario_real"], data["scenario_ott"]]
+    scenari = [data.get('scenario_pess', {}), data.get('scenario_real', {}), data.get('scenario_ott', {})]
     colori  = [RED, BLUE_PRIMARY, GOLD]
     bg_col  = [RED_LIGHT, HexColor("#E3F4FC"), GOLD_LIGHT]
 
@@ -1283,9 +1395,9 @@ def page8(c, data):
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Confronto scenari — tabella riassuntiva")
     y -= 5*mm
 
-    pess = data["scenario_pess"]
-    real = data["scenario_real"]
-    ott  = data["scenario_ott"]
+    pess = data.get('scenario_pess', {})
+    real = data.get('scenario_real', {})
+    ott  = data.get('scenario_ott', {})
 
     conf_data = [
         ["Voce", "Pessimistico", "Realistico", "Ottimistico"],
@@ -1325,7 +1437,7 @@ def page8(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page9(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 8, 13)
+    draw_footer(c, data, 9, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano d’azione — primi 90 giorni")
@@ -1423,7 +1535,20 @@ def page9(c, data):
     y = tl_y_bot - 6*mm
 
 
-    for fase_label, col, items in data["piano_90"]:
+    # Bug fix (riapertura cantiere Strategico): il JSON reale (prompt +
+    # route /generate-strategico) descrive piano_90 come lista di DICT
+    # {"titolo","colore":"BLU/VERDE/GOLD","azioni":[...]} — la stringa
+    # "colore" va tradotta nell'oggetto Color di ReportLab, non passata
+    # direttamente a setFillColor(). Prima questo ciclo si aspettava tuple
+    # (titolo, ColorObject, azioni) come nel fac-simile locale hardcoded
+    # (PDF/genera_strategico_reportup.py, dati finti): su un JSON reale
+    # avrebbe spacchettato le CHIAVI del dict come se fossero i tre valori.
+    _colore_piano90 = {"BLU": BLUE_PRIMARY, "VERDE": TEAL, "GOLD": GOLD}
+    for fase in (data.get("piano_90") or []):
+        fase_label = fase.get("titolo", "") if isinstance(fase, dict) else fase[0]
+        col = _colore_piano90.get(fase.get("colore", "BLU"), BLUE_PRIMARY) if isinstance(fase, dict) else fase[1]
+        items = (fase.get("azioni") or []) if isinstance(fase, dict) else fase[2]
+
         c.setFillColor(col)
         c.roundRect(14*mm, y - 6.5*mm, W - 28*mm, 6.5*mm, 2*mm, fill=1, stroke=0)
         c.setFont("Helvetica-Bold", 8)
@@ -1446,7 +1571,7 @@ def page9(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page10(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 11, 13)
+    draw_footer(c, data, 12, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi personale — Arch. Salvatore Junior Sica")
@@ -1455,10 +1580,10 @@ def page10(c, data):
     y -= 7*mm
 
     aree = [
-        ("📍  Posizione e contesto di mercato", data["analisi_posizione"],   BLUE_PRIMARY),
-        ("🏠  Condizione e caratteristiche immobile", data["analisi_condizione"],  TEAL),
-        ("📈  Potenzialit\u00e0 e proiezioni", data["analisi_potenzialita"], GOLD),
-        ("✅  Raccomandazione operativa", data["analisi_raccomandazione"], BLUE_NIGHT),
+        ("📍  Posizione e contesto di mercato", data.get('analisi_posizione', ''),   BLUE_PRIMARY),
+        ("🏠  Condizione e caratteristiche immobile", data.get('analisi_condizione', ''),  TEAL),
+        ("📈  Potenzialit\u00e0 e proiezioni", data.get('analisi_potenzialita', ''), GOLD),
+        ("✅  Raccomandazione operativa", data.get('analisi_raccomandazione', ''), BLUE_NIGHT),
     ]
 
     for titolo, testo, col in aree:
@@ -1509,7 +1634,7 @@ def page10(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page11(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 13, 13)
+    draw_footer(c, data, 14, 14)
     y = H - 22*mm
 
     y -= 5*mm
@@ -1528,7 +1653,7 @@ def page11(c, data):
         ("Dati demografici e turistici",
          "ISTAT — Istituto Nazionale di Statistica. Movimento turistico, arrivi e presenze per comune."),
         ("Normativa affitti brevi",
-         f"Regione {data['regione_normativa']} \u00b7 Comune di {data['comune_normativa']} \u00b7 Ministero del Turismo \u00b7 Fonti ufficiali aggiornate 2025."),
+         f"Regione {data.get('regione_normativa', '')} \u00b7 Comune di {data.get('comune_normativa', '')} \u00b7 Ministero del Turismo \u00b7 Fonti ufficiali aggiornate 2025."),
         ("Valutazione asset immobiliare",
          "Modello professionale di valutazione bancaria alberghiera \u00b7 Arch. Salvatore Junior Sica \u00b7 30.000+ perizie."),
         ("Saggio di capitalizzazione",
@@ -1626,7 +1751,7 @@ def page11(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page_obiettivi(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 12, 13)
+    draw_footer(c, data, 13, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "I tuoi obiettivi — dove trovare le risposte")
@@ -1634,8 +1759,8 @@ def page_obiettivi(c, data):
     draw_section_subtitle(c, 14*mm, y, "Riepilogo di ci\u00f2 che hai dichiarato \u00b7 le sezioni del report pi\u00f9 rilevanti per te")
     y -= 8*mm
 
-    obiettivi = data["obiettivi_selezionati"]
-    pagine_map = data["obiettivi_pagine"]
+    obiettivi = data.get('obiettivi_selezionati', [])
+    pagine_map = data.get('obiettivi_pagine', {})
 
     for emoji_label, titolo, desc in obiettivi:
         # Lookup pagine
@@ -1727,7 +1852,7 @@ def build_strategico_pdf_bytes(data):
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle("ReportUp — Report Strategico")
     c.setAuthor("Arch. Salvatore Junior Sica · ReportUp")
-    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page5, page8, page9, page6, page7, page10, page_obiettivi, page11]:
+    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page9, page6, page7, page10, page_obiettivi, page11]:
         page_fn(c, data)
         c.showPage()
     c.save()

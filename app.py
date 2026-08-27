@@ -370,11 +370,83 @@ def _airroi_lookup_e_stima(lat, lon, camere_raw=None, posti_letto_raw=None, bagn
         return None
 
 
+def _calcola_moltiplicatori_dotazioni(data):
+    """Solo Strategico: per ogni dotazione ASSENTE che nel modello
+    deterministico del prezzo (INCREMENTO_PREZZO_PER_DOTAZIONE, la stessa
+    tabella già usata per correggere il prezzo/notte reale di QUESTO
+    immobile) ha un incremento reale, calcola l'impatto se il cliente la
+    aggiungesse — su prezzo/notte e ricavo annuo. Righe ordinate per impatto
+    decrescente. Niente coefficienti per stato/posti letto: non esiste un
+    modello deterministico validato per quelli oggi (solo AirROI per il
+    prezzo complessivo) — aggiungerne uno inventato di sana pianta sarebbe
+    lo stesso problema appena risolto per il resto del report."""
+    prezzo = data.get("prezzo_notte_stimato") or 0
+    notti = data.get("notti_anno") or 0
+    if not prezzo:
+        return
+    assenti_norm = {_norm_dotazione(d) for d in (data.get("dotazioni_assenti") or [])}
+    righe = []
+    for nome, incremento in INCREMENTO_PREZZO_PER_DOTAZIONE.items():
+        if nome not in assenti_norm or incremento <= 0:
+            continue
+        delta_prezzo = round(prezzo * incremento)
+        delta_ricavo = round(delta_prezzo * notti)
+        righe.append((nome, f"+{round(incremento*100)}%", delta_prezzo, delta_ricavo))
+    righe.sort(key=lambda r: r[3], reverse=True)
+    data["moltiplicatori_dotazioni"] = righe
+
+
+# Mappa statica (non generata dall'AI, come da principio del progetto: il
+# backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
+# obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
+# page_obiettivi in strategico.py. Numerazione allineata alla sequenza reale
+# in build_strategico_pdf_bytes (14 pagine): aggiornare qui se cambia
+# l'ordine o il numero di pagine del PDF.
+_OBIETTIVI_PAGINE_STRATEGICO = {
+    "massimizzare_guadagno":    ("Pag. 6-8", "Moltiplicatori di valore e scenari economici"),
+    "confronto_affitto":        ("Pag. 7", "Confronto con l'affitto tradizionale"),
+    "primo_avvio":              ("Pag. 9", "Piano d'azione primi 90 giorni"),
+    "ottimizzare_esistente":    ("Pag. 6", "Moltiplicatori di valore — dotazioni"),
+    "valutazione_investimento": ("Pag. 11", "Valore immobile come asset B&B"),
+    "pianificazione_normativa": ("Pag. 10", "Normativa affitti brevi"),
+}
+
+
 def _mesi_affidabili(oggi=None):
     import datetime
     oggi = oggi or datetime.date.today()
     mese_partenza = (oggi.month - 1) if oggi.day <= 15 else oggi.month
     return [(mese_partenza + i) % 12 for i in range(3)]
+
+
+_GIORNI_MESE = {
+    "Gen": 31, "Feb": 28, "Mar": 31, "Apr": 30, "Mag": 31, "Giu": 30,
+    "Lug": 31, "Ago": 31, "Set": 30, "Ott": 31, "Nov": 30, "Dic": 31,
+}
+
+
+def _calcola_trimestre_affidabile(data):
+    """Solo Strategico (ToDo Sessione 65): media sui 3 mesi immediatamente
+    successivi alla data di generazione — stessi indici già usati dal Base
+    per evidenziare i 'mesi affidabili' nel grafico occupazione
+    (_mesi_affidabili: dato AirROI reale, non stima annua diluita), qui
+    trattati come sezione aggregata A PARTE — prezzo medio, occupazione
+    media, ricavo atteso nel trimestre — accanto alla curva a 12 mesi già
+    presente, non al posto di quella."""
+    occ = data.get("occupazione") or []
+    idx = data.get("mesi_affidabili_idx") or []
+    righe = [occ[i] for i in idx if 0 <= i < len(occ)]
+    if len(righe) != 3:
+        return
+    prezzi = [r[2] for r in righe]
+    occupazioni = [r[1] for r in righe]
+    ricavo_trimestre = sum(
+        round(r[2] * _GIORNI_MESE.get(r[0], 30) * r[1] / 100) for r in righe
+    )
+    data["trimestre_mesi_label"] = " – ".join(r[0] for r in righe)
+    data["trimestre_prezzo_medio"] = round(sum(prezzi) / len(prezzi))
+    data["trimestre_occupazione_media"] = round(sum(occupazioni) / len(occupazioni))
+    data["trimestre_ricavo_atteso"] = ricavo_trimestre
 
 
 # ── Normalizzazione occupazione a 12 mesi — Sessione 72 ─────────────────────
@@ -2725,9 +2797,10 @@ def quick_estimate():
 
 def _elabora_dati_report_base(raw, lat=None, long=None):
     """Parsa il testo grezzo restituito dall'AI (HTTP2) e applica tutte le
-    correzioni deterministiche + l'integrazione AirROI, producendo il dict
-    'data' finale usato sia per generare il PDF sia per popolare i campi
-    economici nella mail (modulo HTTP24/JSON25 su Make)."""
+    correzioni deterministiche + l'integrazione AirROI (vedi
+    _arricchisci_report_deterministico, condivisa con lo Strategico),
+    producendo il dict 'data' finale usato sia per generare il PDF sia per
+    popolare i campi economici nella mail (modulo HTTP24/JSON25 su Make)."""
     import json as _json
     import re as _re
     cleaned = raw.strip()
@@ -2742,6 +2815,24 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
 
     data = _json.loads(cleaned)
     data = normalize_data(data)
+    return _arricchisci_report_deterministico(data, lat=lat, long=long, generare_descrizione=True)
+
+
+def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descrizione=True):
+    """Applica a un dict `data` già JSON-parsato (Base o Strategico) tutte le
+    correzioni deterministiche + l'integrazione AirROI condivise dai due
+    prodotti: stagionalità, prezzo/occupazione reali, competitor, confronto
+    affitto tradizionale, dotazioni_assenti, costi fissi. Usata sia da
+    _elabora_dati_report_base sia da /generate-strategico (riapertura
+    cantiere Strategico), così i due prodotti restano allineati sullo stesso
+    motore di calcolo — lo Strategico aggiunge sopra solo i suoi campi
+    esclusivi (scenari, piano 90gg, normativa, pricing mensile, ecc.),
+    non li ricalcola da zero né lascia che l'AI inventi numeri che il Base
+    calcola in modo deterministico.
+    generare_descrizione=False per lo Strategico: usa una descrizione AI
+    dedicata (prompt Strategico, più lunga e contestualizzata), non quella
+    del Base."""
+    import re as _re
 
     # Sessione 72: l'AI a volte scrive un'occupazione con meno di 12 mesi
     # (bug reale Positano — mancava "Mag"). Ricostruiamo sempre 12 righe
@@ -3080,7 +3171,8 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     if "poi" in data:
         data["poi"] = _correggi_poi_invertiti(data["poi"])
 
-    data["descrizione"] = genera_descrizione_standard(data)
+    if generare_descrizione:
+        data["descrizione"] = genera_descrizione_standard(data)
 
     if "occupazione" in data:
         data["occupazione"] = [list(row) for row in data["occupazione"]]
@@ -3171,6 +3263,50 @@ def extract_report_fields():
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
 from strategico import build_strategico_pdf_bytes
 
+
+def _ricalcola_scenari_strategico(data):
+    """Ricalcola i tre scenari (pessimistico/realistico/ottimistico) sui
+    valori deterministici finali di _arricchisci_report_deterministico
+    (prezzo/occupazione/costi/profitto reali), non più su quelli inventati
+    dall'AI. Rapporti presi da PROMPT_AI_REPORT_STRATEGICO.md: pessimistico
+    occupazione -35%/prezzo -20%, ottimistico occupazione +20% (cap 90%)/
+    prezzo +18%, costi proporzionali ai ricavi in ogni scenario. Se manca un
+    dato base (prezzo/occupazione/ricavi a zero) lascia gli scenari scritti
+    dall'AI: caso solo teorico, il ramo prezzo mancante della pipeline
+    condivisa è un fallback di emergenza, non l'esito atteso."""
+    _occ_r = data.get("occupazione_percent") or 0
+    _prezzo_r = data.get("prezzo_notte_stimato") or 0
+    _ricavo_lordo_r = data.get("ricavo_lordo") or 0
+    _totale_ricavi_r = data.get("totale_ricavi") or 0
+    _totale_costi_r = data.get("totale_costi") or 0
+    _notti_r = data.get("notti_anno") or 0
+    if not (_occ_r and _prezzo_r and _totale_ricavi_r):
+        return
+
+    _costi_ratio = (_totale_costi_r / _totale_ricavi_r) if _totale_ricavi_r else 0
+    _bonus_ratio = ((_totale_ricavi_r - _ricavo_lordo_r) / _ricavo_lordo_r) if _ricavo_lordo_r else 0
+
+    def _scenario(occ_mult, prezzo_mult):
+        occ = min(90, round(_occ_r * occ_mult))
+        prezzo = round(_prezzo_r * prezzo_mult)
+        notti = round(365 * occ / 100)
+        ricavo_lordo = round(prezzo * notti)
+        ricavi_totali = round(ricavo_lordo * (1 + _bonus_ratio))
+        costi = round(ricavi_totali * _costi_ratio)
+        return {
+            "occupazione": occ, "notti": notti, "prezzo_medio": prezzo,
+            "ricavi_lordi": ricavi_totali, "costi_totali": costi,
+            "profitto_netto": ricavi_totali - costi,
+        }
+
+    data["scenario_pess"] = {**(data.get("scenario_pess") or {}), "label": "PESSIMISTICO", **_scenario(0.65, 0.80)}
+    data["scenario_real"] = {**(data.get("scenario_real") or {}), "label": "REALISTICO",
+        "occupazione": _occ_r, "notti": _notti_r, "prezzo_medio": _prezzo_r,
+        "ricavi_lordi": _totale_ricavi_r, "costi_totali": _totale_costi_r,
+        "profitto_netto": data.get("profitto_netto") or 0}
+    data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18)}
+
+
 @app.route("/generate-strategico", methods=["POST"])
 @require_internal_secret
 def generate_strategico():
@@ -3191,58 +3327,25 @@ def generate_strategico():
 
         data = _json.loads(cleaned)
         data = normalize_data(data)
-        if request.args.get("lat") and request.args.get("long"):
-            data["lat"] = request.args.get("lat")
-            data["long"] = request.args.get("long")
 
-        for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
-            if campo in data and not isinstance(data[campo], str):
-                data[campo] = str(data[campo])
-
-        # Camere + posti letto dalla mappa unica (Sessione 75) — stessa fonte di
-        # verità di Base e Quick, così i tre prodotti restano allineati sul
-        # numero camere (bedrooms) e sul default posti letto (guests).
-        data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
-        data["posti_letto"] = _posti_letto_default(data.get("tipologia"), data.get("posti_letto"))
-
-        if "comune" in data:
-            data["comune"] = _title_preserva_romani(data["comune"])
-        if "zona" in data:
-            data["zona"] = _title_preserva_romani(data["zona"]) if _zona_sembra_valida(data["zona"]) else "—"
-
-        _record_comune = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
-        data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
-        data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
-        data["_wikipedia_estratto"] = _estratto_wikipedia(
-            _record_comune.get("wikipedia") if _record_comune else None,
-            categoria=data["categoria"],
-            sottocategoria=data["sottocategoria"],
+        # Riapertura cantiere Strategico: motore deterministico condiviso col
+        # Base (_arricchisci_report_deterministico) — prezzo/occupazione reali
+        # AirROI, stagionalità di zona, competitor deterministico, dotazioni_
+        # assenti per sottrazione, confronto affitto misto OMI/AirROI. Prima
+        # lo Strategico da €149 lasciava inventare questi numeri all'AI mentre
+        # il Base da €39 li calcolava in modo deterministico — stesso identico
+        # immobile poteva avere due prezzi/notte diversi tra i due prodotti.
+        # generare_descrizione=False: lo Strategico tiene la sua descrizione
+        # AI dedicata (più lunga, vedi PROMPT_AI_REPORT_STRATEGICO.md), non
+        # quella breve del Base.
+        data = _arricchisci_report_deterministico(
+            data,
+            lat=request.args.get("lat"),
+            long=request.args.get("long"),
+            generare_descrizione=False,
         )
 
-        if "indirizzo" in data:
-            import re as _re2
-            addr = data["indirizzo"].strip()
-            addr = _re2.sub(r'\s*(\d{5})\s*', r', \1, ', addr)
-            addr = _re2.sub(r',\s*,', ',', addr)
-            addr = _re2.sub(r'\s+', ' ', addr).strip().strip(',').strip()
-            data["indirizzo"] = _title_preserva_romani(addr)
-            if _record_comune and _record_comune.get("sigla_provincia"):
-                _sigla_corretta = _record_comune["sigla_provincia"].upper()
-                if _re2.search(r'\([A-Za-z]{2}\)', data["indirizzo"]):
-                    data["indirizzo"] = _re2.sub(r'\([A-Za-z]{2}\)', f"({_sigla_corretta})", data["indirizzo"])
-                else:
-                    data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
-            else:
-                data["indirizzo"] = _re2.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
-
-        _calcola_costi_fissi_deterministici(data)
-
-        if "occupazione" in data:
-            data["occupazione"] = [list(row) for row in data["occupazione"]]
-        if "poi" in data:
-            data["poi"] = _correggi_poi_invertiti(data["poi"])
-        if "competitor" in data:
-            data["competitor"] = [list(row) for row in data["competitor"]]
+        # Campi esclusivi Strategico, non toccati dalla pipeline condivisa.
         if "pricing_mensile" in data:
             data["pricing_mensile"] = [list(row) for row in data["pricing_mensile"]]
         if "normativa_extra" in data:
@@ -3252,18 +3355,22 @@ def generate_strategico():
                 if isinstance(item, dict) and "azioni" in item:
                     item["azioni"] = list(item["azioni"])
 
-        if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile", 0):
-            rata_annua = int(data["rata_mutuo_mensile"]) * 12
-            costi_base = (
-                data.get("costi_commissioni", 0) +
-                data.get("costi_pulizie", 0) +
-                data.get("costi_biancheria", 0) +
-                data.get("costi_utenze", 0) +
-                data.get("costi_manutenzione", 0)
-            )
-            data["totale_costi"] = costi_base + rata_annua
-            data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
-            data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+        # Media trimestre (3 mesi più affidabili, ToDo Sessione 65) — solo
+        # Strategico, si affianca alla curva a 12 mesi, non la sostituisce.
+        _calcola_trimestre_affidabile(data)
+
+        # Moltiplicatori di valore (dotazioni) — solo Strategico, pag. 6.
+        _calcola_moltiplicatori_dotazioni(data)
+
+        # Mappa obiettivo→pagina per page_obiettivi (deterministica, non AI).
+        data["obiettivi_pagine"] = _OBIETTIVI_PAGINE_STRATEGICO
+
+        # I tre scenari (pess/real/ott) vanno ricalcolati DOPO il motore
+        # deterministico sopra: altrimenti resterebbero ancorati al prezzo/
+        # occupazione/costi inventati dall'AI invece che ai valori reali
+        # appena corretti, con lo scenario "realistico" scollegato dal resto
+        # del PDF (stessa incoerenza che il Base ha già risolto per i KPI).
+        _ricalcola_scenari_strategico(data)
 
         pdf_bytes = build_strategico_pdf_bytes(data)
         comune = data.get('comune', 'report').replace(' ', '_')
