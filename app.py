@@ -506,6 +506,25 @@ def _calcola_scenari_durata_soggiorno(data):
     ]
 
 
+def _calcola_valore_asset(data):
+    """Solo Strategico (pag. 13). EBITDA e valore di mercato come asset B&B
+    erano gli ultimi numeri economici ancora inventati dall'AI, mentre tutto
+    il resto del report è deterministico dalla riapertura del cantiere: la
+    pagina poteva quindi mostrare un EBITDA scollegato dal profitto netto
+    stampato due pagine prima. Qui si ricalcolano dai valori reali già
+    corretti — EBITDA = profitto netto, valore = EBITDA capitalizzato al
+    saggio. valore_immobile_stimato resta un dato che oggi non abbiamo
+    (nessuna fonte OMI di compravendita in pipeline): se l'AI non lo fornisce
+    resta 0 e la pagina lo dichiara n/d, senza inventarlo."""
+    saggio = data.get("saggio_capitalizzazione") or 7.0
+    profitto = data.get("profitto_netto")
+    if profitto is None:
+        return
+    data["ebitda_stimato"] = round(profitto)
+    if saggio > 0:
+        data["valore_mercato"] = round(profitto / saggio * 100)
+
+
 # Mappa statica (non generata dall'AI, come da principio del progetto: il
 # backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
 # obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
@@ -3594,6 +3613,10 @@ def generate_strategico():
         # appena corretti, con lo scenario "realistico" scollegato dal resto
         # del PDF (stessa incoerenza che il Base ha già risolto per i KPI).
         _ricalcola_scenari_strategico(data)
+
+        # Dopo il ricalcolo scenari: usa il profitto netto deterministico
+        # finale, non quello di partenza dell'AI.
+        _calcola_valore_asset(data)
 
         pdf_bytes = build_strategico_pdf_bytes(data)
         comune = data.get('comune', 'report').replace(' ', '_')

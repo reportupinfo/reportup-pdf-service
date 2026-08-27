@@ -1227,12 +1227,20 @@ def page7(c, data):
         ["Valore immobile stimato (mercato)",
          "Stima da banche dati OMI per zona e tipologia",
          fmt_eu(v_stimato)],
+        # v_stimato arriva dall'AI e nel template del prompt vale 0: il backend
+        # non lo calcola (nessuna stima OMI di compravendita oggi). Senza
+        # guardia il Cap Rate divideva per zero e faceva fallire con 500
+        # l'INTERO PDF, non solo questa riga \u2014 nessun report Strategico veniva
+        # mai consegnato. Quando il dato manca si dichiara n/d, non si inventa.
         ["Differenza valore asset vs mercato",
-         f"{fmt_eu(valore)}  -  {fmt_eu(v_stimato)}",
-         fmt_eu(valore - v_stimato) if valore > v_stimato else f"- {fmt_eu(v_stimato - valore)}"],
+         f"{fmt_eu(valore)}  -  {fmt_eu(v_stimato)}" if v_stimato else
+         "Richiede la stima di mercato dell'immobile, non disponibile per questa zona",
+         (fmt_eu(valore - v_stimato) if valore > v_stimato else f"- {fmt_eu(v_stimato - valore)}")
+         if v_stimato else "n/d"],
         ["Cap Rate effettivo",
-         f"EBITDA  /  Valore mercato  x  100  =  \u20ac {ebitda:,}  /  \u20ac {v_stimato:,}  x  100".replace(",","."),
-         f"{round(ebitda/v_stimato*100, 2)}%"],
+         f"EBITDA  /  Valore mercato  x  100  =  \u20ac {ebitda:,}  /  \u20ac {v_stimato:,}  x  100".replace(",",".")
+         if v_stimato else "Richiede la stima di mercato dell'immobile, non disponibile per questa zona",
+         f"{round(ebitda/v_stimato*100, 2)}%" if v_stimato else "n/d"],
         ["Rendita mensile netta stimata",
          f"Profitto netto annuo  /  12 mesi  =  \u20ac {ebitda:,}  /  12".replace(",","."),
          fmt_eu(round(ebitda/12))],
