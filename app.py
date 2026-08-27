@@ -2818,7 +2818,7 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     return _arricchisci_report_deterministico(data, lat=lat, long=long, generare_descrizione=True)
 
 
-def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descrizione=True):
+def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descrizione=True, correggere_poi=True):
     """Applica a un dict `data` già JSON-parsato (Base o Strategico) tutte le
     correzioni deterministiche + l'integrazione AirROI condivise dai due
     prodotti: stagionalità, prezzo/occupazione reali, competitor, confronto
@@ -2831,7 +2831,16 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     calcola in modo deterministico.
     generare_descrizione=False per lo Strategico: usa una descrizione AI
     dedicata (prompt Strategico, più lunga e contestualizzata), non quella
-    del Base."""
+    del Base.
+    correggere_poi=False per lo Strategico: _correggi_poi_invertiti è
+    costruita per lo schema POI del Base (4 slot FISSI — trasporto pubblico/
+    comune di riferimento/elemento caratteristico/servizi essenziali — righe
+    a 3 campi [distanza, nome, impatto], etichetta di categoria esterna via
+    SLOT_LABELS). Lo Strategico usa invece N punti liberi con 4 campi ciascuno
+    [nome, a_piedi, mezzo_pubblico, impatto] (vedi page2 in strategico.py):
+    applicare la correzione del Base disallinea le colonne. Finché lo
+    scenario Make dello Strategico non viene ricostruito per passare POI
+    reali Google Places nel SUO formato, il campo resta generato dall'AI."""
     import re as _re
 
     # Sessione 72: l'AI a volte scrive un'occupazione con meno di 12 mesi
@@ -3168,7 +3177,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # e prima girava sul dato grezzo non corretto (es. "ciro amodio" minuscolo
     # finiva in descrizione anche quando la tabella POI mostrava già la
     # versione sistemata).
-    if "poi" in data:
+    if correggere_poi and "poi" in data:
         data["poi"] = _correggi_poi_invertiti(data["poi"])
 
     if generare_descrizione:
@@ -3337,12 +3346,15 @@ def generate_strategico():
         # immobile poteva avere due prezzi/notte diversi tra i due prodotti.
         # generare_descrizione=False: lo Strategico tiene la sua descrizione
         # AI dedicata (più lunga, vedi PROMPT_AI_REPORT_STRATEGICO.md), non
-        # quella breve del Base.
+        # quella breve del Base. correggere_poi=False: lo schema POI dello
+        # Strategico (N punti liberi, 4 campi ciascuno) non è quello a 4 slot
+        # fissi del Base — vedi nota in _arricchisci_report_deterministico.
         data = _arricchisci_report_deterministico(
             data,
             lat=request.args.get("lat"),
             long=request.args.get("long"),
             generare_descrizione=False,
+            correggere_poi=False,
         )
 
         # Campi esclusivi Strategico, non toccati dalla pipeline condivisa.
