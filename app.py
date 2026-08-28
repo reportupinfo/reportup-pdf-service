@@ -490,8 +490,6 @@ def _calcola_scenari_durata_soggiorno(data):
         + data.get("costi_utenze", 0) + data.get("costi_manutenzione", 0)
         + (data.get("rata_mutuo_mensile", 0) * 12 if data.get("mutuo_attivo") else 0)
     )
-    soggiorno_medio = data.get("soggiorno_medio_notti") or 2.5
-
     def _scenario(label, durata, nota):
         cambi = max(1, round(notti / durata))
         costi_pulizie = round(pulizia_unit * cambi)
@@ -505,13 +503,17 @@ def _calcola_scenari_durata_soggiorno(data):
             "nota": nota,
         }
 
+    # Durate fisse 2 / 7 / 14 notti. Prima la colonna centrale usava la media
+    # reale di zona: su una città come Napoli vale 2 notti, quindi le prime due
+    # colonne uscivano identiche (2 / 2 / 7) e il confronto non diceva niente.
+    # Tre durate distanti mostrano davvero l'effetto del min-stay sui cambi.
     data["scenari_durata"] = [
         _scenario("SOGGIORNI BREVI", 2,
-                  "Weekend, city break: min-stay 1-2 notti — massimo turnover, più pulizie"),
-        _scenario("SOGGIORNI MEDI", soggiorno_medio,
-                  f"Media reale della tua zona ({soggiorno_medio:g} notti) — scenario di riferimento del report"),
-        _scenario("SOGGIORNI LUNGHI", 7,
-                  "Min-stay settimanale: smart working, vacanze lunghe — turnover minimo"),
+                  "Weekend e city break: min-stay 1-2 notti — massimo turnover, più pulizie"),
+        _scenario("SOGGIORNI MEDI", 7,
+                  "Min-stay settimanale: vacanze e smart working — turnover dimezzato"),
+        _scenario("SOGGIORNI LUNGHI", 14,
+                  "Min-stay quindicinale: soggiorni lunghi e trasferte — turnover minimo"),
     ]
 
 
@@ -2020,6 +2022,60 @@ _LABEL_EPOCA = {
 }
 
 
+_VERO = {"si", "sì", "s", "yes", "y", "true", "vero", "1", "on", "attivo"}
+_FALSO = {"no", "n", "false", "falso", "0", "off", "", "none", "null", "nessuno"}
+
+
+def _flag_form(valore):
+    """Converte in booleano un flag che arriva dal form passando per Make e per
+    l'AI. Non basta la verità di Python: una stringa "no" o "false" è truthy e
+    faceva accendere la pillola verde. Tutto ciò che non è esplicitamente vero
+    vale falso — su una dichiarazione del cliente il default prudente è "non
+    dichiarato", non "sì"."""
+    if isinstance(valore, bool):
+        return valore
+    if isinstance(valore, (int, float)):
+        return valore != 0
+    testo = str(valore or "").strip().lower()
+    if testo in _VERO:
+        return True
+    if testo in _FALSO:
+        return False
+    return False
+
+
+def _normalizza_situazione(data):
+    """Normalizza i quattro flag di situazione e intercetta il caso in cui non
+    sono arrivati affatto. vuoto / inquilini / B&B attivo si escludono a
+    vicenda: se risultano tutti e tre veri il dato non viene dal cliente ma è
+    stato riempito a valle (l'AI, davanti a un segnaposto vuoto, mette true su
+    tutto). In quel caso è più onesto non dichiarare nulla che stampare tre
+    affermazioni che non possono coesistere."""
+    for campo in ("situazione_vuoto", "situazione_inquilini", "situazione_bnb", "situazione_mutuo"):
+        data[campo] = _flag_form(data.get(campo))
+
+    # `mutuo_attivo` e `situazione_mutuo` sono lo stesso fatto con due nomi
+    # (il primo usato dai calcoli, il secondo dalla scheda): allineati, e vero
+    # solo se c'è davvero una rata, altrimenti la riga mutuo mostra "- € 0".
+    _rata = data.get("rata_mutuo_mensile") or 0
+    data["mutuo_attivo"] = (_flag_form(data.get("mutuo_attivo")) or data["situazione_mutuo"]) and _rata > 0
+    data["situazione_mutuo"] = data["mutuo_attivo"]
+
+    _esclusivi = ("situazione_vuoto", "situazione_inquilini", "situazione_bnb")
+    if all(data.get(k) for k in _esclusivi):
+        print("[SITUAZIONE] vuoto+inquilini+B&B tutti veri: combinazione impossibile, "
+              "il dato del form non è arrivato fin qui — azzerati. Controllare la "
+              "mappatura Make dei campi situazione_*.")
+        for k in _esclusivi:
+            data[k] = False
+
+    if not data.get("dotazioni_presenti"):
+        print("[DOTAZIONI] dotazioni_presenti vuoto: se il cliente ne aveva selezionate, "
+              "il dato si è perso prima del PDF — il form invia il campo 'dotazioni', "
+              "controllare la mappatura Make verso 'dotazioni_presenti'.")
+    return data
+
+
 def _etichetta_scheda(valore, mappa):
     """Traduce un codice del form nella sua etichetta leggibile. Se il valore
     non è un codice noto (caso Base: l'AI ha già scritto "Anni '70") viene
@@ -3069,6 +3125,10 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # Dotazioni assenti: pura sottrazione insiemistica (lista standard meno
     # quelle dichiarate presenti dal cliente) — zero margine di invenzione,
     # l'AI non decide più questo campo. Sessione 64.
+    # Flag di situazione: normalizzati prima di qualsiasi calcolo che li legge
+    # (mutuo nei costi, "Situazione" nella card, scenari).
+    _normalizza_situazione(data)
+
     _dot_presenti_norm = [_norm_dotazione(d) for d in (data.get("dotazioni_presenti") or [])]
     data["dotazioni_assenti"] = [d for d in DOTAZIONI_AMMESSE if d not in _dot_presenti_norm]
 
@@ -3683,6 +3743,94 @@ def _ricalcola_scenari_strategico(data):
     data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18)}
 
 
+# Festività e ponti italiani per mese: sono fatti di calendario, non materia
+# da far scrivere all'AI. Lasciati a lei uscivano sistematicamente sfasati —
+# "Ferragosto" a luglio, "ponte del 1 novembre" a settembre, "Ognissanti" a
+# ottobre con novembre vuoto, "Immaccolata" con due c.
+_EVENTI_MESE = {
+    "Gen": "Epifania e saldi invernali",
+    "Feb": "Carnevale (date variabili)",
+    "Mar": "Weekend cittadini e ponti scolastici",
+    "Apr": "Pasqua (date variabili) e ponte del 25 aprile",
+    "Mag": "Ponte del 1° maggio, clima favorevole",
+    "Giu": "Ponte del 2 giugno, inizio stagione estiva",
+    "Lug": "Alta stagione estiva, turismo internazionale",
+    "Ago": "Ferragosto (15 agosto), picco annuale",
+    "Set": "Coda estiva e turismo culturale",
+    "Ott": "City break, fiere e clima mite",
+    "Nov": "Ponte di Ognissanti (1° novembre)",
+    "Dic": "Ponte dell'Immacolata (8 dicembre), Natale e Capodanno",
+}
+
+
+_MESI_ESTESI = {
+    "Gen": ("Gennaio", "January"), "Feb": ("Febbraio", "February"),
+    "Mar": ("Marzo", "March"),     "Apr": ("Aprile", "April"),
+    "Mag": ("Maggio", "May"),      "Giu": ("Giugno", "June"),
+    "Lug": ("Luglio", "July"),     "Ago": ("Agosto", "August"),
+    "Set": ("Settembre", "September"), "Ott": ("Ottobre", "October"),
+    "Nov": ("Novembre", "November"),   "Dic": ("Dicembre", "December"),
+}
+
+
+def _pricing_mensile_deterministico(data):
+    """Ricostruisce il piano pricing mensile dai 12 mesi già calcolati in
+    `occupazione` (prezzo e occupazione reali AirROI/curva di zona), invece di
+    lasciarlo inventare all'AI.
+
+    Prima erano due insiemi di numeri indipendenti: la pagina dell'analisi
+    economica dichiarava un ricavo lordo annuo e la pagina del piano pricing ne
+    totalizzava un altro, più basso di circa un terzo, per giunta etichettato
+    "Scenario ottimistico". Due risposte diverse alla stessa domanda nello
+    stesso report. Ricostruendolo qui il totale torna per costruzione.
+
+    Ricavo mese = prezzo/notte x occupazione% x giorni del mese."""
+    occ = data.get("occupazione") or []
+    if len(occ) != 12:
+        # Senza i 12 mesi deterministici si tiene quello che c'è, limitandosi
+        # a correggere la colonna eventi.
+        righe = data.get("pricing_mensile")
+        if righe:
+            nuove = []
+            for riga in righe:
+                riga = list(riga) + [""] * max(0, 6 - len(riga))
+                _sigla = str(riga[0]).split("/")[0].strip()[:3].capitalize()
+                riga[5] = _EVENTI_MESE.get(_sigla, "")
+                nuove.append(riga)
+            data["pricing_mensile"] = nuove
+        return data
+
+    grezzi = []
+    for mese, occ_pct, prezzo, _stage in occ:
+        sigla = str(mese).strip()[:3].capitalize()
+        it, en = _MESI_ESTESI.get(sigla, (str(mese), str(mese)))
+        giorni = _GIORNI_MESE.get(sigla, 30)
+        grezzi.append([it, en, prezzo, occ_pct, prezzo * (occ_pct / 100) * giorni, sigla])
+
+    # La somma dei 12 mesi pesati non coincide con prezzo medio x notti/anno
+    # usato dall'analisi economica (medie diverse dello stesso mercato): senza
+    # ancoraggio le due pagine chiuderebbero comunque su cifre diverse. Si
+    # tiene la FORMA mensile reale e se ne riporta il LIVELLO sul ricavo lordo
+    # del report, così la colonna somma esattamente il totale dichiarato.
+    _lordo = data.get("ricavo_lordo") or 0
+    _somma = sum(r[4] for r in grezzi)
+    _fattore = (_lordo / _somma) if (_lordo and _somma) else 1.0
+
+    righe = []
+    for r in grezzi:
+        it, en, prezzo, occ_pct, ricavo_raw, sigla = r
+        righe.append([it, en, prezzo, occ_pct, round(ricavo_raw * _fattore), _EVENTI_MESE.get(sigla, "")])
+
+    # Lo scarto di arrotondamento finisce sull'ultimo mese, così il totale a
+    # video è identico al ricavo lordo al centesimo.
+    if _lordo:
+        _delta = _lordo - sum(r[4] for r in righe)
+        righe[-1][4] += _delta
+
+    data["pricing_mensile"] = righe
+    return data
+
+
 def _ricalcola_kpi_strategico(data):
     """ADR e RevPAR ricalcolati sui valori deterministici finali. Prima
     arrivavano dall'AI e restavano scollegati dalla formula stampata di fianco
@@ -3835,6 +3983,9 @@ def generate_strategico():
         # ADR/RevPAR deterministici (prima venivano dall'AI e non tornavano
         # con la formula stampata di fianco).
         _ricalcola_kpi_strategico(data)
+
+        # Colonna eventi del piano pricing dal calendario reale, non dall'AI.
+        _pricing_mensile_deterministico(data)
 
         # POI nello schema a slot fissi del Base, così la pagina "Posizione e
         # punti di interesse" è la stessa tabella sui due prodotti.

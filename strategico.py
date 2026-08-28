@@ -182,6 +182,74 @@ def draw_centred_fit(c, cx, y, testo, max_w, font, size, line_h=None, min_size=5
     return y
 
 
+def _righe_nota(c, testo, max_w, size):
+    righe, linea = [], ""
+    for parola in str(testo).split():
+        prova = f"{linea} {parola}".strip()
+        if c.stringWidth(prova, "Helvetica", size) > max_w and linea:
+            righe.append(linea)
+            linea = parola
+        else:
+            linea = prova
+    if linea:
+        righe.append(linea)
+    return righe
+
+
+def altezza_nota(c, testi, box_w, size=7, massimo=42*mm):
+    """Altezza da riservare in fondo alle card perché la nota più lunga delle
+    tre ci stia tutta. Le card vanno allineate, quindi si dimensiona sul caso
+    peggiore invece di lasciare una fascia fissa: con note corte non resta un
+    buco, con note lunghe non serve rimpicciolire il testo."""
+    max_w = box_w - 8*mm
+    n = max((len(_righe_nota(c, t, max_w, size)) for t in testi if t), default=0)
+    return min(massimo, n * (size + 2.2) + 3*mm) if n else 0
+
+
+def draw_nota_card(c, testo, bx, by, box_w, altezza, colore=None, size=7, min_size=5):
+    """Nota in fondo a una card scenario. Il testo è scritto dall'AI e può
+    essere lungo quanto vuole: prima si cerca il corpo più grande che ci sta
+    nella fascia riservata, poi si scrive dall'alto verso il basso. Il ciclo
+    precedente partiva da una quota fissa e andava giù senza limite, quindi le
+    note lunghe finivano sotto il riquadro colorato.
+    Colore pieno e non corsivo: sono suggerimenti operativi, non note a piè di
+    pagina."""
+    if not testo:
+        return
+    colore = colore or BLUE_NIGHT
+    max_w = box_w - 8*mm
+    corpo = size
+    righe = []
+    while True:
+        interlinea = corpo + 2.2
+        righe, linea = [], ""
+        for parola in testo.split():
+            prova = f"{linea} {parola}".strip()
+            if c.stringWidth(prova, "Helvetica", corpo) > max_w and linea:
+                righe.append(linea)
+                linea = parola
+            else:
+                linea = prova
+        if linea:
+            righe.append(linea)
+        if len(righe) * interlinea <= altezza or corpo <= min_size:
+            break
+        corpo -= 0.5
+
+    interlinea = corpo + 2.2
+    # Se anche al corpo minimo non ci sta, si tengono le righe che entrano:
+    # meglio una nota troncata che una che sfonda la card.
+    massimo = max(1, int(altezza // interlinea))
+    righe = righe[:massimo]
+
+    c.setFont("Helvetica", corpo)
+    c.setFillColor(colore)
+    ny = by + altezza - interlinea + 1.5
+    for riga in righe:
+        c.drawString(bx + 4*mm, ny, riga)
+        ny -= interlinea
+
+
 def stage_color(stage):
     if stage == "Peak":  return GOLD
     if stage == "Alta":  return TEAL
@@ -1309,7 +1377,10 @@ def page5(c, data):
 
     # Totali
     tot_ricavo = sum(r[4] for r in data.get('pricing_mensile', []))
-    pr_data.append(["TOTALE ANNUO", "", "", f"\u20ac {tot_ricavo:,}".replace(",","."), "Scenario ottimistico"])
+    # Etichetta "Scenario ottimistico" rimossa: il totale \u00e8 la somma dei 12
+    # mesi calcolati sugli stessi prezzi e occupazioni dell'analisi economica,
+    # quindi \u00e8 il ricavo lordo di riferimento, non uno scenario a parte.
+    pr_data.append(["TOTALE ANNUO", "", "", f"\u20ac {tot_ricavo:,}".replace(",","."), "Ricavo lordo annuo stimato"])
 
     col_w_pr = [(W-28*mm)*0.20, (W-28*mm)*0.13, (W-28*mm)*0.09, (W-28*mm)*0.15, (W-28*mm)*0.43]
     tbl_pr = Table(pr_data, colWidths=col_w_pr)
@@ -1366,33 +1437,42 @@ def page6(c, data):
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
-        f"Normativa affitti brevi — {data.get('comune_normativa', '')} / {data.get('regione_normativa', '')} \u00b7 2025")
+        f"Normativa affitti brevi — {data.get('comune_normativa', '')} / {data.get('regione_normativa', '')} "
+        f"\u00b7 {datetime.date.today().year}")
     y -= 3*mm
     draw_section_subtitle(c, 14*mm, y, "Obblighi normativi vigenti alla data di generazione del report")
     y -= 6*mm
 
-    norm_data = [["Obbligo / Voce", "Dettaglio", "Stato"]]
-    for voce, dettaglio, stato in data.get('normativa_extra', []):
-        norm_data.append([voce, dettaglio, stato])
+    # Celle come Paragraph: prima erano stringhe semplici, che in ReportLab non
+    # vanno mai a capo ("WORDWRAP" non è un comando di TableStyle e veniva
+    # ignorato). I testi normativi sono lunghi e finivano uno sopra l'altro,
+    # sconfinando nelle colonne accanto e fuori pagina.
+    stile_voce  = ParagraphStyle("normVoce",  fontName="Helvetica-Bold", fontSize=7, textColor=BLUE_PRIMARY, leading=9)
+    stile_dett  = ParagraphStyle("normDett",  fontName="Helvetica",      fontSize=7, textColor=BLUE_NIGHT,   leading=9)
+    stile_stato = ParagraphStyle("normStato", fontName="Helvetica",      fontSize=7, textColor=BLUE_NIGHT,   leading=9)
+    stile_head  = ParagraphStyle("normHead",  fontName="Helvetica-Bold", fontSize=7, textColor=WHITE,        leading=9)
 
-    col_w_norm = [(W-28*mm)*0.28, (W-28*mm)*0.52, (W-28*mm)*0.20]
+    norm_data = [[Paragraph(h, stile_head) for h in ("Obbligo / Voce", "Dettaglio", "Stato")]]
+    for riga in data.get('normativa_extra', []):
+        voce, dettaglio, stato = (list(riga) + ["", "", ""])[:3]
+        norm_data.append([
+            Paragraph(str(voce), stile_voce),
+            Paragraph(str(dettaglio), stile_dett),
+            Paragraph(str(stato), stile_stato),
+        ])
+
+    col_w_norm = [(W-28*mm)*0.26, (W-28*mm)*0.56, (W-28*mm)*0.18]
     tbl_norm = Table(norm_data, colWidths=col_w_norm)
     tbl_norm.setStyle(TableStyle([
         ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
-        ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
-        ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0,0), (-1,-1), 7),
-        ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
-        ("TEXTCOLOR",     (0,1), (-1,-1), BLUE_NIGHT),
         ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, CREAM]),
         ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
-        ("TOPPADDING",    (0,0), (-1,-1), 4),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ("VALIGN",        (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
         ("LEFTPADDING",   (0,0), (-1,-1), 5),
-        ("WORDWRAP",      (0,0), (-1,-1), True),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 5),
         ("BACKGROUND",    (0,1), (0,-1), HexColor("#E3F2FA")),
-        ("TEXTCOLOR",     (0,1), (0,-1), BLUE_PRIMARY),
-        ("FONTNAME",      (0,1), (0,-1), "Helvetica-Bold"),
     ]))
     tbl_norm.wrapOn(c, W-28*mm, 300)
     tbl_norm.drawOn(c, 14*mm, y - tbl_norm._height)
@@ -1444,9 +1524,13 @@ def page7(c, data):
         ["VALORE DI MERCATO come asset B&B",
          f"EBITDA  /  Saggio cap.  =  \u20ac {ebitda:,}  /  {saggio}%  =".replace(",","."),
          fmt_eu(valore)],
+        # A zero si scriveva "€ 0", che davanti a un cliente si legge come
+        # "il tuo immobile non vale niente". Le due righe sotto già dicono n/d
+        # per lo stesso motivo: qui mancava.
         ["Valore immobile stimato (mercato)",
-         "Stima da banche dati OMI per zona e tipologia",
-         fmt_eu(v_stimato)],
+         "Stima da banche dati OMI per zona e tipologia"
+         if v_stimato else "Non disponibile per questa zona: nessuna stima OMI di compravendita",
+         fmt_eu(v_stimato) if v_stimato else "n/d"],
         # v_stimato arriva dall'AI e nel template del prompt vale 0: il backend
         # non lo calcola (nessuna stima OMI di compravendita oggi). Senza
         # guardia il Cap Rate divideva per zero e faceva fallire con 500
@@ -1555,8 +1639,12 @@ def page8(c, data):
     colori  = [RED, BLUE_PRIMARY, GOLD]
     bg_col  = [RED_LIGHT, HexColor("#E3F4FC"), GOLD_LIGHT]
 
+    # Card più alta e passo righe più stretto per liberare in fondo una fascia
+    # dedicata alla nota, che prima usciva sotto il riquadro colorato.
     box_w = (W - 34*mm) / 3
-    box_h = 90*mm
+    passo_riga = 9*mm
+    nota_h = altezza_nota(c, [s.get("note", "") for s in scenari], box_w)
+    box_h = 13*mm + 5*mm + 6*passo_riga + nota_h
 
     for i, (sc, col, bg) in enumerate(zip(scenari, colori, bg_col)):
         bx = 14*mm + i*(box_w + 3*mm)
@@ -1599,25 +1687,11 @@ def page8(c, data):
             c.setStrokeColor(BORDER)
             c.setLineWidth(0.3)
             c.line(bx+4*mm, dy-2*mm, bx+box_w-4*mm, dy-2*mm)
-            dy -= 10*mm
+            dy -= passo_riga
 
-        # Nota
-        words = sc["note"].split()
-        line, ny = "", by + 8*mm
-        for w in words:
-            test = line + (" " if line else "") + w
-            if c.stringWidth(test, "Helvetica-Oblique", 6) > box_w - 8*mm:
-                c.setFont("Helvetica-Oblique", 6)
-                c.setFillColor(MUTED)
-                c.drawString(bx+4*mm, ny, line)
-                ny -= 3.5*mm
-                line = w
-            else:
-                line = test
-        if line:
-            c.setFont("Helvetica-Oblique", 6)
-            c.setFillColor(MUTED)
-            c.drawString(bx+4*mm, ny, line)
+        # Nota: fascia dedicata in fondo alla card, testo pieno nel colore
+        # dello scenario — è un suggerimento operativo, va letto.
+        draw_nota_card(c, sc.get("note", ""), bx, by + 3*mm, box_w, nota_h - 3*mm, colore=col)
 
     y -= box_h + 8*mm
 
@@ -1694,7 +1768,9 @@ def page8b_durata(c, data):
     bg_col = [GOLD_LIGHT, HexColor("#E3F4FC"), TEAL_LIGHT]
 
     box_w = (W - 34*mm) / 3
-    box_h = 90*mm
+    passo_riga = 9*mm
+    nota_h = altezza_nota(c, [s.get("nota", "") for s in scenari], box_w)
+    box_h = 13*mm + 5*mm + 6*passo_riga + nota_h
 
     for i, (sc, col, bg) in enumerate(zip(scenari, colori, bg_col)):
         bx = 14*mm + i*(box_w + 3*mm)
@@ -1733,24 +1809,9 @@ def page8b_durata(c, data):
             c.setStrokeColor(BORDER)
             c.setLineWidth(0.3)
             c.line(bx+4*mm, dy-2*mm, bx+box_w-4*mm, dy-2*mm)
-            dy -= 10*mm
+            dy -= passo_riga
 
-        words = sc["nota"].split()
-        line, ny = "", by + 8*mm
-        for w in words:
-            test = line + (" " if line else "") + w
-            if c.stringWidth(test, "Helvetica-Oblique", 6) > box_w - 8*mm:
-                c.setFont("Helvetica-Oblique", 6)
-                c.setFillColor(MUTED)
-                c.drawString(bx+4*mm, ny, line)
-                ny -= 3.5*mm
-                line = w
-            else:
-                line = test
-        if line:
-            c.setFont("Helvetica-Oblique", 6)
-            c.setFillColor(MUTED)
-            c.drawString(bx+4*mm, ny, line)
+        draw_nota_card(c, sc.get("nota", ""), bx, by + 3*mm, box_w, nota_h - 3*mm, colore=col)
 
     y -= box_h + 8*mm
 
@@ -2036,28 +2097,82 @@ def page9(c, data):
     # (PDF/genera_strategico_reportup.py, dati finti): su un JSON reale
     # avrebbe spacchettato le CHIAVI del dict come se fossero i tre valori.
     _colore_piano90 = {"BLU": BLUE_PRIMARY, "VERDE": TEAL, "GOLD": GOLD}
+    fasi = []
     for fase in (data.get("piano_90") or []):
-        fase_label = fase.get("titolo", "") if isinstance(fase, dict) else fase[0]
-        col = _colore_piano90.get(fase.get("colore", "BLU"), BLUE_PRIMARY) if isinstance(fase, dict) else fase[1]
-        items = (fase.get("azioni") or []) if isinstance(fase, dict) else fase[2]
+        fasi.append((
+            fase.get("titolo", "") if isinstance(fase, dict) else fase[0],
+            _colore_piano90.get(fase.get("colore", "BLU"), BLUE_PRIMARY) if isinstance(fase, dict) else fase[1],
+            (fase.get("azioni") or []) if isinstance(fase, dict) else fase[2],
+        ))
 
+    # Quante azioni scrive l'AI non è prevedibile: con tre fasi piene l'ultima
+    # riga finiva sotto il footer. Si misura prima l'ingombro e si stringe
+    # progressivamente corpo e spaziature finché il piano sta tutto in pagina,
+    # invece di scriverlo a passo fisso e sperare che basti.
+    larghezza_testo = W - 34*mm
+    spazio = y - 13*mm  # fondo pagina utile, sopra la fascia del footer
+
+    def _righe(testo, size):
+        n, linea = 0, ""
+        for parola in str(testo).split():
+            prova = f"{linea} {parola}".strip()
+            if c.stringWidth(prova, "Helvetica", size) > larghezza_testo and linea:
+                n += 1
+                linea = parola
+            else:
+                linea = prova
+        return n + 1 if linea else max(n, 1)
+
+    # Ogni azione consuma anche lo scarto fra la quota corrente e la prima
+    # riga di testo (offset del pallino): con 18 azioni sono ~45 mm, ignorarli
+    # faceva scegliere un passo troppo largo e l'ultima riga finiva comunque
+    # sotto il footer.
+    offset_item = 2.5*mm
+
+    def _ingombro(size, line_h, gap_item, gap_fase, header_h):
+        totale = 0
+        for _, _, items in fasi:
+            totale += header_h
+            for item in items:
+                totale += offset_item + _righe(item, size) * line_h + gap_item
+            totale += gap_fase
+        return totale
+
+    # Dal passo comodo a quello più compatto ancora leggibile.
+    livelli = [
+        (7.5, 4.2*mm, 1.8*mm, 4.0*mm, 7.5*mm),
+        (7.2, 4.0*mm, 1.5*mm, 3.6*mm, 7.5*mm),
+        (7.0, 3.9*mm, 1.2*mm, 3.2*mm, 7.0*mm),
+        (6.7, 3.7*mm, 1.0*mm, 2.8*mm, 7.0*mm),
+        (6.4, 3.5*mm, 0.8*mm, 2.4*mm, 6.5*mm),
+        (6.0, 3.3*mm, 0.6*mm, 2.0*mm, 6.5*mm),
+        (5.6, 3.1*mm, 0.5*mm, 1.6*mm, 6.0*mm),
+    ]
+    size, line_h, gap_item, gap_fase, header_h = livelli[-1]
+    for livello in livelli:
+        if _ingombro(*livello) <= spazio:
+            size, line_h, gap_item, gap_fase, header_h = livello
+            break
+
+    barra_h = header_h - 1*mm
+    for fase_label, col, items in fasi:
         c.setFillColor(col)
-        c.roundRect(14*mm, y - 6.5*mm, W - 28*mm, 6.5*mm, 2*mm, fill=1, stroke=0)
-        c.setFont("Helvetica-Bold", 8)
+        c.roundRect(14*mm, y - barra_h, W - 28*mm, barra_h, 2*mm, fill=1, stroke=0)
+        c.setFont("Helvetica-Bold", min(8, size + 1))
         c.setFillColor(WHITE)
-        c.drawString(18*mm, y - 4.5*mm, fase_label)
-        y -= 7.5*mm
+        c.drawString(18*mm, y - barra_h + 1.9*mm, fase_label)
+        y -= header_h
 
         for item in items:
             c.setFillColor(col)
             c.circle(17*mm, y - 1.5*mm, 1.2*mm, fill=1, stroke=0)
             # Le azioni sono frasi lunghe scritte dall'AI: senza a capo
             # uscivano ben oltre il margine destro della pagina.
-            y_dopo = wrap_simple(c, item, 20*mm, y - 2.5*mm, W - 34*mm,
-                                 "Helvetica", 7.5, 4.2*mm, color=BLUE_NIGHT)
-            y = y_dopo - 1.8*mm
+            y_dopo = wrap_simple(c, item, 20*mm, y - offset_item, larghezza_testo,
+                                 "Helvetica", size, line_h, color=BLUE_NIGHT)
+            y = y_dopo - gap_item
 
-        y -= 4*mm
+        y -= gap_fase
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 10 — Analisi personale Arch. Sica
