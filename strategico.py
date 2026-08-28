@@ -1283,7 +1283,7 @@ def page4(c, data):
 
     cards4 = [
         ("Margine netto",          f"{data.get('margine_percent', 0)}%",          WHITE,      BLUE_NIGHT, small_w, small_h),
-        ("Ricavo lordo stimato",   fmt_eur(data.get('ricavo_lordo', 0)),           TEAL_LIGHT, TEAL,       small_w, small_h),
+        ("Totale ricavi",          fmt_eur(data.get('totale_ricavi', 0)),          TEAL_LIGHT, TEAL,       small_w, small_h),
         ("Costi variabili totali", f"- {fmt_eur(data.get('totale_costi', 0))}",   RED_LIGHT,  RED,        small_w, small_h),
         ("Il tuo guadagno stimato",fmt_eur(data.get('profitto_netto', 0)),         GOLD_LIGHT, GOLD,       big_w,   big_h),
     ]
