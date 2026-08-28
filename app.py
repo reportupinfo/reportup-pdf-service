@@ -538,8 +538,8 @@ def _calcola_valore_asset(data):
 # backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
 # obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
 # page_obiettivi in strategico.py. Numerazione allineata alla sequenza reale
-# in build_strategico_pdf_bytes (16 pagine): aggiornare qui se cambia
-# l'ordine o il numero di pagine del PDF.
+# in build_strategico_pdf_bytes (17 pagine da quando è stato aggiunto il
+# riepilogo finale): aggiornare qui se cambia l'ordine o il numero di pagine.
 _OBIETTIVI_PAGINE_STRATEGICO = {
     "massimizzare_guadagno":    ("Pag. 6-10", "Moltiplicatori di valore, scenari economici, durata soggiorno e dati di mercato extra"),
     "confronto_affitto":        ("Pag. 7", "Confronto con l'affitto tradizionale"),
@@ -962,7 +962,10 @@ def draw_header(c, data):
                       f"Generato: {data.get('data_generazione', '')}  \u00b7  Valido 90 giorni")
 
 
-def draw_footer(c, page_num):
+TOTALE_PAGINE_BASE = 5
+
+
+def draw_footer(c, page_num, total=TOTALE_PAGINE_BASE):
     footer_h = 9 * mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(0, 0, W, footer_h, fill=1, stroke=0)
@@ -971,7 +974,9 @@ def draw_footer(c, page_num):
     from datetime import date as _date
     c.drawString(14 * mm, 3.5 * mm,
                  f"\u00a9 {_date.today().year} ReportUp \u00b7 reportup.it  |  Documento orientativo - non costituisce consulenza professionale")
-    c.drawRightString(W - 14 * mm, 3.5 * mm, f"Pag. {page_num}")
+    # "Pag. 4 / 5" invece del solo numero: stesso formato dello Strategico,
+    # che essendo lungo 17 pagine ha bisogno del totale per orientarsi.
+    c.drawRightString(W - 14 * mm, 3.5 * mm, f"Pag. {page_num} / {total}")
 
 
 def draw_section_header(c, x, y, w, text):
@@ -1113,19 +1118,21 @@ def page1(c, D):
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Scheda immobile")
     y -= 2 * mm
     col_w = (W - 28 * mm) / 2
-    # Sessione 78 (audit 24/8): camere/bagni/posti letto arrivano come numero
-    # nudo ("1", "4" — corretti a monte da _camere_deterministiche/
-    # _posti_letto_default) mentre gli altri campi della scheda sono testo
-    # descrittivo pieno ("Ben tenuto e curato"). _concorda_numero aggiunge
-    # l'unità di misura solo per la resa grafica, senza toccare D — i calcoli
-    # a valle continuano a leggere il valore numerico originale da D.
-    fields_l = [("Tipologia", D.get("tipologia", "")), ("Superficie", D.get("superficie", "")),
-                ("Piano", D.get("piano", "")), ("Stato", D.get("stato", "")),
-                ("Camere", _concorda_numero(D.get("camere", ""), "camera", "camere"))]
+    # Le chiavi `scheda_*` (_prepara_etichette_scheda) portano l'etichetta già
+    # leggibile — codici del form tradotti e unità di misura aggiunte ai numeri
+    # nudi di camere/bagni/posti letto — e sono le stesse lette dallo
+    # Strategico, così la scheda si legge identica sui due PDF. I campi
+    # originali di D restano intatti: i calcoli a valle continuano a leggere
+    # quelli.
+    fields_l = [("Tipologia", D.get("scheda_tipologia") or D.get("tipologia", "")),
+                ("Superficie", D.get("scheda_superficie") or D.get("superficie", "")),
+                ("Piano", D.get("scheda_piano") or D.get("piano", "")),
+                ("Stato", D.get("scheda_stato") or D.get("stato", "")),
+                ("Camere", D.get("scheda_camere") or _concorda_numero(D.get("camere", ""), "camera", "camere"))]
     fields_r = [("Comune", D.get("comune", "")), ("Zona", D.get("zona", "")),
-                ("Epoca", D.get("epoca", "")),
-                ("Bagni", _concorda_numero(D.get("bagni", ""), "bagno", "bagni")),
-                ("Posti letto", _concorda_numero(D.get("posti_letto", ""), "posto letto", "posti letto"))]
+                ("Epoca", D.get("scheda_epoca") or D.get("epoca", "")),
+                ("Bagni", D.get("scheda_bagni") or _concorda_numero(D.get("bagni", ""), "bagno", "bagni")),
+                ("Posti letto", D.get("scheda_posti_letto") or _concorda_numero(D.get("posti_letto", ""), "posto letto", "posti letto"))]
     row_h = 7.5 * mm
     label_col_w = 28 * mm
     for i, ((ll, lv), (rl, rv)) in enumerate(zip(fields_l, fields_r)):
@@ -1437,8 +1444,12 @@ def page3(c, D):
     )
 
     def _cella_media_mercato(valore_annuo, extra=""):
+        # Il separatore delle migliaia si applica solo al numero: prima il
+        # .replace(",", ".") colpiva l'intera frase e la virgola della nota
+        # diventava un punto ("per la tipologia. soggiorno medio 2 notti").
+        importo = f"{valore_annuo:,}".replace(",", ".")
         nota = f' <font size="6" color="#7A8A96">(media di mercato per la tipologia{extra})</font>'
-        return Paragraph(f"€ {valore_annuo:,}/anno{nota}".replace(",", "."), style_media_mercato)
+        return Paragraph(f"€ {importo}/anno{nota}", style_media_mercato)
 
     p = D.get("prezzo_notte_stimato", 0)
     occ_pct = D.get("occupazione_percent", 0)
@@ -1454,7 +1465,9 @@ def page3(c, D):
                             f"(soggiorno medio {_sm_txt} notti) = € {_pulizie_tot}")
     else:
         _formula_pulizie = f"€ {pulizia_unit}/cambio x {notti} notti = € {_pulizie_tot}"
-    _tipologia_costi = D.get("tipologia", "immobile")
+    # Etichetta leggibile, non il codice del form: qui usciva "bilocale"
+    # minuscolo mentre lo Strategico scriveva "Bilocale" nella stessa riga.
+    _tipologia_costi = D.get("scheda_tipologia") or D.get("tipologia", "immobile")
     _nota_costi_variabili = f"Media di mercato per tipologia: {_tipologia_costi}"
     # Sessione 68: nota breve sul soggiorno medio anche per la biancheria,
     # solo descrittiva — il valore resta fisso/anno per tipologia, NON
@@ -1652,12 +1665,18 @@ def page4(c, D):
     draw_footer(c, 4)
     y = H - 22 * mm
 
+    # competitor_zona arriva dall'AI e può mancare: il trattino va aggiunto
+    # solo se c'è davvero qualcosa dopo, altrimenti il titolo finisce con un
+    # "-" penzolante ("Analisi competitor -").
+    _zona_comp = str(D.get("competitor_zona") or D.get("zona") or "").strip()
+    _suffisso_comp = f" - {_zona_comp}" if _zona_comp and _zona_comp != "—" else ""
+
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm,
-                            f"Analisi competitor - {D.get('competitor_zona', '')}")
+                            f"Analisi competitor{_suffisso_comp}")
     y -= 3 * mm
     draw_section_subtitle(c, 14 * mm, y, "Confronto diretto con gli annunci attivi nella zona")
     y -= 6 * mm
-    comp_data = [["Tipologia annunci - " + D.get("competitor_zona", ""), "Prezzo med."]]
+    comp_data = [[f"Tipologia annunci{_suffisso_comp}", "Prezzo med."]]
     for row in D.get("competitor", []):
         comp_data.append(list(row))
     # Sessione 70: tolte le colonne N./Occup./Rating — senza dati reali
@@ -1733,20 +1752,9 @@ def page4(c, D):
     c.setFillColor(BLUE_NIGHT)
     c.drawString(18 * mm, y - 7 * mm, "Vuoi il piano d\u2019azione completo?")
 
-    # Sessione 68: badge "IN ARRIVO" — lo Strategico è attualmente in
-    # standby/sviluppo, non acquistabile. Le feature restano descritte per
-    # anticipare il lancio, ma deve essere evidente che non è ancora
-    # disponibile — nessuna ambiguità che porti a un acquisto impossibile.
-    _badge_testo = "IN ARRIVO"
-    c.setFont("Helvetica-Bold", 7)
-    _badge_w = c.stringWidth(_badge_testo, "Helvetica-Bold", 7) + 6 * mm
-    _badge_x = 14 * mm + (W - 28 * mm) - _badge_w - 4 * mm
-    _badge_y = y - 9 * mm
-    c.setFillColor(BLUE_NIGHT)
-    c.roundRect(_badge_x, _badge_y, _badge_w, 5.5 * mm, 2.5 * mm, fill=1, stroke=0)
-    c.setFillColor(WHITE)
-    c.drawCentredString(_badge_x + _badge_w / 2, _badge_y + 1.7 * mm, _badge_testo)
-
+    # Il badge "IN ARRIVO" e la nota "in fase di sviluppo" che stavano qui sono
+    # stati rimossi: lo Strategico è in lancio e acquistabile, tenerli avrebbe
+    # scoraggiato l'upsell che questo riquadro esiste per fare.
     upsell_text = ("Il Report Strategico (€ 149) include tutto il Base piu': pricing stagionale mese per mese, "
                    "3 scenari economici (pessimistico / realistico / ottimistico), piano d'azione 90 giorni, "
                    "cap rate e valore asset, normativa affitti brevi locale e l'analisi personale "
@@ -1756,8 +1764,8 @@ def page4(c, D):
     c.setFont("Helvetica-Oblique", 7)
     c.setFillColor(MUTED)
     uy = draw_wrapped_text(
-        c, "Il Report Strategico è attualmente in fase di sviluppo: le funzionalit\u00e0 descritte "
-           "sopra saranno presto disponibili su reportup.it.",
+        c, "Disponibile su reportup.it — chi ha già acquistato il Report Base paga "
+           "solo la differenza rispetto ai € 39 già pagati.",
         18 * mm, uy - 1 * mm, W - 36 * mm, "Helvetica-Oblique", 7, 4 * mm, MUTED,
     )
     y -= upsell_h + 6 * mm
@@ -1967,6 +1975,71 @@ def _concorda_numero(valore, singolare, plurale):
     except (ValueError, TypeError):
         return f"{valore} {plurale}"
     return f"{n} {singolare}" if n == 1 else f"{n} {plurale}"
+
+
+# ── Etichette scheda immobile ─────────────────────────────────────────────────
+# Il form manda codici secchi ("bilocale", "1-3", "anni70", "base"). Il Base li
+# riceve già in chiaro solo perché il suo prompt AI li riscrive; lo Strategico
+# no e stampava il codice grezzo nella scheda ("anni70", "1-3", "base").
+# La conversione qui è deterministica e condivisa dai due prodotti, così la
+# stessa riga di scheda si legge identica su entrambi i PDF senza dipendere da
+# cosa decide di scrivere l'AI. I valori finiscono in chiavi `scheda_*`
+# dedicate: `tipologia`/`piano`/`stato`/`epoca` restano intatti perché sono
+# usati come chiavi di calcolo a valle (camere deterministiche, comparabili
+# AirROI, nota costi per tipologia).
+_LABEL_TIPOLOGIA = {
+    "stanza_singola":      "Stanza singola",
+    "stanza_doppia":       "Stanza doppia",
+    "bilocale":            "Bilocale",
+    "trilocale":           "Trilocale",
+    "appartamento_grande": "Appartamento 4+ locali",
+    "villa":               "Villa / Casa indipendente",
+}
+_LABEL_PIANO = {
+    "terra":  "Piano terra",
+    "1-3":    "1° – 3° piano",
+    "alto":   "Piano alto (4°+)",
+    "attico": "Attico / Mansarda",
+}
+_LABEL_STATO = {
+    "base":          "Arredi base, funzionale",
+    "buono":         "Ben tenuto e curato",
+    "ristrutturato": "Ristrutturato, moderno",
+    "lusso":         "Finiture premium, design",
+}
+_LABEL_EPOCA = {
+    "pre1960":  "Ante 1960",
+    "anni60":   "Anni '60",
+    "anni70":   "Anni '70",
+    "anni80":   "Anni '80",
+    "anni90":   "Anni '90",
+    "anni2000": "Anni 2000",
+    "anni2010": "Anni 2010",
+    "anni2020": "Anni 2020",
+    "nuova":    "Nuova costruzione",
+}
+
+
+def _etichetta_scheda(valore, mappa):
+    """Traduce un codice del form nella sua etichetta leggibile. Se il valore
+    non è un codice noto (caso Base: l'AI ha già scritto "Anni '70") viene
+    restituito intatto — la funzione è idempotente e non riscrive mai testo
+    già in chiaro."""
+    grezzo = str(valore or "").strip()
+    return mappa.get(grezzo.lower().replace(" ", "_"), grezzo)
+
+
+def _prepara_etichette_scheda(data):
+    data["scheda_tipologia"] = _etichetta_scheda(data.get("tipologia"), _LABEL_TIPOLOGIA)
+    data["scheda_piano"]     = _etichetta_scheda(data.get("piano"), _LABEL_PIANO)
+    data["scheda_stato"]     = _etichetta_scheda(data.get("stato"), _LABEL_STATO)
+    data["scheda_epoca"]     = _etichetta_scheda(data.get("epoca"), _LABEL_EPOCA)
+    data["scheda_camere"]      = _concorda_numero(data.get("camere", ""), "camera", "camere")
+    data["scheda_bagni"]       = _concorda_numero(data.get("bagni", ""), "bagno", "bagni")
+    data["scheda_posti_letto"] = _concorda_numero(data.get("posti_letto", ""), "posto letto", "posti letto")
+    _sup = str(data.get("superficie") or "").strip()
+    data["scheda_superficie"] = f"{_sup} m2" if _sup and "m" not in _sup.lower() else _sup
+    return data
 
 
 _WIKI_CACHE = {}
@@ -3174,9 +3247,13 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         data["kpi_occupazione"] = _occ_new
 
         _ricavo_lordo_new = round(_p_new * _notti_new)
-        _ricavo_lordo_old = data.get("ricavo_lordo", 0)
-        _bonus_old = data.get("bonus_dirette", 0)
-        _bonus_new = round(_bonus_old * (_ricavo_lordo_new / _ricavo_lordo_old)) if _ricavo_lordo_old else _bonus_old
+        # Bonus prenotazioni dirette: 7% del ricavo lordo, punto centrale della
+        # forbice 5-10% dichiarata in tabella. Prima si riscalava il valore
+        # scritto dall'AI, che quindi restava una percentuale leggermente
+        # diversa a ogni generazione: sullo stesso immobile il Base mostrava
+        # € 2.228 e lo Strategico € 2.235. Ora è lo stesso numero su entrambi.
+        _bonus_new = round(_ricavo_lordo_new * 0.07)
+        data["bonus_dirette_pct"] = "5-10%"
         _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
 
         _comm_pct = data.get("costi_commissioni_pct", 15)
@@ -3354,6 +3431,19 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         data["totale_costi"] = costi_base + rata_annua
         data["profitto_netto"] = data.get("totale_ricavi", 0) - data["totale_costi"]
         data["margine_percent"] = round(data["profitto_netto"] / data.get("totale_ricavi", 1) * 100)
+
+    # Etichette leggibili della scheda immobile: ultimo passo, dopo che
+    # camere/posti letto deterministici sono già stati corretti sopra.
+    _prepara_etichette_scheda(data)
+
+    # Comune e regione della sezione normativa (solo Strategico): li scrive
+    # l'AI, ma il CSV dei comuni li ha già certi. Senza questo fallback, se
+    # l'AI li omette la pagina esce con "Normativa affitti brevi —  / " e
+    # "Regione · Comune di ·" — buchi visibili su un dato che conosciamo.
+    if not data.get("comune_normativa"):
+        data["comune_normativa"] = data.get("comune", "")
+    if not data.get("regione_normativa") and _record_comune:
+        data["regione_normativa"] = _record_comune.get("regione", "")
 
     return data
 
@@ -3593,6 +3683,84 @@ def _ricalcola_scenari_strategico(data):
     data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18)}
 
 
+def _ricalcola_kpi_strategico(data):
+    """ADR e RevPAR ricalcolati sui valori deterministici finali. Prima
+    arrivavano dall'AI e restavano scollegati dalla formula stampata di fianco
+    nella tabella economica: la riga diceva "Ricavo lordo / Notti occupate =
+    € 31.828 / 292" (= 109) e la colonna Valore mostrava € 72, il numero
+    inventato. Stessa incoerenza si propagava nel piè di pagina del piano
+    pricing e nella pagina dati di mercato."""
+    _ricavo_lordo = data.get("ricavo_lordo") or 0
+    _notti = data.get("notti_anno") or 0
+    _occ = data.get("occupazione_percent") or 0
+    if _ricavo_lordo and _notti:
+        data["adr"] = round(_ricavo_lordo / _notti)
+        data["revpar"] = round(data["adr"] * _occ / 100)
+
+
+# Parole chiave per ricondurre i punti di interesse liberi dello Strategico
+# agli stessi 4 slot fissi del Base (il 5° è l'aeroporto, deterministico).
+_POI_SLOT_KEYWORDS = (
+    (0, ("metro", "metropolitan", "stazione", "treno", "ferroviar", "bus", "autobus",
+         "tram", "funicolare", "porto", "traghett", "aliscaf", "capolinea")),
+    (1, ("centro storico", "centro citt", "piazza", "comune", "municipio", "corso")),
+    (2, ("museo", "castello", "palazzo", "duomo", "chiesa", "basilica", "cattedrale",
+         "monument", "spiaggia", "lungomare", "parco", "lago", "teatro", "scavi",
+         "attrazione", "borgo", "santuario", "terme", "impianti")),
+    (3, ("supermercat", "market", "conad", "coop", "farmacia", "negozi", "alimentari",
+         "servizi", "ospedale", "banca", "bar", "ristorant", "panificio", "edicola")),
+)
+
+
+def _poi_strategico_in_formato_base(data):
+    """Converte i POI dello Strategico (N punti liberi a 4 campi
+    [nome, a_piedi, mezzo_pubblico, impatto], scritti dall'AI) nello schema a
+    5 slot fissi del Base ([distanza, nome, impatto] per slot). Serve a far
+    girare sullo Strategico la stessa tabella "Posizione e punti di interesse"
+    del Base — stesse colonne, stesse etichette di categoria, stessa riga
+    aeroporto deterministica — invece delle colonne diverse che aveva prima.
+    Ogni punto finisce nello slot suggerito dalle sue parole chiave; quelli non
+    riconosciuti riempiono il primo slot ancora libero."""
+    righe = [list(r) for r in (data.get("poi") or []) if r]
+    if not righe:
+        return data
+    # Già in formato Base (3 campi): niente da convertire.
+    if all(len(r) <= 3 for r in righe):
+        return data
+
+    slot = [None] * 4
+    avanzi = []
+    for r in righe:
+        nome, a_piedi, descrittore, impatto = (list(r) + ["—"] * 4)[:4]
+        testo = f"{nome} {descrittore}".lower()
+        destinazione = None
+        for idx, parole in _POI_SLOT_KEYWORDS:
+            if slot[idx] is None and any(pa in testo for pa in parole):
+                destinazione = idx
+                break
+        riga_base = [str(a_piedi), str(nome), str(impatto)]
+        if destinazione is None:
+            avanzi.append(riga_base)
+        else:
+            slot[destinazione] = riga_base
+    for riga_base in avanzi:
+        for idx in range(4):
+            if slot[idx] is None:
+                slot[idx] = riga_base
+                break
+
+    righe_base = [s if s else ["—", "—", "—"] for s in slot]
+    # Stesse due regole del Base: 5° slot sempre l'aeroporto più vicino
+    # (deterministico, non AI) e slot "Comune di riferimento" vuoto quando
+    # l'immobile è già in un capoluogo o in una grande città.
+    righe_base.append(aeroporto_row(data.get("lat"), data.get("long")))
+    if str(data.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
+        righe_base[1] = ["—", "—", "—"]
+
+    data["poi"] = righe_base
+    return data
+
+
 @app.route("/generate-strategico", methods=["POST"])
 @require_internal_secret
 def generate_strategico():
@@ -3663,6 +3831,14 @@ def generate_strategico():
         # appena corretti, con lo scenario "realistico" scollegato dal resto
         # del PDF (stessa incoerenza che il Base ha già risolto per i KPI).
         _ricalcola_scenari_strategico(data)
+
+        # ADR/RevPAR deterministici (prima venivano dall'AI e non tornavano
+        # con la formula stampata di fianco).
+        _ricalcola_kpi_strategico(data)
+
+        # POI nello schema a slot fissi del Base, così la pagina "Posizione e
+        # punti di interesse" è la stessa tabella sui due prodotti.
+        _poi_strategico_in_formato_base(data)
 
         # Dopo il ricalcolo scenari: usa il profitto netto deterministico
         # finale, non quello di partenza dell'AI.

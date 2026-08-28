@@ -7,8 +7,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.colors import HexColor
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
+from reportlab.platypus import Table, TableStyle, Paragraph
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib import colors
+import datetime
 import io
 import math
 
@@ -63,14 +66,21 @@ def draw_header(c, data):
     c.drawRightString(W - 14*mm, H - 13*mm,
         f"Generato: {data.get('data_generazione', '')}  \u00b7  Valido 90 giorni")
 
-def draw_footer(c, data, page_num, total=16):
+TOTALE_PAGINE = 17
+
+
+def draw_footer(c, data, page_num, total=TOTALE_PAGINE):
     footer_h = 9*mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(0, 0, W, footer_h, fill=1, stroke=0)
     c.setFont("Helvetica", 6.5)
     c.setFillColor(HexColor("#A8BCC8"))
+    # Stessa riga del Base: simbolo \u00a9 e anno corrente (prima era fisso
+    # "(c) 2025", quindi un Base e uno Strategico generati lo stesso giorno
+    # mostravano copyright diversi).
     c.drawString(14*mm, 3.5*mm,
-        "(c) 2025 ReportUp \u00b7 reportup.it  |  Documento orientativo - non costituisce consulenza professionale")
+        f"\u00a9 {datetime.date.today().year} ReportUp \u00b7 reportup.it  |  "
+        "Documento orientativo - non costituisce consulenza professionale")
     c.drawRightString(W - 14*mm, 3.5*mm, f"Pag. {page_num} / {total}")
 
 def draw_section_header(c, x, y, w, text):
@@ -87,12 +97,90 @@ def draw_section_subtitle(c, x, y, text):
     c.setFillColor(MUTED)
     c.drawString(x, y, text)
 
+def draw_competitor(c, data, y):
+    """Tabella competitor identica a quella del Base (page4 in app.py): stesse
+    colonne, stessi stili, stessa riga finale evidenziata con la stima del tuo
+    immobile. I dati arrivano dallo stesso campo `competitor`, calcolato in
+    modo deterministico dal motore condiviso, quindi i due PDF mostrano gli
+    stessi prezzi per le stesse tipologie."""
+    _zona_comp = str(data.get("competitor_zona") or data.get("zona") or "").strip()
+    _suffisso_comp = f" - {_zona_comp}" if _zona_comp and _zona_comp != "—" else ""
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, f"Analisi competitor{_suffisso_comp}")
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y, "Confronto diretto con gli annunci attivi nella zona")
+    y -= 6*mm
+
+    comp_data = [[f"Tipologia annunci{_suffisso_comp}", "Prezzo med."]]
+    for row in data.get("competitor", []):
+        comp_data.append(list(row))
+    comp_data.append(["IL TUO IMMOBILE (stima)", f"€ {data.get('kpi_prezzo', data.get('prezzo_notte_stimato', 0))}"])
+
+    col_w_comp = [(W - 28*mm) * 0.65, (W - 28*mm) * 0.35]
+    tbl_comp = Table(comp_data, colWidths=col_w_comp)
+    tbl_comp.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTNAME", (0, 1), (-1, -2), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -2), BLUE_NIGHT),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, CREAM]),
+        ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("BACKGROUND", (0, -1), (-1, -1), TEAL_LIGHT),
+        ("TEXTCOLOR", (0, -1), (-1, -1), TEAL),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+    ]))
+    tbl_comp.wrapOn(c, W - 28*mm, 200)
+    tbl_comp.drawOn(c, 14*mm, y - tbl_comp._height)
+    return y - tbl_comp._height - 7*mm
+
+
+def fmt_num(val):
+    """Solo il numero col separatore delle migliaia. Serve per non applicare
+    .replace(",", ".") a intere frasi: dove la nota conteneva una virgola
+    (biancheria, FF&E) usciva un punto al suo posto — "per la tipologia.
+    soggiorno medio 2 notti"."""
+    return f"{val:,}".replace(",", ".")
+
+
 def fmt_eur(val):
-    return f"EUR {val:,}".replace(",", ".")
+    """Il Base stampa ovunque il simbolo €; qui usciva la sigla "EUR", quindi
+    la stessa cifra si leggeva "EUR 34.063" nello Strategico e "€ 34.063" nel
+    Base. Unificato sul simbolo."""
+    return f"€ {val:,}".replace(",", ".")
 
 def fmt_eu(val):
     """Versione con simbolo € per prezzi in tabelle"""
     return f"\u20ac {val:,}".replace(",", ".")
+
+def draw_centred_fit(c, cx, y, testo, max_w, font, size, line_h=None, min_size=5.5):
+    """Testo centrato che non esce mai dal riquadro: prima rimpicciolisce il
+    corpo, poi va a capo. Serve ai sottotitoli delle card scenario, che a
+    corpo fisso sbordavano sia a sinistra sia a destra della card colorata."""
+    line_h = line_h or size + 1.5
+    corpo = size
+    while corpo > min_size and c.stringWidth(testo, font, corpo) > max_w:
+        corpo -= 0.5
+    if c.stringWidth(testo, font, corpo) <= max_w:
+        c.setFont(font, corpo)
+        c.drawCentredString(cx, y, testo)
+        return y - line_h
+    righe, linea = [], ""
+    for parola in testo.split():
+        prova = f"{linea} {parola}".strip()
+        if c.stringWidth(prova, font, corpo) > max_w and linea:
+            righe.append(linea)
+            linea = parola
+        else:
+            linea = prova
+    if linea:
+        righe.append(linea)
+    c.setFont(font, corpo)
+    for riga in righe:
+        c.drawCentredString(cx, y, riga)
+        y -= line_h
+    return y
+
 
 def stage_color(stage):
     if stage == "Peak":  return GOLD
@@ -165,7 +253,7 @@ def wrap_simple(c, text, x, y, max_w, font, size, line_h, color=None):
 # ═══════════════════════════════════════════════════════════════════════════
 def page1(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 1, 16)
+    draw_footer(c, data, 1)
     y = H - 22*mm
 
     # Pill REPORT STRATEGICO
@@ -194,9 +282,16 @@ def page1(c, data):
     box_h = 16*mm
     c.setFillColor(BLUE_NIGHT)
     c.rect(14*mm, y - box_h, W - 28*mm, box_h, fill=1, stroke=0)
-    c.setFont("Helvetica-Bold", 20)
     c.setFillColor(WHITE)
-    c.drawCentredString(W/2, y - box_h/2 - 3.5*mm, data.get('indirizzo', ''))
+    # Stessa scaletta di corpi del Base: l'indirizzo si rimpicciolisce finché
+    # entra nel riquadro invece di sbordare a 20pt fissi.
+    indirizzo_txt = data.get('indirizzo', '')
+    max_w_ind = W - 36*mm
+    for font_size in [18, 16, 14, 12, 10]:
+        c.setFont("Helvetica-Bold", font_size)
+        if c.stringWidth(indirizzo_txt, "Helvetica-Bold", font_size) <= max_w_ind:
+            break
+    c.drawCentredString(W/2, y - box_h/2 - font_size*0.18*mm, indirizzo_txt)
     y -= box_h + 5*mm
 
     # Placeholder mappa
@@ -208,7 +303,9 @@ def page1(c, data):
     c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=0, stroke=1)
     c.setFont("Helvetica-Bold", 9)
     c.setFillColor(BLUE_PRIMARY)
-    c.drawCentredString(W/2, y - map_h/2 + 3*mm, "\U0001f4cd  Posizione geografica immobile")
+    # Niente emoji: i font standard del PDF non le hanno e ReportLab ripiega
+    # su ZapfDingbats, che le rendeva come quadratini neri.
+    c.drawCentredString(W/2, y - map_h/2 + 3*mm, "Posizione geografica immobile")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(MUTED)
     c.drawCentredString(W/2, y - map_h/2 - 3*mm, f"{data.get('indirizzo', '')}  \u00b7  {data.get('zona', '')}")
@@ -222,19 +319,23 @@ def page1(c, data):
 
     col_w = (W - 28*mm) / 2
     label_col_w = 28*mm
+    # Chiavi `scheda_*` (_prepara_etichette_scheda in app.py): stesse etichette
+    # leggibili del Base. Prima qui finivano i codici grezzi del form
+    # ("bilocale", "1-3", "anni70", "base") mentre il Base mostrava già
+    # "Bilocale", "1° – 3° piano", "Anni '70", "Arredi base, funzionale".
     fields_l = [
-        ("Tipologia",  data.get('tipologia', '')),
-        ("Superficie", data.get('superficie', '')),
-        ("Piano",      data.get('piano', '')),
-        ("Stato",      data.get('stato', '')),
-        ("Camere",     data.get('camere', '')),
+        ("Tipologia",  data.get('scheda_tipologia')  or data.get('tipologia', '')),
+        ("Superficie", data.get('scheda_superficie') or data.get('superficie', '')),
+        ("Piano",      data.get('scheda_piano')      or data.get('piano', '')),
+        ("Stato",      data.get('scheda_stato')      or data.get('stato', '')),
+        ("Camere",     data.get('scheda_camere')     or data.get('camere', '')),
     ]
     fields_r = [
         ("Comune",      data.get('comune', '')),
         ("Zona",        data.get('zona', '')),
-        ("Epoca",       data.get('epoca', '')),
-        ("Bagni",       data.get('bagni', '')),
-        ("Posti letto", data.get('posti_letto', '')),
+        ("Epoca",       data.get('scheda_epoca')       or data.get('epoca', '')),
+        ("Bagni",       data.get('scheda_bagni')       or data.get('bagni', '')),
+        ("Posti letto", data.get('scheda_posti_letto') or data.get('posti_letto', '')),
     ]
 
     row_h = 7.5*mm
@@ -315,7 +416,7 @@ def page1(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page2(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 2, 16)
+    draw_footer(c, data, 2)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Descrizione immobile")
@@ -328,23 +429,47 @@ def page2(c, data):
     draw_section_subtitle(c, 14*mm, y, "Distanze e impatto sulla domanda di prenotazioni")
     y -= 6*mm
 
-    poi_data = [["Punto di interesse", "A piedi", "Mezzo pubblico", "Impatto"]]
-    for row in data.get('poi', []):
-        poi_data.append(list(row))
-    col_w_poi = [(W-28*mm)*0.35, (W-28*mm)*0.13, (W-28*mm)*0.33, (W-28*mm)*0.19]
+    # Stessa tabella del Base: 5 slot fissi di categoria e colonne identiche.
+    # Prima lo Strategico usava colonne sue ("Punto di interesse / A piedi /
+    # Mezzo pubblico / Impatto"): le righe arrivano già convertite nello schema
+    # del Base da _poi_strategico_in_formato_base in app.py.
+    SLOT_LABELS = [
+        "Trasporto pubblico",
+        "Comune di riferimento",
+        "Elemento caratteristico",
+        "Servizi essenziali",
+        "Aeroporto",
+    ]
+
+    poi_rows_raw = [list(row) for row in data.get('poi', [])]
+    while len(poi_rows_raw) < 5:
+        poi_rows_raw.append(["—", "—", "—"])
+    poi_rows_raw = poi_rows_raw[:5]
+
+    style_cell_bold = ParagraphStyle("poiCellBold", fontName="Helvetica-Bold", fontSize=8, textColor=BLUE_NIGHT, leading=10)
+    style_cell_reg  = ParagraphStyle("poiCellReg",  fontName="Helvetica",      fontSize=8, textColor=BLUE_NIGHT, leading=10)
+    style_header    = ParagraphStyle("poiHeader",   fontName="Helvetica-Bold", fontSize=8, textColor=WHITE,      leading=10)
+
+    header_labels = ["Categoria", "Distanza", "Punto di riferimento", "Impatto"]
+    poi_data = [[Paragraph(h, style_header) for h in header_labels]]
+    for label, row in zip(SLOT_LABELS, poi_rows_raw):
+        mezzo_distanza, nome, impatto = (row + ["—", "—", "—"])[:3]
+        poi_data.append([
+            Paragraph(label, style_cell_bold),
+            Paragraph(str(mezzo_distanza), style_cell_reg),
+            Paragraph(str(nome), style_cell_reg),
+            Paragraph(str(impatto), style_cell_reg),
+        ])
+
+    col_w_poi = [(W - 28*mm) * 0.20, (W - 28*mm) * 0.22, (W - 28*mm) * 0.42, (W - 28*mm) * 0.16]
     tbl_poi = Table(poi_data, colWidths=col_w_poi)
     tbl_poi.setStyle(TableStyle([
         ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
-        ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
-        ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0,0), (-1,-1), 8),
-        ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
-        ("TEXTCOLOR",     (0,1), (-1,-1), BLUE_NIGHT),
         ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, CREAM]),
         ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
-        ("TOPPADDING",    (0,0), (-1,-1), 4),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
-        ("LEFTPADDING",   (0,0), (-1,-1), 5),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 5), ("RIGHTPADDING",  (0,0), (-1,-1), 5),
     ]))
     tbl_poi.wrapOn(c, W-28*mm, 200)
     tbl_poi.drawOn(c, 14*mm, y - tbl_poi._height)
@@ -354,7 +479,7 @@ def page2(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page3(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 3, 16)
+    draw_footer(c, data, 3)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Occupazione stagionale")
@@ -363,18 +488,22 @@ def page3(c, data):
     y -= 6*mm
 
     occ = data.get('occupazione', [])
-    header_half = ["Mese", "Occup.", "EUR/notte", "Stage"]
-    data_sx, data_dx = [], []
-    for i in range(6):
-        l, r = occ[i], occ[i+6]
-        data_sx.append([l[0], f"{l[1]}%", f"EUR {l[2]}", l[3]])
-        data_dx.append([r[0], f"{r[1]}%", f"EUR {r[2]}", r[3]])
+    # Stessi tre mesi che il Base evidenzia in verde (dato AirROI più
+    # affidabile): prima lo Strategico li ignorava del tutto, quindi la stessa
+    # tabella usciva con evidenziazioni diverse sui due PDF.
+    mesi_affidabili_idx = set(data.get("mesi_affidabili_idx", []))
+    VERDE_AFFIDABILE = HexColor("#D4F1DE")
+    VERDE_DATO_REALE = HexColor("#2E9E4F")
+
+    header_half = ["Mese", "Occup.", "€/notte", "Stage"]
+    data_sx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[:6]]
+    data_dx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[6:]]
 
     gap = 5*mm
     half = (W - 28*mm - gap) / 2
     col_w_half = [half*0.20, half*0.24, half*0.32, half*0.24]
 
-    def make_half_style(data_rows):
+    def make_half_style(data_rows, idx_offset):
         style = [
             ("BACKGROUND",    (0,0), (-1,0), BLUE_NIGHT),
             ("TEXTCOLOR",     (0,0), (-1,0), WHITE),
@@ -399,13 +528,21 @@ def page3(c, data):
             if row[3] in ("Peak", "Alta"):
                 style.append(("TEXTCOLOR", (1, ri+1), (1, ri+1), sc))
                 style.append(("FONTNAME",  (1, ri+1), (1, ri+1), "Helvetica-Bold"))
+            if (ri + idx_offset) in mesi_affidabili_idx:
+                style.append(("BACKGROUND", (0, ri+1), (2, ri+1), VERDE_AFFIDABILE))
+                style.append(("BOX",        (0, ri+1), (2, ri+1), 1.3, VERDE_DATO_REALE))
+                style.append(("FONTSIZE",   (0, ri+1), (2, ri+1), 9))
+                style.append(("FONTNAME",   (0, ri+1), (2, ri+1), "Helvetica-Bold"))
+                style.append(("TEXTCOLOR",  (1, ri+1), (1, ri+1), BLUE_NIGHT))
+                style.append(("TOPPADDING",    (0, ri+1), (2, ri+1), 5))
+                style.append(("BOTTOMPADDING", (0, ri+1), (2, ri+1), 5))
         return style
 
     tbl_sx = Table([header_half] + data_sx, colWidths=col_w_half)
-    tbl_sx.setStyle(TableStyle(make_half_style(data_sx)))
+    tbl_sx.setStyle(TableStyle(make_half_style(data_sx, 0)))
     tbl_sx.wrapOn(c, half, 300)
     tbl_dx = Table([header_half] + data_dx, colWidths=col_w_half)
-    tbl_dx.setStyle(TableStyle(make_half_style(data_dx)))
+    tbl_dx.setStyle(TableStyle(make_half_style(data_dx, 6)))
     tbl_dx.wrapOn(c, half, 300)
     tbl_h = max(tbl_sx._height, tbl_dx._height)
     tbl_sx.drawOn(c, 14*mm, y - tbl_h)
@@ -422,7 +559,11 @@ def page3(c, data):
     c.setLineWidth(0.3)
     c.rect(gx, gy, graph_w, graph_h, fill=0, stroke=1)
 
-    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD)]
+    # Grafico allineato al Base: stessa legenda (compresa la voce "Dato reale
+    # attuale"), stessa scala 30-95 con clamp, stessi cerchi ingranditi con
+    # anello e badge verde sui mesi affidabili, stesso disclaimer sotto.
+    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL),
+                    ("Peak", GOLD), ("Dato reale attuale", VERDE_DATO_REALE)]
     lx = gx + 3*mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -432,46 +573,87 @@ def page3(c, data):
         c.drawString(lx + 4*mm, gy + graph_h - 5*mm, lbl)
         lx += c.stringWidth(lbl, "Helvetica", 6.5) + 10*mm
 
-    rates = [o[1] for o in occ]
-    min_r, max_r = 45, 95
-    for pct in [50, 60, 70, 80, 90]:
-        py_line = gy + 8*mm + ((pct - min_r) / (max_r - min_r)) * (graph_h - 18*mm)
+    bottom_margin = 17*mm
+    top_margin = 10*mm
+    plot_h = graph_h - bottom_margin - top_margin
+    side_margin = 16*mm
+    min_r, max_r = 30, 95
+    for pct in [30, 40, 50, 60, 70, 80, 90]:
+        py_line = gy + bottom_margin + ((pct - min_r) / (max_r - min_r)) * plot_h
         c.setStrokeColor(BORDER)
         c.setLineWidth(0.25)
-        c.line(gx + 4*mm, py_line, gx + graph_w - 2*mm, py_line)
+        c.line(gx + side_margin, py_line, gx + graph_w - side_margin, py_line)
         c.setFont("Helvetica", 5.5)
         c.setFillColor(MUTED)
         c.drawString(gx + 0.5*mm, py_line - 1.5*mm, f"{pct}%")
 
-    step = (graph_w - 8*mm) / 11
+    step = (graph_w - side_margin * 2) / 11
     points = []
-    for i, (mese, occ_rate, eur, stage) in enumerate(occ):
-        px_dot = gx + 4*mm + i * step
-        py_dot = gy + 8*mm + ((occ_rate - min_r) / (max_r - min_r)) * (graph_h - 18*mm)
-        points.append((px_dot, py_dot, stage, occ_rate, eur, mese))
+    for i, row in enumerate(occ):
+        px_dot = gx + side_margin + i * step
+        rate = row[1]
+        rate_clamped = max(min_r, min(max_r, rate))
+        py_dot = gy + bottom_margin + ((rate_clamped - min_r) / (max_r - min_r)) * plot_h
+        points.append((px_dot, py_dot, row[3], rate))
 
     c.setStrokeColor(TEAL)
     c.setLineWidth(1.5)
+    if not points:
+        return
     p = c.beginPath()
     p.moveTo(points[0][0], points[0][1])
     for pt in points[1:]:
         p.lineTo(pt[0], pt[1])
     c.drawPath(p, stroke=1, fill=0)
 
-    for px_dot, py_dot, stage, rate, eur, mese in points:
+    for i, (px_dot, py_dot, stage, rate) in enumerate(points):
         col = stage_color(stage)
-        c.setFillColor(col)
+        affidabile = i in mesi_affidabili_idx
         r = 2.5*mm if stage == "Peak" else 1.8*mm
+        if affidabile:
+            r += 0.7*mm
+        c.setFillColor(col)
         c.circle(px_dot, py_dot, r, fill=1, stroke=0)
-        c.setFont("Helvetica-Bold", 6)
-        c.setFillColor(BLUE_NIGHT)
-        c.drawCentredString(px_dot, py_dot + 3*mm, f"{rate}%")
-        c.setFont("Helvetica", 6)
-        c.setFillColor(BLUE_NIGHT)
-        c.drawCentredString(px_dot, gy + 4*mm, mese)
-        c.setFont("Helvetica", 5.5)
-        c.setFillColor(MUTED)
-        c.drawCentredString(px_dot, gy + 1*mm, f"EUR {eur}")
+        if affidabile:
+            c.setStrokeColor(VERDE_DATO_REALE)
+            c.setLineWidth(1.2)
+            c.circle(px_dot, py_dot, r + 1*mm, fill=0, stroke=1)
+            badge_w, badge_h = 8.5*mm, 4.2*mm
+            bx, by = px_dot - badge_w / 2, py_dot + 2.2*mm
+            c.setFillColor(HexColor("#B9C7BE"))
+            c.roundRect(bx + 0.3*mm, by - 0.3*mm, badge_w, badge_h, 1.2*mm, fill=1, stroke=0)
+            c.setFillColor(VERDE_DATO_REALE)
+            c.roundRect(bx, by, badge_w, badge_h, 1.2*mm, fill=1, stroke=0)
+            c.setFont("Helvetica-Bold", 6.5)
+            c.setFillColor(WHITE)
+            c.drawCentredString(px_dot, by + 1.3*mm, f"{rate}%")
+        else:
+            c.setFont("Helvetica-Bold", 6)
+            c.setFillColor(BLUE_NIGHT)
+            c.drawCentredString(px_dot, py_dot + 3*mm, f"{rate}%")
+
+    for i, row in enumerate(occ):
+        px_dot = gx + side_margin + i * step
+        affidabile = i in mesi_affidabili_idx
+        c.setFont("Helvetica-Bold" if affidabile else "Helvetica", 7 if affidabile else 6)
+        c.setFillColor(VERDE_DATO_REALE if affidabile else BLUE_NIGHT)
+        c.drawCentredString(px_dot, gy + 8*mm, row[0])
+        c.setFont("Helvetica-Bold" if affidabile else "Helvetica", 6 if affidabile else 5.5)
+        c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
+        c.drawCentredString(px_dot, gy + 4*mm, f"€ {row[2]}")
+
+    disclaimer_prezzi = (
+        "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
+        "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
+        "(tipicamente al rialzo) avvicinandosi al periodo di riferimento."
+    )
+    style_disclaimer = ParagraphStyle(
+        "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
+        textColor=MUTED, leading=7.5, alignment=TA_CENTER,
+    )
+    p_disclaimer = Paragraph(disclaimer_prezzi, style_disclaimer)
+    _, h_disclaimer = p_disclaimer.wrap(W - 28*mm, 20*mm)
+    p_disclaimer.drawOn(c, 14*mm, gy - 4*mm - h_disclaimer)
 
     # Media prossimo trimestre (ToDo Sessione 65) — si affianca alla curva a
     # 12 mesi sopra, non la sostituisce. Calcolata dal backend sugli stessi
@@ -480,7 +662,9 @@ def page3(c, data):
     # affidabile in app.py. Se il backend non l'ha calcolata (dato mancante
     # o malformato), la sezione viene omessa invece di mostrare zeri.
     if "trimestre_ricavo_atteso" in data:
-        y = gy - 10*mm
+        # Sotto il disclaimer prezzi appena aggiunto, non più a quota fissa:
+        # altrimenti l'intestazione di sezione ci finirebbe sopra.
+        y = gy - 4*mm - h_disclaimer - 6*mm
         y = draw_section_header(c, 14*mm, y, W - 28*mm,
             f"Prossimi 3 mesi ({data.get('trimestre_mesi_label', '')}) — dato più affidabile")
         y -= 3*mm
@@ -491,7 +675,7 @@ def page3(c, data):
         card_w = (W - 28*mm - 2*card_gap) / 3
         card_h = 20*mm
         trimestre_cards = [
-            ("Prezzo medio/notte",   f"EUR {data.get('trimestre_prezzo_medio', 0)}",   TEAL_LIGHT, TEAL),
+            ("Prezzo medio/notte",   f"€ {data.get('trimestre_prezzo_medio', 0)}",   TEAL_LIGHT, TEAL),
             ("Occupazione media",    f"{data.get('trimestre_occupazione_media', 0)}%", HexColor("#E3F4FC"), BLUE_PRIMARY),
             ("Ricavo atteso trimestre", fmt_eur(data.get('trimestre_ricavo_atteso', 0)), GOLD_LIGHT, GOLD),
         ]
@@ -518,7 +702,7 @@ def page3(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4_manutenzione(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 5, 16)
+    draw_footer(c, data, 5)
     y = H - 22*mm
 
     tipo = data.get('intervento_tipo', "nessuno")
@@ -541,7 +725,7 @@ def page4_manutenzione(c, data):
         c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=0, stroke=1)
         c.setFont("Helvetica-Bold", 9)
         c.setFillColor(TEAL)
-        c.drawCentredString(W/2, y - 7*mm, "✓  Nessun intervento dichiarato — immobile pronto all’uso")
+        c.drawCentredString(W/2, y - 7*mm, "Nessun intervento dichiarato — immobile pronto all’uso")
         c.setFont("Helvetica", 8)
         c.setFillColor(MUTED)
         c.drawCentredString(W/2, y - 12*mm, "Questa sezione non impatta il calcolo del profitto netto né il valore dell’immobile")
@@ -551,13 +735,13 @@ def page4_manutenzione(c, data):
         if tipo == "manutenzione":
             col = BLUE_PRIMARY
             bg = HexColor("#E3F2FA")
-            label_tipo = "🛋️  Manutenzione"
+            label_tipo = "Manutenzione"
             range_label = "€ 100 – € 5.000"
             anni_max = "3 anni"
         else:
             col = GOLD
             bg = GOLD_LIGHT
-            label_tipo = "🏗️  Ristrutturazione"
+            label_tipo = "Ristrutturazione"
             range_label = "€ 5.000 – € 50.000"
             anni_max = "10 anni"
 
@@ -757,7 +941,7 @@ def page4b_moltiplicatori(c, data):
     esiste un modello validato per quelli: aggiungerne uno qui sarebbe lo
     stesso problema appena tolto al resto del report (numeri inventati)."""
     draw_header(c, data)
-    draw_footer(c, data, 6, 16)
+    draw_footer(c, data, 6)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Moltiplicatori di valore - dotazioni")
@@ -784,7 +968,7 @@ def page4b_moltiplicatori(c, data):
 
     tbl_data = [["Dotazione da aggiungere", "Incremento stimato", "Impatto su prezzo/notte", "Impatto su ricavo annuo"]]
     for nome, pct_label, delta_prezzo, delta_ricavo in righe:
-        tbl_data.append([nome, pct_label, f"+EUR {delta_prezzo}", f"+{fmt_eur(delta_ricavo)}"])
+        tbl_data.append([nome, pct_label, f"+€ {delta_prezzo}", f"+{fmt_eur(delta_ricavo)}"])
 
     col_w = [(W-28*mm)*0.34, (W-28*mm)*0.20, (W-28*mm)*0.23, (W-28*mm)*0.23]
     tbl = Table(tbl_data, colWidths=col_w)
@@ -826,7 +1010,7 @@ def page4b_moltiplicatori(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page4(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 4, 16)
+    draw_footer(c, data, 4)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi economica annuale")
@@ -841,9 +1025,16 @@ def page4(c, data):
     pulizia_unit = data.get('costi_pulizie_unit', 0)
     rata_mutuo = data.get('rata_mutuo_mensile', 0)
     mutuo_annuo = rata_mutuo * 12
-    adr = data.get('adr', 0)
-    revpar = data.get('revpar', 0)
+    # ADR/RevPAR: ricalcolati qui se il campo non arriva già corretto da
+    # _ricalcola_kpi_strategico, così il numero in colonna Valore torna sempre
+    # con la formula stampata di fianco (prima erano stime AI scollegate).
+    _ricavo_lordo = data.get('ricavo_lordo', 0)
+    adr = data.get('adr') or (round(_ricavo_lordo / notti) if notti else 0)
+    revpar = data.get('revpar') or round(adr * occ_pct / 100)
     ffe = data.get('ffe_reserve', 0)
+    # Il form manda la situazione mutuo in `situazione_mutuo` (come nel Base):
+    # leggerla solo da `mutuo_attivo` faceva sparire la rata dalla tabella.
+    mutuo_attivo = bool(data.get('mutuo_attivo', data.get('situazione_mutuo', False))) and rata_mutuo > 0
 
     # Sessione 68: la formula pulizie qui era rimasta "x notti", mai
     # allineata al fix Sessione 67 (pulizie per CAMBIO, non per notte) gia'
@@ -887,6 +1078,18 @@ def page4(c, data):
         cx += card_w + 2*mm
     y -= card_h + 5*mm
 
+    # Addendi effettivi di `totale_costi` (vedi app.py): l'FF&E è un
+    # accantonamento mostrato a parte e NON entra nel totale.
+    _addendi_costi = [
+        fmt_eu(data.get('costi_commissioni', 0)),
+        fmt_eu(data.get('costi_pulizie', 0)),
+        fmt_eu(data.get('costi_biancheria', 0)),
+        fmt_eu(data.get('costi_utenze', 0)),
+        fmt_eu(data.get('costi_manutenzione', 0)),
+    ]
+    if mutuo_attivo:
+        _addendi_costi.append(fmt_eu(mutuo_annuo))
+
     eco_data = [
         ["Voce", "Come viene calcolato", "Valore"],
         ["RICAVI", "", ""],
@@ -894,39 +1097,51 @@ def page4(c, data):
          f"€ {p}/notte  x  {occ_pct}% occ.  x  365gg  =  € {p}  x  {notti} notti",
          fmt_eu(data.get('ricavo_lordo', 0))],
         ["Bonus prenotazioni dirette",
-         f"€ {data.get('ricavo_lordo', 0):,}  x  {data.get('bonus_dirette_pct', '')}  =  € {data.get('bonus_dirette', 0):,}".replace(",","."),
+         f"€ {data.get('ricavo_lordo', 0):,}  x  {data.get('bonus_dirette_pct') or '5-10%'}  =  € {data.get('bonus_dirette', 0):,}".replace(",","."),
          fmt_eu(data.get('bonus_dirette', 0))],
         ["TOTALE RICAVI",
          f"{fmt_eu(data.get('ricavo_lordo', 0))}  +  {fmt_eu(data.get('bonus_dirette', 0))}",
          fmt_eu(data.get('totale_ricavi', 0))],
-        ["COSTI VARIABILI", "", ""],
+        ["COSTI VARIABILI", f"Media di mercato per tipologia: {data.get('scheda_tipologia') or data.get('tipologia', 'immobile')}", ""],
         ["Commissioni piattaforma Airbnb",
          f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct}%  =  € {data.get('costi_commissioni', 0):,}".replace(",","."),
          f"- {fmt_eu(data.get('costi_commissioni', 0))}"],
         ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eu(data.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         f"€ {data.get('costi_biancheria', 0):,}/anno (media di mercato per la tipologia{_sm_biancheria})".replace(",","."),
+         f"€ {fmt_num(data.get('costi_biancheria', 0))}/anno (media di mercato per la tipologia{_sm_biancheria})",
          f"- {fmt_eu(data.get('costi_biancheria', 0))}"],
+        # Stessa formulazione del Base: le "convenzioni adottate" e i range
+        # sono stati tolti da entrambi i prodotti, resta la voce come media di
+        # mercato per la tipologia.
         ["Utenze aggiuntive stimate",
-         f"Range € 500-1.000/anno  |  conv. adottata: € {data.get('costi_utenze', 0):,}".replace(",","."),
+         f"€ {data.get('costi_utenze', 0):,}/anno (media di mercato per la tipologia)".replace(",","."),
          f"- {fmt_eu(data.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         f"Range € 200-600/anno  |  conv. adottata: € {data.get('costi_manutenzione', 0):,}".replace(",","."),
+         f"€ {data.get('costi_manutenzione', 0):,}/anno (media di mercato per la tipologia)".replace(",","."),
          f"- {fmt_eu(data.get('costi_manutenzione', 0))}"],
+        # Accantonamento consigliato, non sottratto dal totale sotto: il
+        # segno "-" faceva sembrare che fosse già conteggiato.
         ["FF&E Reserve (manutenzione straord.)",
-         f"Fondo manutenzione straordinaria  |  conv. adottata: € {ffe:,}".replace(",","."),
-         f"- {fmt_eu(ffe)}"],
+         f"€ {fmt_num(ffe)}/anno per arredi e dotazioni (non incluso nel totale)",
+         fmt_eu(ffe)],
         ["Rata mutuo (se presente)",
-         "Nessun mutuo dichiarato" if not data.get('mutuo_attivo', False) else f"€ {rata_mutuo}/mese  x  12 mesi",
-         "€ 0" if not data.get('mutuo_attivo', False) else f"- {fmt_eu(mutuo_annuo)}"],
+         "Nessun mutuo dichiarato" if not mutuo_attivo else f"€ {rata_mutuo}/mese  x  12 mesi",
+         "€ 0" if not mutuo_attivo else f"- {fmt_eu(mutuo_annuo)}"],
+        # La formula elencava anche l'FF&E e ometteva il mutuo, mentre il
+        # totale calcolato dal backend fa l'opposto: sommando le voci a video
+        # non tornava il numero stampato di fianco. Ora la stringa elenca
+        # esattamente gli addendi che compongono `totale_costi`.
         ["TOTALE COSTI VARIABILI",
-         f"{fmt_eu(data.get('costi_commissioni', 0))} + {fmt_eu(data.get('costi_pulizie', 0))} + {fmt_eu(data.get('costi_biancheria', 0))} + {fmt_eu(data.get('costi_utenze', 0))} + {fmt_eu(data.get('costi_manutenzione', 0))} + {fmt_eu(ffe)}",
+         "  +  ".join(_addendi_costi),
          f"- {fmt_eu(data.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO",
          f"{fmt_eu(data.get('totale_ricavi', 0))}  -  {fmt_eu(data.get('totale_costi', 0))}",
          fmt_eu(data.get('profitto_netto', 0))],
-        ["Margine netto su ricavi lordi",
+        # La formula divide per i ricavi TOTALI (lordi + bonus dirette), non
+        # per i soli lordi: l'etichetta diceva il contrario ed era l'unica
+        # riga della tabella in cui testo e calcolo non coincidevano.
+        ["Margine netto su ricavi totali",
          f"{fmt_eu(data.get('profitto_netto', 0))}  /  {fmt_eu(data.get('totale_ricavi', 0))}  x  100",
          f"{data.get('margine_percent', 0)}%"],
         ["KPI — ADR (Average Daily Rate)",
@@ -964,7 +1179,12 @@ def page4(c, data):
         ("TEXTCOLOR",     (0,5),  (0,5),   RED),
         ("FONTNAME",      (0,5),  (0,5),   "Helvetica-Bold"),
         ("TEXTCOLOR",     (2,6),  (2,13),  RED),
-        ("TEXTCOLOR",     (2,13), (2,13),  MUTED if not data.get('mutuo_attivo', False) else RED),
+        # Riga 11 = FF&E: è un accantonamento consigliato, non entra nel totale
+        # sotto. In rosso come le altre voci sembrava un costo già sottratto.
+        ("TEXTCOLOR",     (2,11), (2,11),  MUTED),
+        ("FONTNAME",      (0,11), (-1,11), "Helvetica-Oblique"),
+        # Riga 12 = rata mutuo (l'indice qui diceva 13, che è il TOTALE).
+        ("TEXTCOLOR",     (2,12), (2,12),  MUTED if not mutuo_attivo else RED),
         ("BACKGROUND",    (0,13), (-1,13), RED_LIGHT),
         ("TEXTCOLOR",     (0,13), (-1,13), RED),
         ("FONTNAME",      (0,13), (-1,13), "Helvetica-Bold"),
@@ -1026,7 +1246,7 @@ def page4(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page5(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 7, 16)
+    draw_footer(c, data, 7)
     y = H - 22*mm
 
     # ── CONFRONTO AFFITTO TRADIZIONALE ──
@@ -1142,7 +1362,7 @@ def page5(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page6(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 12, 16)
+    draw_footer(c, data, 12)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
@@ -1187,7 +1407,7 @@ def page6(c, data):
     c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
     c.setFont("Helvetica-Bold", 8)
     c.setFillColor(GOLD)
-    c.drawString(18*mm, y - 6*mm, "\u26a0\ufe0f  Nota legale importante")
+    c.drawString(18*mm, y - 6*mm, "Nota legale importante")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
     nota_norm = ("Le informazioni normative riportate sono aggiornate alla data di generazione del report e hanno carattere orientativo. "
@@ -1200,7 +1420,7 @@ def page6(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page7(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 13, 16)
+    draw_footer(c, data, 13)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Valore immobile come asset B&B — Analisi professionale")
@@ -1323,7 +1543,7 @@ def page7(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page8(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 8, 16)
+    draw_footer(c, data, 8)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Tre scenari economici — proiezione annuale")
@@ -1354,14 +1574,16 @@ def page8(c, data):
         c.setFont("Helvetica-Bold", 9)
         c.setFillColor(WHITE)
         c.drawCentredString(bx+box_w/2, by+box_h-7*mm, sc["label"])
-        c.setFont("Helvetica", 7)
-        c.drawCentredString(bx+box_w/2, by+box_h-11.5*mm, sc["subtitle"])
+        # Il sottotitolo dello scenario è testo libero dell'AI: a corpo fisso
+        # usciva dai bordi della card colorata su entrambi i lati.
+        draw_centred_fit(c, bx+box_w/2, by+box_h-11.5*mm, sc.get("subtitle", ""),
+                         box_w - 4*mm, "Helvetica", 7, line_h=3.2*mm, min_size=5)
 
         # Dati
         righe = [
             ("Occupazione media", f"{sc['occupazione']}%"),
             ("Notti vendute",     f"{sc['notti']} / anno"),
-            ("Prezzo medio notte",f"EUR {sc['prezzo_medio']}"),
+            ("Prezzo medio notte",f"€ {sc['prezzo_medio']}"),
             ("Ricavi lordi",      fmt_eur(sc["ricavi_lordi"])),
             ("Costi totali",      fmt_eur(sc["costi_totali"])),
             ("Profitto netto",    fmt_eur(sc["profitto_netto"])),
@@ -1411,7 +1633,7 @@ def page8(c, data):
         ["Voce", "Pessimistico", "Realistico", "Ottimistico"],
         ["Occupazione media",  f"{pess['occupazione']}%", f"{real['occupazione']}%", f"{ott['occupazione']}%"],
         ["Notti vendute/anno", str(pess["notti"]),        str(real["notti"]),         str(ott["notti"])],
-        ["Prezzo medio/notte", f"EUR {pess['prezzo_medio']}", f"EUR {real['prezzo_medio']}", f"EUR {ott['prezzo_medio']}"],
+        ["Prezzo medio/notte", f"€ {pess['prezzo_medio']}", f"€ {real['prezzo_medio']}", f"€ {ott['prezzo_medio']}"],
         ["Ricavi lordi",       fmt_eur(pess["ricavi_lordi"]),  fmt_eur(real["ricavi_lordi"]),  fmt_eur(ott["ricavi_lordi"])],
         ["Costi totali",       fmt_eur(pess["costi_totali"]),  fmt_eur(real["costi_totali"]),  fmt_eur(ott["costi_totali"])],
         ["Profitto netto",     fmt_eur(pess["profitto_netto"]),fmt_eur(real["profitto_netto"]),fmt_eur(ott["profitto_netto"])],
@@ -1449,7 +1671,7 @@ def page8b_durata(c, data):
     del min-stay che l'host imposta su Airbnb/Booking. Dati precalcolati da
     _calcola_scenari_durata_soggiorno in app.py."""
     draw_header(c, data)
-    draw_footer(c, data, 9, 16)
+    draw_footer(c, data, 9)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Quanto costa il turnover — 3 scenari per durata soggiorno")
@@ -1565,13 +1787,14 @@ def page8c_mercato(c, data):
     2026-08-27, 'Punto 0'). Ogni sezione si nasconde da sola se il dato non
     e' disponibile per questa zona (AirROI non copre tutti i comuni)."""
     draw_header(c, data)
-    draw_footer(c, data, 10, 16)
+    draw_footer(c, data, 10)
     y = H - 22*mm
 
-    y = draw_section_header(c, 14*mm, y, W - 28*mm, "Dati di mercato extra — comparabili reali della tua zona")
-    y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Percentili, tipo di gestione e stagionalità — stesso motore AirROI del resto del report")
-    y -= 7*mm
+    # La fascia "Dati di mercato extra" che apriva la pagina è stata rimossa:
+    # era un'intestazione senza contenuto proprio, subito seguita da quella dei
+    # percentili. Al suo posto apre la pagina la tabella competitor, identica a
+    # quella del Base (pag. 4) — stesso tema, comparabili reali della zona.
+    y = draw_competitor(c, data, y)
 
     perc_p = data.get('percentili_prezzo')
     perc_o = data.get('percentili_occupazione')
@@ -1597,7 +1820,7 @@ def page8c_mercato(c, data):
         tbl_data = [["", "Prezzo/notte", "Occupazione"]]
         for label, key in [("P25 (fascia bassa)", 'p25'), ("Mediana (P50)", 'p50'),
                             ("P75 (fascia alta)", 'p75'), ("P90 (top di zona)", 'p90')]:
-            riga_prezzo = f"EUR {perc_p[key]}" if perc_p else "n/d"
+            riga_prezzo = f"€ {perc_p[key]}" if perc_p else "n/d"
             riga_occ = f"{perc_o[key]}%" if perc_o else "n/d"
             tbl_data.append([label, riga_prezzo, riga_occ])
         col_w = [(W-28*mm)*0.42, (W-28*mm)*0.29, (W-28*mm)*0.29]
@@ -1622,7 +1845,7 @@ def page8c_mercato(c, data):
 
         note_bits = []
         if perc_p and data.get('prezzo_notte_stimato'):
-            note_bits.append(f"Il tuo prezzo/notte (EUR {data['prezzo_notte_stimato']}) e' {_posiziona_percentile(data['prezzo_notte_stimato'], perc_p)}.")
+            note_bits.append(f"Il tuo prezzo/notte (€ {data['prezzo_notte_stimato']}) e' {_posiziona_percentile(data['prezzo_notte_stimato'], perc_p)}.")
         if perc_o and data.get('occupazione_percent') is not None:
             note_bits.append(f"La tua occupazione ({data['occupazione_percent']}%) e' {_posiziona_percentile(data['occupazione_percent'], perc_o)}.")
         if note_bits:
@@ -1667,8 +1890,8 @@ def page8c_mercato(c, data):
         trend_data = [
             ["Indicatore", "Ultimi 90 giorni", "Media 12 mesi (TTM)"],
             ["Occupazione media", f"{trend['occupazione_l90d']}%", f"{trend['occupazione_ttm']}%"],
-            ["Prezzo medio/notte", f"EUR {trend['prezzo_l90d']}", f"EUR {trend['prezzo_ttm']}"],
-            ["RevPAR", f"EUR {trend['revpar_l90d']}", f"EUR {trend['revpar_ttm']}"],
+            ["Prezzo medio/notte", f"€ {trend['prezzo_l90d']}", f"€ {trend['prezzo_ttm']}"],
+            ["RevPAR", f"€ {trend['revpar_l90d']}", f"€ {trend['revpar_ttm']}"],
         ]
         col_w_t = [(W-28*mm)*0.34, (W-28*mm)*0.33, (W-28*mm)*0.33]
         tbl_t = Table(trend_data, colWidths=col_w_t)
@@ -1706,7 +1929,7 @@ def page8c_mercato(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page9(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 11, 16)
+    draw_footer(c, data, 11)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano d’azione — primi 90 giorni")
@@ -1828,10 +2051,11 @@ def page9(c, data):
         for item in items:
             c.setFillColor(col)
             c.circle(17*mm, y - 1.5*mm, 1.2*mm, fill=1, stroke=0)
-            c.setFont("Helvetica", 7.5)
-            c.setFillColor(BLUE_NIGHT)
-            c.drawString(20*mm, y - 2.5*mm, item)
-            y -= 6*mm
+            # Le azioni sono frasi lunghe scritte dall'AI: senza a capo
+            # uscivano ben oltre il margine destro della pagina.
+            y_dopo = wrap_simple(c, item, 20*mm, y - 2.5*mm, W - 34*mm,
+                                 "Helvetica", 7.5, 4.2*mm, color=BLUE_NIGHT)
+            y = y_dopo - 1.8*mm
 
         y -= 4*mm
 
@@ -1840,7 +2064,7 @@ def page9(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page10(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 14, 16)
+    draw_footer(c, data, 14)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Analisi personale — Arch. Salvatore Junior Sica")
@@ -1849,10 +2073,10 @@ def page10(c, data):
     y -= 7*mm
 
     aree = [
-        ("📍  Posizione e contesto di mercato", data.get('analisi_posizione', ''),   BLUE_PRIMARY),
-        ("🏠  Condizione e caratteristiche immobile", data.get('analisi_condizione', ''),  TEAL),
-        ("📈  Potenzialit\u00e0 e proiezioni", data.get('analisi_potenzialita', ''), GOLD),
-        ("✅  Raccomandazione operativa", data.get('analisi_raccomandazione', ''), BLUE_NIGHT),
+        ("Posizione e contesto di mercato", data.get('analisi_posizione', ''),   BLUE_PRIMARY),
+        ("Condizione e caratteristiche immobile", data.get('analisi_condizione', ''),  TEAL),
+        ("Potenzialit\u00e0 e proiezioni", data.get('analisi_potenzialita', ''), GOLD),
+        ("Raccomandazione operativa", data.get('analisi_raccomandazione', ''), BLUE_NIGHT),
     ]
 
     for titolo, testo, col in aree:
@@ -1903,7 +2127,7 @@ def page10(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page11(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 16, 16)
+    draw_footer(c, data, 17)
     y = H - 22*mm
 
     y -= 5*mm
@@ -1937,13 +2161,15 @@ def page11(c, data):
         c.setFont("Helvetica-Bold", 7.5)
         c.setFillColor(BLUE_NIGHT)
         c.drawString(20*mm, y - 2*mm, fonte)
-        c.setFont("Helvetica", 7)
-        c.setFillColor(MUTED)
-        c.drawString(20*mm, y - 6.5*mm, desc)
+        # Le descrizioni più lunghe (canoni affitto tradizionale) uscivano
+        # oltre il margine destro: ora vanno a capo dentro la colonna.
+        y_desc = wrap_simple(c, desc, 20*mm, y - 6.5*mm, W - 34*mm,
+                             "Helvetica", 7, 4*mm, color=MUTED)
         c.setStrokeColor(BORDER)
         c.setLineWidth(0.3)
-        c.line(14*mm, y - 9*mm, W - 14*mm, y - 9*mm)
-        y -= 13*mm
+        riga_y = min(y - 9*mm, y_desc - 1*mm)
+        c.line(14*mm, riga_y, W - 14*mm, riga_y)
+        y = riga_y - 4*mm
 
     y -= 6*mm
 
@@ -2020,7 +2246,7 @@ def page11(c, data):
 # ═══════════════════════════════════════════════════════════════════════════
 def page_obiettivi(c, data):
     draw_header(c, data)
-    draw_footer(c, data, 15, 16)
+    draw_footer(c, data, 15)
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "I tuoi obiettivi — dove trovare le risposte")
@@ -2054,21 +2280,24 @@ def page_obiettivi(c, data):
         c.setFillColor(GOLD)
         c.roundRect(14*mm, y - box_h, 3*mm, box_h, 1.5*mm, fill=1, stroke=0)
 
-        # Titolo obiettivo
+        # Titolo e descrizione si fermano prima del bottone: a piena larghezza
+        # la descrizione ci finiva sotto.
+        testo_max_w = pill_x - 20*mm - 4*mm
+
         c.setFont("Helvetica-Bold", 13)
         c.setFillColor(BLUE_NIGHT)
         c.drawString(20*mm, y - 9*mm, titolo)
 
-        # Descrizione
-        c.setFont("Helvetica", 10)
-        c.setFillColor(MUTED)
-        c.drawString(20*mm, y - 16*mm, desc)
+        wrap_simple(c, desc, 20*mm, y - 16*mm, testo_max_w,
+                    "Helvetica", 9, 4.6*mm, color=MUTED)
 
-        # Pill "→ Pag. X" — centrata verticalmente
-        pill_txt_line1 = "\u2192  Vai a"
+        # Bottone "Vai a Pag. X" — centrato verticalmente nel box
+        # Tolta la freccia: non esiste nei font standard del PDF e ReportLab
+        # la sostituiva con un glifo ZapfDingbats.
+        pill_txt_line1 = "Vai a"
         pill_txt_line2 = pag_label
         pill_cy = y - box_h/2  # centro verticale del box
-        pill_top = pill_cy + (pill_h + 4*mm)/2
+        pill_top = pill_cy + (pill_h + 4*mm)/2 + 2*mm
         c.setFillColor(GOLD)
         c.roundRect(pill_x, pill_top - (pill_h + 4*mm), pill_w, pill_h + 4*mm, 2*mm, fill=1, stroke=0)
         c.setFillColor(WHITE)
@@ -2077,12 +2306,15 @@ def page_obiettivi(c, data):
         c.setFont("Helvetica-Bold", 11)
         c.drawCentredString(pill_x + pill_w/2, pill_top - 10.5*mm, pill_txt_line2)
 
-        # Descrizione sezioni — sotto il box con spazio
-        c.setFont("Helvetica-Oblique", 7.5)
+        # Didascalia della sezione: dentro il riquadro, sotto il bottone e
+        # allineata a esso. Prima cadeva fuori dal box, staccata, e sembrava
+        # una scritta finita sotto al bottone per sbaglio.
         c.setFillColor(MUTED)
-        c.drawRightString(W - 16*mm, y - box_h - 3*mm, pag_desc)
+        draw_centred_fit(c, pill_x + pill_w/2, pill_top - (pill_h + 4*mm) - 4*mm,
+                         pag_desc, pill_w + 10*mm, "Helvetica-Oblique", 7.5,
+                         line_h=3.4*mm, min_size=6)
 
-        y -= box_h + 10*mm
+        y -= box_h + 8*mm
 
     y -= 4*mm
 
@@ -2115,13 +2347,105 @@ def page_obiettivi(c, data):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
+def page_riepilogo(c, data):
+    """Riepilogo finale in stile Base (stesse card oro), ma con i valori
+    significativi dello Strategico. Dove il report presenta più scenari si
+    prende sempre quello centrale/realistico, come da indicazione: è il
+    riferimento dichiarato in tutto il resto del documento."""
+    draw_header(c, data)
+    draw_footer(c, data, 16)
+    y = H - 22*mm
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, "Riepilogo indicatori chiave")
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y,
+        "Sintesi conclusiva dei valori calcolati per il tuo immobile · dove ci sono più scenari vale il realistico")
+    y -= 7*mm
+
+    real = data.get('scenario_real') or {}
+    occ_pct = data.get('occupazione_percent', 0)
+
+    def card_row(kpis, y):
+        kw = (W - 28*mm - 6*mm) / 4
+        kh = 24*mm
+        for i, (lbl, val, sub, nota) in enumerate(kpis):
+            cx = 14*mm + i * (kw + 2*mm)
+            c.setFillColor(GOLD_LIGHT)
+            c.roundRect(cx, y - kh, kw, kh, 2*mm, fill=1, stroke=0)
+            c.setStrokeColor(GOLD)
+            c.setLineWidth(1)
+            c.roundRect(cx, y - kh, kw, kh, 2*mm, fill=0, stroke=1)
+            c.setFillColor(GOLD)
+            draw_centred_fit(c, cx + kw/2, y - 4.5*mm, lbl, kw - 3*mm, "Helvetica-Bold", 6.5, min_size=5)
+            c.setFillColor(BLUE_NIGHT)
+            draw_centred_fit(c, cx + kw/2, y - 13*mm, val, kw - 3*mm, "Helvetica-Bold", 13, min_size=8)
+            c.setFillColor(MUTED)
+            draw_centred_fit(c, cx + kw/2, y - 17*mm, sub, kw - 3*mm, "Helvetica", 6.5, min_size=5)
+            c.setFillColor(MUTED)
+            draw_centred_fit(c, cx + kw/2, y - 21*mm, nota, kw - 3*mm, "Helvetica", 6, min_size=5)
+        return y - kh - 6*mm
+
+    # Riga 1 — il cuore economico annuale (scenario realistico).
+    y = card_row([
+        ("PREZZO MEDIO / NOTTE", f"€ {data.get('prezzo_notte_stimato', 0)}", "per notte",
+         f"ADR ponderato € {data.get('adr', 0)}"),
+        ("TASSO DI OCCUPAZIONE", f"{occ_pct}%", "stimato",
+         f"{data.get('notti_anno', 0)} notti/anno"),
+        ("RICAVI TOTALI ANNUI", fmt_eur(data.get('totale_ricavi', 0)), "lordi",
+         f"Con occupazione al {occ_pct}%"),
+        ("PROFITTO NETTO STIMATO", fmt_eur(data.get('profitto_netto', 0)), "netto stimato",
+         f"Margine {data.get('margine_percent', 0)}% sui ricavi"),
+    ], y)
+
+    # Riga 2 — gli indicatori esclusivi dello Strategico.
+    _valore_asset = data.get('valore_mercato') or 0
+    y = card_row([
+        ("RENDITA MENSILE NETTA",
+         fmt_eur(round((data.get('profitto_netto', 0)) / 12)), "al mese",
+         "Profitto netto / 12 mesi"),
+        ("VALORE COME ASSET B&B",
+         fmt_eur(_valore_asset) if _valore_asset else "n/d", "valore di mercato",
+         f"Saggio cap. {data.get('saggio_capitalizzazione', 7.0)}%"),
+        ("RevPAR", f"€ {data.get('revpar', 0)}", "per unità disponibile",
+         "ADR x occupazione"),
+        ("SCENARIO REALISTICO",
+         fmt_eur(real.get('profitto_netto', data.get('profitto_netto', 0))), "profitto netto",
+         f"{real.get('occupazione', occ_pct)}% occ. · € {real.get('prezzo_medio', data.get('prezzo_notte_stimato', 0))}/notte"),
+    ], y)
+
+    # Riga 3 — il trimestre affidabile e il confronto con l'affitto classico.
+    _trim = "trimestre_ricavo_atteso" in data
+    y = card_row([
+        ("PROSSIMI 3 MESI",
+         fmt_eur(data.get('trimestre_ricavo_atteso', 0)) if _trim else "n/d", "ricavo atteso",
+         data.get('trimestre_mesi_label', '') if _trim else "dato non disponibile"),
+        ("PREZZO TRIMESTRE",
+         f"€ {data.get('trimestre_prezzo_medio', 0)}" if _trim else "n/d", "medio/notte",
+         "Dato di mercato più affidabile"),
+        ("AFFITTO TRADIZIONALE",
+         fmt_eur(data.get('affitto_profitto', 0)), "profitto netto",
+         "Stessa unità, locazione classica"),
+        ("DIFFERENZA A FAVORE B&B",
+         f"+{fmt_eur(max(0, data.get('profitto_netto', 0) - data.get('affitto_profitto', 0)))}", "in più all'anno",
+         "Rispetto all'affitto tradizionale"),
+    ], y)
+
+    c.setFont("Helvetica-Oblique", 6.5)
+    c.setFillColor(MUTED)
+    c.drawString(14*mm, y,
+                 "Valori orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
+                 "Dove il report presenta tre scenari, qui è riportato sempre quello realistico.")
+
+
 def build_strategico_pdf_bytes(data):
     """Genera il PDF Strategico in memoria e restituisce bytes."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle("ReportUp — Report Strategico")
     c.setAuthor("Arch. Salvatore Junior Sica · ReportUp")
-    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page8b_durata, page8c_mercato, page9, page6, page7, page10, page_obiettivi, page11]:
+    # page_riepilogo entra come pagina 16, subito prima di fonti/ringraziamenti
+    # (page11, ora pagina 17): stesso posto che il riepilogo occupa nel Base.
+    for page_fn in [page1, page2, page3, page4, page4_manutenzione, page4b_moltiplicatori, page5, page8, page8b_durata, page8c_mercato, page9, page6, page7, page10, page_obiettivi, page_riepilogo, page11]:
         page_fn(c, data)
         c.showPage()
     c.save()
