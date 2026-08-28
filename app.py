@@ -3520,22 +3520,30 @@ def ai_generate():
     model = body.get("model") or "claude-haiku-4-5"
     max_tokens = int(body.get("max_tokens") or 3000)
 
-    resp = requests.post(
-        ANTHROPIC_URL,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-        },
-        json={
-            "model": model,
-            "max_tokens": max_tokens,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
-        },
-        timeout=90,
-    )
-    return jsonify(resp.json()), resp.status_code
+    try:
+        resp = requests.post(
+            ANTHROPIC_URL,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": model,
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_prompt}],
+            },
+            timeout=90,
+        )
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 502
+
+    try:
+        return jsonify(resp.json()), resp.status_code
+    except ValueError:
+        return jsonify({"error": "risposta Anthropic non JSON", "status": resp.status_code,
+                         "body": resp.text[:2000]}), 502
 
 
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
