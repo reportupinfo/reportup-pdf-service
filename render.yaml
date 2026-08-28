@@ -3,11 +3,13 @@ services:
     name: reportup-pdf-service
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --timeout 90
     envVars:
       - key: PDF_SECRET
         generateValue: true
       - key: AIRROI_API_KEY
         sync: false
       - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
         sync: false

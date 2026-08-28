@@ -31,6 +31,15 @@ app = Flask(__name__)
 AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
 AIRROI_BASE = "https://api.airroi.com"
 
+# ── Anthropic: chiamata AI grande dello Strategico (Sessione 27/8, bloccante
+# risolto) — spostata qui da netlify/functions/ai-proxy.js perché le Netlify
+# Functions hanno un limite fisso di ~30s e la chiamata da 91 campi/6000
+# token dello Strategico lo supera sempre (504 Inactivity Timeout misurato).
+# Render non ha quel limite, ma gunicorn sì (default 30s) — vedi render.yaml,
+# serve --timeout alzato sullo startCommand o questo endpoint muore uguale.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+
 # ── Autenticazione endpoint server-to-server (chiamati solo da Make.com) ───────
 # Non applicato a /quick-estimate e /verify-address: quelli sono chiamati
 # direttamente dal browser (fetch lato client), quindi un segreto statico
@@ -3494,6 +3503,39 @@ def debug_airroi_raw():
         "calculator_estimate": {"status": r2.status_code,
                                  "body": r2.json() if r2.status_code == 200 else r2.text},
     })
+
+
+@app.route("/ai-generate", methods=["POST"])
+@require_internal_secret
+def ai_generate():
+    """Mirror di netlify/functions/ai-proxy.js, stesso formato richiesta/
+    risposta (system/user/model/max_tokens -> risposta grezza Messages API),
+    così lo scenario Make deve solo ripuntare l'URL del modulo, non
+    riscrivere il mapping dei campi."""
+    if not ANTHROPIC_API_KEY:
+        return jsonify({"error": "ANTHROPIC_API_KEY non configurata lato server"}), 500
+    body = request.get_json(force=True, silent=True) or {}
+    system_prompt = body.get("system", "")
+    user_prompt = body.get("user", "")
+    model = body.get("model") or "claude-haiku-4-5"
+    max_tokens = int(body.get("max_tokens") or 3000)
+
+    resp = requests.post(
+        ANTHROPIC_URL,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+        json={
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        },
+        timeout=90,
+    )
+    return jsonify(resp.json()), resp.status_code
 
 
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
