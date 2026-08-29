@@ -11,6 +11,7 @@ from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
 import datetime
 import io
 import math
@@ -362,23 +363,58 @@ def page1(c, data):
     c.drawCentredString(W/2, y - box_h/2 - font_size*0.18*mm, indirizzo_txt)
     y -= box_h + 5*mm
 
-    # Placeholder mappa
+    # Mappa satellitare (Google Static Maps, vedi _fetch_static_map_png in
+    # app.py \u2014 stessa GOOGLE_MAPS_API_KEY di geocode/AirROI, nessuna chiamata
+    # aggiuntiva oltre quella gi\u00e0 fatta per lat/long). Se manca (chiave assente,
+    # timeout, coordinate mancanti) ricade sul placeholder di sempre.
     map_h = 55*mm
-    c.setFillColor(HexColor("#E3F2FA"))
-    c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=1, stroke=0)
-    c.setStrokeColor(BLUE_PRIMARY)
-    c.setLineWidth(0.8)
-    c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=0, stroke=1)
-    c.setFont("Helvetica-Bold", 9)
-    c.setFillColor(BLUE_PRIMARY)
-    # Niente emoji: i font standard del PDF non le hanno e ReportLab ripiega
-    # su ZapfDingbats, che le rendeva come quadratini neri.
-    c.drawCentredString(W/2, y - map_h/2 + 3*mm, "Posizione geografica immobile")
-    c.setFont("Helvetica", 7.5)
-    c.setFillColor(MUTED)
-    c.drawCentredString(W/2, y - map_h/2 - 3*mm, f"{data.get('indirizzo', '')}  \u00b7  {data.get('zona', '')}")
-    c.setFont("Helvetica-Oblique", 7)
-    c.drawCentredString(W/2, y - map_h/2 - 8*mm, "La mappa interattiva sar\u00e0 integrata nella versione finale")
+    map_png = data.get('_mappa_png')
+    map_ok = False
+    if map_png:
+        try:
+            img = ImageReader(io.BytesIO(map_png))
+            c.saveState()
+            clip = c.beginPath()
+            clip.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm)
+            c.clipPath(clip, stroke=0, fill=0)
+            c.drawImage(img, 14*mm, y - map_h, width=W - 28*mm, height=map_h,
+                        preserveAspectRatio=False, mask='auto')
+            c.restoreState()
+            c.setStrokeColor(BLUE_PRIMARY)
+            c.setLineWidth(0.8)
+            c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=0, stroke=1)
+            # Banda scura in basso: indirizzo leggibile sopra la foto satellitare.
+            label_h = 9*mm
+            c.saveState()
+            c.setFillColor(BLUE_NIGHT)
+            c.setFillAlpha(0.72)
+            c.rect(14*mm, y - map_h, W - 28*mm, label_h, fill=1, stroke=0)
+            c.restoreState()
+            c.setFont("Helvetica-Bold", 8)
+            c.setFillColor(WHITE)
+            c.drawCentredString(W/2, y - map_h + label_h/2 - 1*mm,
+                                 f"{data.get('indirizzo', '')}  \u00b7  {data.get('zona', '')}")
+            map_ok = True
+        except Exception:
+            map_ok = False
+
+    if not map_ok:
+        # Placeholder: chiave assente/timeout/coordinate mancanti.
+        c.setFillColor(HexColor("#E3F2FA"))
+        c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=1, stroke=0)
+        c.setStrokeColor(BLUE_PRIMARY)
+        c.setLineWidth(0.8)
+        c.roundRect(14*mm, y - map_h, W - 28*mm, map_h, 3*mm, fill=0, stroke=1)
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(BLUE_PRIMARY)
+        # Niente emoji: i font standard del PDF non le hanno e ReportLab ripiega
+        # su ZapfDingbats, che le rendeva come quadratini neri.
+        c.drawCentredString(W/2, y - map_h/2 + 3*mm, "Posizione geografica immobile")
+        c.setFont("Helvetica", 7.5)
+        c.setFillColor(MUTED)
+        c.drawCentredString(W/2, y - map_h/2 - 3*mm, f"{data.get('indirizzo', '')}  \u00b7  {data.get('zona', '')}")
+        c.setFont("Helvetica-Oblique", 7)
+        c.drawCentredString(W/2, y - map_h/2 - 8*mm, "La mappa non \u00e8 disponibile per questo indirizzo")
     y -= map_h + 5*mm
 
     # Scheda immobile
@@ -842,6 +878,12 @@ def page4_manutenzione(c, data):
         y -= 5*mm
 
         anni = mesi / 12
+        # Sessione 29/8: mensile*12 in float dava resti tipo 6875.039999999999
+        # (classico errore di rappresentazione binaria, es. 572.92*12). Il
+        # resto del report mostra sempre euro interi (mai centesimi sparsi),
+        # quindi si arrotonda una volta sola qui e si riusa ovunque sotto.
+        impatto_annuo = round(mensile * 12)
+        profitto_dopo = round(data.get('profitto_netto', 0) - mensile * 12)
         int_data = [
             ["Voce", "Dettaglio", "Valore"],
             ["Tipo di intervento", label_tipo, ""],
@@ -856,10 +898,10 @@ def page4_manutenzione(c, data):
              f"- € {mensile:,}".replace(",",".")],
             ["Impatto annuale sul profitto",
              f"€ {mensile:,}/mese × 12 mesi".replace(",","."),
-             f"- € {mensile*12:,}".replace(",",".")],
+             f"- € {impatto_annuo:,}".replace(",",".")],
             ["Profitto netto DOPO intervento",
-             f"€ {data.get('profitto_netto', 0):,} - € {mensile*12:,} = nel periodo di diluizione".replace(",","."),
-             f"€ {data.get('profitto_netto', 0) - mensile*12:,}".replace(",",".")],
+             f"€ {data.get('profitto_netto', 0):,} - € {impatto_annuo:,} = nel periodo di diluizione".replace(",","."),
+             f"€ {profitto_dopo:,}".replace(",",".")],
         ]
 
         col_w_int = [(W-28*mm)*0.30, (W-28*mm)*0.50, (W-28*mm)*0.20]
@@ -929,7 +971,9 @@ def page4_manutenzione(c, data):
     has_pm    = data.get('property_manager', False)
     has_int   = data.get('intervento_tipo', "nessuno") != "nessuno"
     mens      = data.get('intervento_mensile', 0)
-    costo_int_anno = mens * 12 if has_int else 0
+    # round() qui invece che sul risultato finale: stesso bug float di sopra
+    # (mens*12 tipo 6875.039999999999) si propagherebbe a prof_basso/prof_alto.
+    costo_int_anno = round(mens * 12) if has_int else 0
     costo_pm_medio = int(ricavo_lordo * (pm_bassa + pm_alta) / 2 / 100) if has_pm else 0
 
     def opt_val(presente, val_str, zero_str="€ 0  (non previsto)"):
@@ -1118,7 +1162,10 @@ def page4(c, data):
                             f"(soggiorno medio {_sm_txt} notti)  =  € {_pulizie_tot}")
     else:
         _formula_pulizie = f"€ {pulizia_unit}/cambio  x  {notti} notti  =  € {_pulizie_tot}"
-    _sm_biancheria = f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else ""
+    _sm_biancheria = (
+        (f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else "")
+        + ", stima in scenario di gestione mista (propria/appalto a terzi)"
+    )
 
     # 4 card dati principali situazione dichiarata
     sit_label = "Immobile vuoto" if data.get('situazione_vuoto', False) else ("B&B attivo" if data.get('situazione_bnb', False) else "Con inquilini")
@@ -1323,16 +1370,28 @@ def page5(c, data):
     draw_section_subtitle(c, 14*mm, y, "Proiezione annuale · affitto tradizionale vs B&B short rent")
     y -= 6*mm
 
+    # Stesso criterio del Base: la colonna "Affitto tradizionale" mostra un
+    # range +-10% invece del numero secco, la Differenza resta calcolata sul
+    # valore preciso (altrimenti il conto non tornerebbe).
+    def _fmt_range_eu(valore):
+        basso = round(valore * 0.9)
+        alto = round(valore * 1.1)
+        return f"{fmt_eu(basso)} - {fmt_eu(alto)}"
+
+    def _fmt_diff_eu(delta):
+        segno = "+" if delta >= 0 else "-"
+        return f"{segno}{fmt_eu(abs(int(delta)))}"
+
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
         ["Ricavo annuo lordo",
-         fmt_eu(data.get('affitto_ricavo', 0)), fmt_eu(data.get('ricavo_lordo', 0)),
-         f"+{fmt_eu(data.get('ricavo_lordo', 0) - data.get('affitto_ricavo', 0))}"],
+         _fmt_range_eu(data.get('affitto_ricavo', 0)), fmt_eu(data.get('ricavo_lordo', 0)),
+         _fmt_diff_eu(data.get('ricavo_lordo', 0) - data.get('affitto_ricavo', 0))],
         ["Costi di gestione",
-         fmt_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)), "--"],
+         _fmt_range_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)), "--"],
         ["Profitto netto",
-         fmt_eu(data.get('affitto_profitto', 0)), fmt_eu(data.get('profitto_netto', 0)),
-         f"+{fmt_eu(data.get('profitto_netto', 0) - data.get('affitto_profitto', 0))}"],
+         _fmt_range_eu(data.get('affitto_profitto', 0)), fmt_eu(data.get('profitto_netto', 0)),
+         _fmt_diff_eu(data.get('profitto_netto', 0) - data.get('affitto_profitto', 0))],
         ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
         ["Rischio morosit\u00e0",       "Alto",  "Nullo", "Eliminato"],
     ]

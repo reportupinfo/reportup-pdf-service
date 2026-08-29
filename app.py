@@ -1476,7 +1476,10 @@ def page3(c, D):
     # scala con i cambi reali (a differenza delle pulizie): su immobili
     # cittadini ad alta occupazione farlo scalare gonfierebbe il costo
     # invece di ridurlo, l'opposto di quanto richiesto.
-    _sm_biancheria = f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else ""
+    _sm_biancheria = (
+        (f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else "")
+        + ", stima in scenario di gestione mista (propria/appalto a terzi)"
+    )
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
     mutuo_annuo = rata_mutuo * 12
 
@@ -1631,12 +1634,22 @@ def page3(c, D):
         numero = f"{abs(int(delta)):,}".replace(",", ".")
         return f"{segno}\u20ac {numero}"
 
+    # Il valore preciso di affitto_ricavo/costi/profitto resta quello usato per
+    # calcolare la Differenza (matematicamente corretta) \u2014 solo la colonna
+    # "Affitto tradizionale" mostra un range +-10% invece del numero secco,
+    # per non esporre una precisione sul mercato dell'affitto tradizionale
+    # che il dato non ha davvero.
+    def _fmt_range_eur(valore):
+        basso = round(valore * 0.9)
+        alto = round(valore * 1.1)
+        return f"{fmt_eur(basso)} - {fmt_eur(alto)}"
+
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
-        ["Ricavo annuo lordo", fmt_eur(D.get("affitto_ricavo", 0)), fmt_eur(D.get("ricavo_lordo", 0)),
+        ["Ricavo annuo lordo", _fmt_range_eur(D.get("affitto_ricavo", 0)), fmt_eur(D.get("ricavo_lordo", 0)),
          _fmt_diff(_diff_ricavo)],
-        ["Costi di gestione", fmt_eur(D.get("affitto_costi", 0)), fmt_eur(D.get("totale_costi", 0)), "--"],
-        ["Profitto netto", fmt_eur(D.get("affitto_profitto", 0)), fmt_eur(D.get("profitto_netto", 0)),
+        ["Costi di gestione", _fmt_range_eur(D.get("affitto_costi", 0)), fmt_eur(D.get("totale_costi", 0)), "--"],
+        ["Profitto netto", _fmt_range_eur(D.get("affitto_profitto", 0)), fmt_eur(D.get("profitto_netto", 0)),
          _fmt_diff(_diff_profitto)],
         ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
         ["Rischio morosit\u00e0", "Alto", "Nullo", "Eliminato"],
@@ -2342,14 +2355,16 @@ _COSTI_PER_TIPOLOGIA = [
     # Sessione 68: pulizie e biancheria ridotte del 20% rispetto ai valori
     # originali (tarati su servizio esterno professionale) per riflettere
     # lo scenario gestione diretta/informale, confermato da benchmark di
-    # mercato (€20-40/cambio per unita' piccole-medie). Utenze e
-    # manutenzione invariate su richiesta esplicita di Salvatore.
-    ("villa", 70, 600, 1300, 900), ("casa indipendente", 70, 600, 1300, 900),
-    ("appartamento", 50, 480, 1000, 650), ("4+", 50, 480, 1000, 650), ("grande", 50, 480, 1000, 650),
-    ("trilocale", 45, 400, 850, 500),
-    ("bilocale", 35, 320, 650, 350),
-    ("doppia", 25, 225, 450, 220),
-    ("singola", 20, 175, 350, 180), ("stanza", 20, 175, 350, 180),
+    # mercato (€20-40/cambio per unita' piccole-medie). Manutenzione invariata.
+    # Sessione 69 (29/8/2026): utenze rialzate, erano sottostimate. Elettricita'
+    # scalata per tipologia sui dati reali di Salvatore (bilocale 50€/mese,
+    # villa 200€/mese) + 20€/mese internet fisso su tutte le tipologie.
+    ("villa", 70, 600, 2650, 900), ("casa indipendente", 70, 600, 2650, 900),
+    ("appartamento", 50, 480, 1700, 650), ("4+", 50, 480, 1700, 650), ("grande", 50, 480, 1700, 650),
+    ("trilocale", 45, 400, 1200, 500),
+    ("bilocale", 35, 320, 840, 350),
+    ("doppia", 25, 225, 600, 220),
+    ("singola", 20, 175, 480, 180), ("stanza", 20, 175, 480, 180),
 ]
 
 
@@ -2358,7 +2373,7 @@ def _costi_per_tipologia(tipologia):
     for frammento, pulizie, biancheria, utenze, manutenzione in _COSTI_PER_TIPOLOGIA:
         if frammento in t:
             return pulizie, biancheria, utenze, manutenzione
-    return 30, 240, 500, 300
+    return 30, 240, 650, 300
 
 
 def _calcola_costi_fissi_deterministici(data):
@@ -2780,6 +2795,41 @@ def _geocode_indirizzo(indirizzo, timeout=5):
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
+        return None
+
+
+GOOGLE_STATICMAP_URL = "https://maps.googleapis.com/maps/api/staticmap"
+
+
+def _fetch_static_map_png(lat, lon, timeout=6):
+    """Immagine satellitare statica (Google Static Maps) per la pagina 1
+    dello Strategico — sostituisce il placeholder "la mappa interattiva
+    sarà integrata nella versione finale". Stessa chiave GOOGLE_MAPS_API_KEY
+    già in uso per geocode/elevation/distance matrix, nessuna nuova env var.
+    Costo trascurabile: una chiamata per report generato, non per visita."""
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key or lat in (None, "") or lon in (None, ""):
+        return None
+    try:
+        resp = requests.get(
+            GOOGLE_STATICMAP_URL,
+            params={
+                "center": f"{lat},{lon}",
+                "zoom": 17,
+                "size": "640x360",
+                "scale": 2,
+                "maptype": "satellite",
+                "markers": f"color:red|{lat},{lon}",
+                "key": api_key,
+            },
+            timeout=timeout,
+        )
+        if resp.status_code != 200 or not resp.content:
+            print(f"[STATICMAP] status={resp.status_code} lat={lat!r} lon={lon!r}")
+            return None
+        return resp.content
+    except Exception as e:
+        print(f"[STATICMAP] eccezione: {e}")
         return None
 
 
@@ -3258,6 +3308,20 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         else:
             _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
             data["fonte_occupazione"] = "correttivo_percentili"
+
+        # Posizionamento stagionale (pag. 10 Strategico, L90D/TTM): stesso
+        # correttivo_occ + tetto applicati sopra all'occupazione_percent
+        # principale, altrimenti questa tabella mostra l'occupazione AirROI
+        # grezza (tipicamente ottimistica) mentre il resto del report usa
+        # sempre il dato corretto — due numeri diversi per lo stesso concetto
+        # nello stesso PDF. RevPAR ricalcolato di conseguenza (ADR x Occ%,
+        # stessa formula del KPI di pag. 13) per restare coerente col prezzo.
+        if data.get("trend_stagionale"):
+            _ts = data["trend_stagionale"]
+            _ts["occupazione_l90d"] = min(_tetto_occ, round(_ts["occupazione_l90d"] * _correttivo_occ))
+            _ts["occupazione_ttm"] = min(_tetto_occ, round(_ts["occupazione_ttm"] * _correttivo_occ))
+            _ts["revpar_l90d"] = round(_ts["prezzo_l90d"] * _ts["occupazione_l90d"] / 100)
+            _ts["revpar_ttm"] = round(_ts["prezzo_ttm"] * _ts["occupazione_ttm"] / 100)
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p_new = round(_p * _moltiplicatore) if _p else _p
@@ -3994,6 +4058,11 @@ def generate_strategico():
         # Dopo il ricalcolo scenari: usa il profitto netto deterministico
         # finale, non quello di partenza dell'AI.
         _calcola_valore_asset(data)
+
+        # Mappa satellitare pag. 1 — stesse lat/long già usate per AirROI
+        # sopra, nessuna chiamata geocode aggiuntiva. None se manca la
+        # chiave o le coordinate: strategico.py ricade sul placeholder.
+        data["_mappa_png"] = _fetch_static_map_png(data.get("lat"), data.get("long"))
 
         pdf_bytes = build_strategico_pdf_bytes(data)
         comune = data.get('comune', 'report').replace(' ', '_')
