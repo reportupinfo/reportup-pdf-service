@@ -105,6 +105,13 @@ def _numero_da(d, *chiavi, default=None):
 def _tipologia_da_camere(n_camere):
     if n_camere is None:
         return "Annunci comparabili"
+    # data.get("camere") puo' arrivare qui come stringa: _camere_deterministiche
+    # ritorna str(m[0]) (Sessione 66), mentre le "bedrooms" AirROI dei
+    # comparable_listings sono gia' numeriche. round() su str esplode
+    # (TypeError: type str doesn't define __round__ method) — capitava ogni
+    # volta che AirROI aveva abbastanza comparabili della zona (es. Napoli).
+    if isinstance(n_camere, str):
+        n_camere = _numero_da_stringa(n_camere, default=1)
     n = int(round(n_camere))
     return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
 
