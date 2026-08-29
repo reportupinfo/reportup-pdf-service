@@ -3317,11 +3317,16 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         # nello stesso PDF. RevPAR ricalcolato di conseguenza (ADR x Occ%,
         # stessa formula del KPI di pag. 13) per restare coerente col prezzo.
         if data.get("trend_stagionale"):
-            _ts = data["trend_stagionale"]
+            # dict() copia: "trend_stagionale" è lo stesso oggetto salvato in
+            # _AIRROI_CACHE (15 min TTL). Mutarlo in-place applicherebbe il
+            # correttivo una seconda volta a ogni cache-hit sullo stesso
+            # indirizzo entro la TTL, drift cumulativo silenzioso.
+            _ts = dict(data["trend_stagionale"])
             _ts["occupazione_l90d"] = min(_tetto_occ, round(_ts["occupazione_l90d"] * _correttivo_occ))
             _ts["occupazione_ttm"] = min(_tetto_occ, round(_ts["occupazione_ttm"] * _correttivo_occ))
             _ts["revpar_l90d"] = round(_ts["prezzo_l90d"] * _ts["occupazione_l90d"] / 100)
             _ts["revpar_ttm"] = round(_ts["prezzo_ttm"] * _ts["occupazione_ttm"] / 100)
+            data["trend_stagionale"] = _ts
     else:
         _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
         _p_new = round(_p * _moltiplicatore) if _p else _p
