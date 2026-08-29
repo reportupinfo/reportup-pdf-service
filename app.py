@@ -1992,10 +1992,15 @@ def _join_lista_e(items):
 
 
 def _concorda_numero(valore, singolare, plurale):
-    try:
-        n = int(str(valore).strip())
-    except (ValueError, TypeError):
+    # Il prompt Strategico chiede "bagni"/"posti_letto" già come frase (es. "1
+    # bagno", "4 posti", vedi PROMPT_AI_REPORT_STRATEGICO.md) — int() sull'intera
+    # stringa falliva sempre e il fallback ci appendeva comunque il plurale,
+    # duplicando l'unità ("1 bagno bagni"). Estrarre la prima cifra, come già fa
+    # _numero_da_stringa, gestisce sia i numeri nudi sia le frasi dell'AI.
+    m = re.search(r"\d+", str(valore))
+    if not m:
         return f"{valore} {plurale}"
+    n = int(m.group())
     return f"{n} {singolare}" if n == 1 else f"{n} {plurale}"
 
 
