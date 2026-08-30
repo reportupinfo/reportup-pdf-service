@@ -3754,7 +3754,18 @@ def ai_generate():
     system_prompt = body.get("system", "")
     user_prompt = body.get("user", "")
     model = body.get("model") or "claude-haiku-4-5"
-    max_tokens = int(body.get("max_tokens") or 3000)
+    # Tetto minimo 12000 token. Lo scenario Make chiede 6000, ma il JSON
+    # dello Strategico misurato su Napoli è già 5054 token di output con un
+    # prompt ridotto: quello reale (system con la normativa 2026 completa,
+    # user con POI/obiettivi/interventi) sfora i 6000, la risposta torna con
+    # stop_reason=max_tokens tagliata a metà, e a valle /generate-strategico
+    # muore su json.loads con un 500 opaco. Erano i "ConnectionError:
+    # Internal Server Error" intermittenti dello scenario 7124085 (28-30/8).
+    # Il floor sta qui e non nel blueprint Make perché questo endpoint ha un
+    # solo chiamante: il modulo 2 dello Strategico (la chiamata geografica
+    # piccola passa da /api/ai-proxy su Netlify, non da qui). Si pagano solo
+    # i token realmente generati, non il tetto.
+    max_tokens = max(int(body.get("max_tokens") or 3000), 12000)
 
     try:
         resp = requests.post(
@@ -3776,10 +3787,25 @@ def ai_generate():
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 502
 
     try:
-        return jsonify(resp.json()), resp.status_code
+        _payload = resp.json()
     except ValueError:
         return jsonify({"error": "risposta Anthropic non JSON", "status": resp.status_code,
                          "body": resp.text[:2000]}), 502
+
+    # Se nonostante il floor la risposta esce tagliata, il JSON a valle non
+    # sarà parsabile: meglio dirlo qui nei log che lasciar sbagliare
+    # /generate-strategico con un 500 senza indizi.
+    if isinstance(_payload, dict):
+        _stop = _payload.get("stop_reason")
+        _out_tok = (_payload.get("usage") or {}).get("output_tokens")
+        if _stop == "max_tokens":
+            print(f"[AI-GENERATE] RISPOSTA TRONCATA: stop_reason=max_tokens "
+                  f"output_tokens={_out_tok} tetto={max_tokens} — il JSON arriverà "
+                  f"incompleto e /generate-strategico fallirà su json.loads")
+        else:
+            print(f"[AI-GENERATE] stop_reason={_stop} output_tokens={_out_tok} tetto={max_tokens}")
+
+    return jsonify(_payload), resp.status_code
 
 
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
@@ -4101,7 +4127,13 @@ def generate_strategico():
         )
 
     except Exception as e:
-        return jsonify({"error": str(e), "raw_preview": raw[:500]}), 500
+        # La coda del testo conta più della testa: quando l'AI sfora il tetto
+        # di token il JSON arriva troncato a metà campo, e il primo mezzo kB
+        # sembra perfettamente valido. Senza la coda nei log il 500 è cieco.
+        print(f"[GENERATE-STRATEGICO] {type(e).__name__}: {e} — len(raw)={len(raw)} "
+              f"coda={raw[-300:]!r}")
+        return jsonify({"error": str(e), "raw_len": len(raw),
+                         "raw_preview": raw[:500], "raw_tail": raw[-300:]}), 500
 
 
 if __name__ == "__main__":
