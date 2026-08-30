@@ -369,7 +369,13 @@ def page1(c, data):
     # nessuna chiamata aggiuntiva oltre quella gi\u00e0 fatta per lat/long. Se
     # manca (chiave assente, timeout, coordinate mancanti) ricade sul
     # placeholder di sempre.
-    map_h = 55*mm
+    # 100mm, non 55: sotto le pillole "Situazione attuale" restavano ~80mm di
+    # pagina bianca. Alzando il riquadro tutto il resto scende di 45mm e ne
+    # avanzano ~35mm come margine inferiore, che è respiro voluto e non buco.
+    # Il rapporto 182x100mm deve restare allineato al `size` richiesto in
+    # _fetch_static_map_png (640x352): qui si disegna con
+    # preserveAspectRatio=False, quindi un rapporto diverso stira l'immagine.
+    map_h = 100*mm
     map_png = data.get('_mappa_png')
     map_ok = False
     if map_png:

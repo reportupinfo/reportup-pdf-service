@@ -2815,6 +2815,33 @@ def _geocode_indirizzo(indirizzo, timeout=5):
 
 GOOGLE_STATICMAP_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
+# Raggio del cerchio che evidenzia la zona in pagina 1. 150 m copre con
+# abbondanza l'imprecisione tipica del geocoding sul numero civico: meglio
+# dichiarare un'area che piantare un puntatore preciso su un portone che
+# potrebbe non essere quello giusto.
+STATICMAP_RAGGIO_M = 150
+
+
+def _cerchio_path_points(lat, lon, raggio_m=STATICMAP_RAGGIO_M, n_punti=48):
+    """Vertici di un poligono che approssima un cerchio di `raggio_m` metri
+    attorno a (lat, lon), nel formato che vuole il parametro `path` di Google
+    Static Maps. Static Maps non ha una primitiva "cerchio": l'unico modo di
+    disegnare un'area è un path chiuso con abbastanza lati da sembrare tondo
+    (48 bastano, e restano ~1 kB di URL, ben sotto il limite di 8192)."""
+    lat_f, lon_f = float(lat), float(lon)
+    # 1 grado di latitudine ~ 111320 m ovunque; sulla longitudine il passo si
+    # accorcia col coseno della latitudine, altrimenti in Italia il cerchio
+    # uscirebbe ovalizzato in orizzontale.
+    d_lat = raggio_m / 111320.0
+    d_lon = raggio_m / (111320.0 * math.cos(math.radians(lat_f)))
+    punti = []
+    for i in range(n_punti):
+        theta = 2 * math.pi * i / n_punti
+        punti.append(f"{lat_f + d_lat * math.cos(theta):.6f},"
+                     f"{lon_f + d_lon * math.sin(theta):.6f}")
+    punti.append(punti[0])  # chiude il poligono
+    return punti
+
 
 def _fetch_static_map_png(lat, lon, timeout=6):
     """Immagine mappa statica (Google Static Maps) per la pagina 1 dello
@@ -2825,27 +2852,44 @@ def _fetch_static_map_png(lat, lon, timeout=6):
     Static Maps per account/regione EEA (403 "not available for your
     account and region", confermato testando la chiave in uso — non è un
     problema di API da abilitare). roadmap/terrain restano serviti.
-    size 640x194: deve riempire un riquadro 182x55mm (~3.3:1) in pagina1
-    con preserveAspectRatio=False; 640x360 (1.78:1) usciva stirato."""
+
+    size 640x352: deve riempire il riquadro 182x100mm (~1.82:1) di page1 con
+    preserveAspectRatio=False, quindi il rapporto va tenuto allineato a mano
+    se si cambia `map_h` in strategico.py, altrimenti l'immagine esce stirata.
+
+    zoom 15 (non 17): inquadra ~2,3 km di larghezza invece di ~570 m, così si
+    legge il contesto del quartiere e non solo l'isolato.
+
+    Niente `markers`: al posto del puntatore sul civico si disegna un cerchio
+    di STATICMAP_RAGGIO_M metri centrato sull'indirizzo. Un pin afferma una
+    precisione che il geocoding non garantisce sul numero civico; il cerchio
+    dice "la zona è questa", che è quello che serve davvero al report."""
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not api_key or lat in (None, "") or lon in (None, ""):
         return None
     try:
-        resp = requests.get(
-            GOOGLE_STATICMAP_URL,
-            params={
-                "center": f"{lat},{lon}",
-                "zoom": 17,
-                "size": "640x194",
-                "scale": 2,
-                "maptype": "roadmap",
-                "markers": f"color:red|{lat},{lon}",
-                "key": api_key,
-            },
-            timeout=timeout,
-        )
+        params = {
+            "center": f"{lat},{lon}",
+            "zoom": 15,
+            "size": "640x352",
+            "scale": 2,
+            "maptype": "roadmap",
+            "key": api_key,
+        }
+        try:
+            # Riempimento a bassa opacità + bordo pieno, nei colori del brand.
+            # Google vuole 0xRRGGBBAA.
+            params["path"] = ("fillcolor:0x2196C426|color:0x2196C4C0|weight:3|"
+                              + "|".join(_cerchio_path_points(lat, lon)))
+        except (TypeError, ValueError) as e:
+            # lat/lon non convertibili in float: la mappa esce comunque,
+            # semplicemente senza cerchio. Non vale un report in meno.
+            print(f"[STATICMAP] cerchio saltato, lat={lat!r} lon={lon!r}: {e}")
+
+        resp = requests.get(GOOGLE_STATICMAP_URL, params=params, timeout=timeout)
         if resp.status_code != 200 or not resp.content:
-            print(f"[STATICMAP] status={resp.status_code} lat={lat!r} lon={lon!r}")
+            print(f"[STATICMAP] status={resp.status_code} lat={lat!r} lon={lon!r} "
+                  f"body={resp.text[:200]!r}")
             return None
         return resp.content
     except Exception as e:
