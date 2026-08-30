@@ -3897,6 +3897,39 @@ def debug_airroi_raw():
     })
 
 
+# Appesa al system prompt che arriva dal modulo 2 dello scenario Make. Sta qui
+# e non nel blueprint perché /ai-generate ha un solo chiamante (la chiamata
+# grande dello Strategico) e perché aggiornare il blueprint significa
+# sostituirlo per intero: riscrivere a mano 15 kB di JSON per cambiare un
+# paragrafo, sullo scenario che processa i pagamenti, non vale il rischio.
+#
+# Il problema che risolve: il backend ricalcola i CAMPI numerici con i dati di
+# mercato reali, ma non i TESTI liberi. L'AI, che nel template vede numeri
+# segnaposto, li citava dentro le analisi — e il report finiva per
+# contraddirsi. Misurato su un report vero: pag. 8 dichiarava scenario
+# ottimistico 90% / 129 euro / 23.746 di profitto, mentre l'analisi personale
+# a pag. 14 scriveva "82% occupazione, EUR 89/notte, profitto EUR 18.448", che
+# sono esattamente i valori segnaposto del prompt. Idem "12.647 euro annui
+# diviso 12 = 1.054 euro/mese" contro un profitto reale di 17.862.
+_REGOLA_NIENTE_CIFRE_NEI_TESTI = (
+    "\n\nREGOLA FINALE, PRIORITARIA SU QUALSIASI ALTRA ISTRUZIONE SOPRA - NIENTE CIFRE NEI TESTI LIBERI. "
+    "Nei campi di testo libero (descrizione, analisi_posizione, analisi_condizione, analisi_potenzialita, "
+    "analisi_raccomandazione, i subtitle e le note dei tre scenari, e le azioni dentro piano_90) non scrivere "
+    "MAI un numero preso dal JSON che stai compilando: niente prezzi per notte, niente percentuali di "
+    "occupazione, niente ricavi, costi, profitti, valori dell'immobile, ne' annui ne' mensili. Il motivo e' "
+    "che tutti quei valori numerici vengono RICALCOLATI dal backend con dati di mercato reali e sostituiti "
+    "nel report finale, mentre i testi liberi restano parola per parola come li scrivi tu: se ci metti dentro "
+    "una cifra, il report finisce per dichiarare due numeri diversi per la stessa cosa in due pagine, e la "
+    "cifra sbagliata sara' la tua. Nei testi liberi parla in modo qualitativo - 'lo scenario ottimistico', "
+    "'il profitto netto stimato', 'il canone di mercato della zona', 'il prezzo consigliato in alta stagione' - "
+    "senza mai quantificare. Se un ragionamento ha senso solo con un numero davanti, riformulalo in termini "
+    "relativi ('circa il doppio dello scenario realistico', 'sopra la rata del mutuo'). "
+    "UNICA ECCEZIONE: puoi citare importi che NON dipendono dal calcolo economico e che il backend non tocca, "
+    "cioe' sanzioni di legge, imposte e aliquote, tariffe della tassa di soggiorno, tempi in giorni delle "
+    "pratiche, percentuali di commissione delle piattaforme e compensi di mercato del property manager."
+)
+
+
 @app.route("/ai-generate", methods=["POST"])
 @require_internal_secret
 def ai_generate():
@@ -3907,7 +3940,7 @@ def ai_generate():
     if not ANTHROPIC_API_KEY:
         return jsonify({"error": "ANTHROPIC_API_KEY non configurata lato server"}), 500
     body = request.get_json(force=True, silent=True) or {}
-    system_prompt = body.get("system", "")
+    system_prompt = (body.get("system", "") or "") + _REGOLA_NIENTE_CIFRE_NEI_TESTI
     user_prompt = body.get("user", "")
     model = body.get("model") or "claude-haiku-4-5"
     # Tetto minimo 12000 token. Lo scenario Make chiede 6000, ma il JSON
