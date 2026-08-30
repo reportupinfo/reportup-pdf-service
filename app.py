@@ -587,9 +587,26 @@ def _calcola_trimestre_affidabile(data):
         return
     prezzi = [r[2] for r in righe]
     occupazioni = [r[1] for r in righe]
-    ricavo_trimestre = sum(
-        round(r[2] * _GIORNI_MESE.get(r[0], 30) * r[1] / 100) for r in righe
-    )
+
+    # Il ricavo va letto dalla tabella pricing GIÀ normalizzata, non
+    # ricalcolato da prezzo x giorni x occupazione. _pricing_mensile_
+    # deterministico riporta i 12 mesi sul livello del ricavo lordo annuo con
+    # un fattore di scala (~0,91 su questo report), quindi la formula grezza
+    # dà un numero più alto di quello stampato nella tabella: il riepilogo
+    # finale dichiarava "prossimi 3 mesi € 9.845" mentre le stesse tre righe a
+    # pag. 7 sommavano € 9.003. Due risposte alla stessa domanda nello stesso
+    # report. Per questo la funzione va chiamata DOPO
+    # _pricing_mensile_deterministico (vedi ordine in generate_strategico).
+    pricing = data.get("pricing_mensile") or []
+    if len(pricing) == len(occ) and all(len(r) > 4 for r in pricing):
+        ricavo_trimestre = sum(pricing[i][4] for i in idx if 0 <= i < len(pricing))
+    else:
+        # Nessuna tabella normalizzata disponibile: si ricade sulla formula
+        # grezza, che resta meglio di niente.
+        ricavo_trimestre = sum(
+            round(r[2] * _GIORNI_MESE.get(r[0], 30) * r[1] / 100) for r in righe
+        )
+
     data["trimestre_mesi_label"] = " – ".join(r[0] for r in righe)
     data["trimestre_prezzo_medio"] = round(sum(prezzi) / len(prezzi))
     data["trimestre_occupazione_media"] = round(sum(occupazioni) / len(occupazioni))
@@ -896,6 +913,67 @@ def _zona_sembra_valida(testo):
     if not t:
         return True
     return re.search(r'\b(of|the|zone|district|area)\b', t, re.IGNORECASE) is None
+
+
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+
+# Ordine di preferenza dei campi OSM per la "zona". Non è arbitrario, viene da
+# una verifica su città diverse: a Milano `neighbourhood` dà "Cinque Vie" e
+# `suburb` dà "Municipio 1"; a Roma `suburb` dà "Municipio Roma I" e `quarter`
+# dà "Castro Pretorio". Il nome d'uso comune sta quasi sempre nei primi campi,
+# il gergo amministrativo negli ultimi.
+_OSM_CAMPI_ZONA = ("neighbourhood", "quarter", "suburb", "city_district", "borough")
+
+# Etichette amministrative che non sono una "zona" utile in un report: nessun
+# proprietario dice che il suo immobile è in "Municipio Roma I".
+_OSM_ZONA_DA_SCARTARE = re.compile(
+    r'^\s*(municipio|circoscrizione|quartiere|zona|distretto|unità|unita)\b[\s\d]*$|^\s*[\dIVXivx]+\s*$',
+    re.IGNORECASE,
+)
+
+
+def _zona_da_openstreetmap(lat, lon, timeout=6):
+    """Quartiere/rione dal reverse geocoding di OpenStreetMap.
+
+    Serve perché Google, sugli indirizzi italiani, il dato NON ce l'ha:
+    verificato su via Toledo a Napoli, il reverse geocoding con
+    `result_type=neighborhood|sublocality` (quello che chiede il modulo 22
+    dello scenario Make) risponde ZERO_RESULTS, e senza filtro gli unici
+    campi d'area sono `locality` e `administrative_area_level_3`, che valgono
+    entrambi "Napoli" — cioè il comune, non la zona. Per questo la scheda
+    immobile mostrava "—" anche in pieno centro. OSM invece i quartieri
+    italiani li mappa.
+
+    Restituisce None se non trova niente di utile: sui comuni piccoli
+    (verificato su Bellagio e Pescasseroli) la zona non esiste proprio, e "—"
+    è la risposta onesta. Non solleva mai: un'etichetta mancante non deve
+    costare un report."""
+    if lat in (None, "") or lon in (None, ""):
+        return None
+    try:
+        resp = requests.get(
+            NOMINATIM_REVERSE_URL,
+            params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 16,
+                    "addressdetails": 1, "accept-language": "it"},
+            # La policy Nominatim vuole uno User-Agent che identifichi
+            # l'applicazione. Volume nostro: una chiamata per report.
+            headers={"User-Agent": "ReportUp/1.0 (analisi immobiliare B&B; reportup.info@gmail.com)"},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            print(f"[ZONA-OSM] status={resp.status_code} lat={lat!r} lon={lon!r}")
+            return None
+        indirizzo = (resp.json() or {}).get("address") or {}
+        for campo in _OSM_CAMPI_ZONA:
+            valore = str(indirizzo.get(campo) or "").strip()
+            if valore and not _OSM_ZONA_DA_SCARTARE.match(valore):
+                print(f"[ZONA-OSM] {campo}={valore!r}")
+                return valore
+        print(f"[ZONA-OSM] nessun campo utile per lat={lat!r} lon={lon!r}")
+        return None
+    except Exception as e:
+        print(f"[ZONA-OSM] eccezione: {e}")
+        return None
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -3255,6 +3333,14 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
 
     if "comune" in data:
         data["comune"] = _title_preserva_romani(data["comune"])
+    # Zona da OSM PRIMA della normalizzazione sotto: è un dato verificato e
+    # deterministico, quindi vince su quello che scrive l'AI — che sul punto
+    # non può fare di meglio, visto che il quartiere Google glielo passa
+    # sempre come "nessuno" (vedi _zona_da_openstreetmap). Se OSM non trova
+    # niente si tiene il valore esistente e la normalizzazione fa il resto.
+    _zona_osm = _zona_da_openstreetmap(data.get("lat"), data.get("long"))
+    if _zona_osm:
+        data["zona"] = _zona_osm
     if "zona" in data:
         data["zona"] = _title_preserva_romani(data["zona"]) if _zona_sembra_valida(data["zona"]) else "—"
 
@@ -4119,10 +4205,6 @@ def generate_strategico():
                 if isinstance(item, dict) and "azioni" in item:
                     item["azioni"] = list(item["azioni"])
 
-        # Media trimestre (3 mesi più affidabili, ToDo Sessione 65) — solo
-        # Strategico, si affianca alla curva a 12 mesi, non la sostituisce.
-        _calcola_trimestre_affidabile(data)
-
         # Moltiplicatori di valore (dotazioni) — solo Strategico, pag. 6.
         _calcola_moltiplicatori_dotazioni(data)
 
@@ -4145,6 +4227,14 @@ def generate_strategico():
 
         # Colonna eventi del piano pricing dal calendario reale, non dall'AI.
         _pricing_mensile_deterministico(data)
+
+        # Media trimestre (3 mesi più affidabili, ToDo Sessione 65) — solo
+        # Strategico, si affianca alla curva a 12 mesi, non la sostituisce.
+        # DEVE stare dopo _pricing_mensile_deterministico: legge il ricavo
+        # dalla tabella già normalizzata, altrimenti il riepilogo finale
+        # dichiara per gli stessi 3 mesi un totale diverso da quello che si
+        # legge nella tabella di pag. 7.
+        _calcola_trimestre_affidabile(data)
 
         # POI nello schema a slot fissi del Base, così la pagina "Posizione e
         # punti di interesse" è la stessa tabella sui due prodotti.
