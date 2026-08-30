@@ -982,22 +982,26 @@ def page4_manutenzione(c, data):
     # round() qui invece che sul risultato finale: stesso bug float di sopra
     # (mens*12 tipo 6875.039999999999) si propagherebbe a prof_basso/prof_alto.
     costo_int_anno = round(mens * 12) if has_int else 0
-    costo_pm_medio = int(ricavo_lordo * (pm_bassa + pm_alta) / 2 / 100) if has_pm else 0
+    # round() e non int(): il troncamento faceva uscire il 20% di 31.828 come
+    # 6.365 invece di 6.366, e la riga del profitto ereditava l'euro perso.
+    _pm_costo_basso = round(ricavo_lordo * pm_bassa / 100)
+    _pm_costo_alto = round(ricavo_lordo * pm_alta / 100)
+    costo_pm_medio = round(ricavo_lordo * (pm_bassa + pm_alta) / 2 / 100) if has_pm else 0
 
     def opt_val(presente, val_str, zero_str="€ 0  (non previsto)"):
         return val_str if presente else zero_str
 
     pm_det = opt_val(has_pm,
-        f"\u20ac {ricavo_lordo:,} x {pm_bassa}-{pm_alta}% = \u20ac {int(ricavo_lordo*pm_bassa/100):,} \u2013 \u20ac {int(ricavo_lordo*pm_alta/100):,} / anno *".replace(",","."))
+        f"\u20ac {ricavo_lordo:,} x {pm_bassa}-{pm_alta}% = \u20ac {_pm_costo_basso:,} \u2013 \u20ac {_pm_costo_alto:,} / anno *".replace(",","."))
     pm_val = opt_val(has_pm,
-        f"- \u20ac {int(ricavo_lordo*pm_bassa/100):,} / {int(ricavo_lordo*pm_alta/100):,}".replace(",","."))
+        f"- \u20ac {_pm_costo_basso:,} / {_pm_costo_alto:,}".replace(",","."))
     int_det = opt_val(has_int,
         f"\u20ac {mens:,}/mese x 12 = \u20ac {costo_int_anno:,} / anno".replace(",","."))
     int_val = opt_val(has_int,
         f"- \u20ac {costo_int_anno:,}".replace(",","."))
 
-    prof_basso = profitto - (int(ricavo_lordo*pm_bassa/100) if has_pm else 0) - costo_int_anno
-    prof_alto  = profitto - (int(ricavo_lordo*pm_alta/100)  if has_pm else 0) - costo_int_anno
+    prof_basso = profitto - (_pm_costo_basso if has_pm else 0) - costo_int_anno
+    prof_alto  = profitto - (_pm_costo_alto  if has_pm else 0) - costo_int_anno
 
     opt_data = [
         ["Voce opzionale", "Dettaglio calcolo", "Costo annuale"],
@@ -1238,7 +1242,7 @@ def page4(c, data):
         ["TOTALE RICAVI",
          f"{fmt_eu(data.get('ricavo_lordo', 0))}  +  {fmt_eu(data.get('bonus_dirette', 0))}",
          fmt_eu(data.get('totale_ricavi', 0))],
-        ["COSTI VARIABILI", f"Media di mercato per tipologia: {data.get('scheda_tipologia') or data.get('tipologia', 'immobile')}", ""],
+        ["COSTI DI GESTIONE", f"Media di mercato per tipologia: {data.get('scheda_tipologia') or data.get('tipologia', 'immobile')}", ""],
         ["Commissioni piattaforma Airbnb",
          f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct}%  =  € {data.get('costi_commissioni', 0):,}".replace(",","."),
          f"- {fmt_eu(data.get('costi_commissioni', 0))}"],
@@ -1268,7 +1272,7 @@ def page4(c, data):
         # totale calcolato dal backend fa l'opposto: sommando le voci a video
         # non tornava il numero stampato di fianco. Ora la stringa elenca
         # esattamente gli addendi che compongono `totale_costi`.
-        ["TOTALE COSTI VARIABILI",
+        ["TOTALE COSTI DI GESTIONE",
          "  +  ".join(_addendi_costi),
          f"- {fmt_eu(data.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO",
@@ -1361,7 +1365,7 @@ def page4(c, data):
     cards4 = [
         ("Margine netto",          f"{data.get('margine_percent', 0)}%",          WHITE,      BLUE_NIGHT, small_w, small_h),
         ("Totale ricavi",          fmt_eur(data.get('totale_ricavi', 0)),          TEAL_LIGHT, TEAL,       small_w, small_h),
-        ("Costi variabili totali", f"- {fmt_eur(data.get('totale_costi', 0))}",   RED_LIGHT,  RED,        small_w, small_h),
+        ("Costi di gestione totali", f"- {fmt_eur(data.get('totale_costi', 0))}",   RED_LIGHT,  RED,        small_w, small_h),
         ("Il tuo guadagno stimato",fmt_eur(data.get('profitto_netto', 0)),         GOLD_LIGHT, GOLD,       big_w,   big_h),
     ]
     cx = 14*mm
@@ -1769,7 +1773,7 @@ def page8(c, data):
             ("Occupazione media", f"{sc['occupazione']}%"),
             ("Notti vendute",     f"{sc['notti']} / anno"),
             ("Prezzo medio notte",f"€ {sc['prezzo_medio']}"),
-            ("Ricavi lordi",      fmt_eur(sc["ricavi_lordi"])),
+            ("Ricavi totali",     fmt_eur(sc["ricavi_lordi"])),
             ("Costi totali",      fmt_eur(sc["costi_totali"])),
             ("Profitto netto",    fmt_eur(sc["profitto_netto"])),
         ]
@@ -1805,7 +1809,7 @@ def page8(c, data):
         ["Occupazione media",  f"{pess['occupazione']}%", f"{real['occupazione']}%", f"{ott['occupazione']}%"],
         ["Notti vendute/anno", str(pess["notti"]),        str(real["notti"]),         str(ott["notti"])],
         ["Prezzo medio/notte", f"€ {pess['prezzo_medio']}", f"€ {real['prezzo_medio']}", f"€ {ott['prezzo_medio']}"],
-        ["Ricavi lordi",       fmt_eur(pess["ricavi_lordi"]),  fmt_eur(real["ricavi_lordi"]),  fmt_eur(ott["ricavi_lordi"])],
+        ["Ricavi totali",      fmt_eur(pess["ricavi_lordi"]),  fmt_eur(real["ricavi_lordi"]),  fmt_eur(ott["ricavi_lordi"])],
         ["Costi totali",       fmt_eur(pess["costi_totali"]),  fmt_eur(real["costi_totali"]),  fmt_eur(ott["costi_totali"])],
         ["Profitto netto",     fmt_eur(pess["profitto_netto"]),fmt_eur(real["profitto_netto"]),fmt_eur(ott["profitto_netto"])],
     ]
@@ -1889,7 +1893,7 @@ def page8b_durata(c, data):
 
         righe = [
             ("Cambi ospite/anno",  str(sc["cambi"])),
-            ("Ricavi lordi",       fmt_eur(ricavi_lordi)),
+            ("Ricavi totali",      fmt_eur(ricavi_lordi)),
             ("Costi pulizia",      fmt_eur(sc["costi_pulizie"])),
             ("Costi totali",       fmt_eur(sc["costi_totali"])),
             ("Profitto netto",     fmt_eur(sc["profitto_netto"])),

@@ -10,7 +10,13 @@ import re
 import time
 import base64
 import math
+import datetime
 import requests
+
+# Mesi abbreviati in italiano: servono per la data in testata del PDF, che
+# prima arrivava dal formatDate di Make con la locale del team ("30 Aug 2026").
+_MESI_IT_ABBR = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+                 "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
 from flask import Flask, request, jsonify
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -538,9 +544,19 @@ def _calcola_valore_asset(data):
     profitto = data.get("profitto_netto")
     if profitto is None:
         return
-    data["ebitda_stimato"] = round(profitto)
+    # EBITDA = prima degli oneri finanziari, quindi il mutuo va RIAGGIUNTO al
+    # profitto netto. Capitalizzando il profitto post-mutuo si otteneva un
+    # valore che dipende da come il proprietario ha finanziato l'acquisto:
+    # sullo stesso immobile, con rata da 400 euro/mese, usciva 255.171 invece
+    # di 323.743 — 68.572 di differenza generati non dall'immobile ma dal
+    # piano di ammortamento di chi ci abita. Il valore di un asset non cambia
+    # perché sopra c'è un mutuo: quello semmai riduce il patrimonio netto del
+    # proprietario, non il valore del bene.
+    _mutuo_annuo = (data.get("rata_mutuo_mensile") or 0) * 12 if data.get("mutuo_attivo") else 0
+    ebitda = round(profitto + _mutuo_annuo)
+    data["ebitda_stimato"] = ebitda
     if saggio > 0:
-        data["valore_mercato"] = round(profitto / saggio * 100)
+        data["valore_mercato"] = round(ebitda / saggio * 100)
 
 
 # Mappa statica (non generata dall'AI, come da principio del progetto: il
@@ -3331,6 +3347,13 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         if campo in data and not isinstance(data[campo], str):
             data[campo] = str(data[campo])
 
+    # Data di generazione scritta qui e non presa da Make: il formatDate dello
+    # scenario usa la locale del team e stampava "30 Aug 2026" con il mese in
+    # inglese in un report tutto in italiano. È la data di oggi comunque, non
+    # un dato che l'AI possa sbagliare.
+    _oggi = datetime.date.today()
+    data["data_generazione"] = f"{_oggi.day} {_MESI_IT_ABBR[_oggi.month - 1]} {_oggi.year}"
+
     if "comune" in data:
         data["comune"] = _title_preserva_romani(data["comune"])
     # Zona da OSM PRIMA della normalizzazione sotto: è un dato verificato e
@@ -3964,7 +3987,18 @@ def _ricalcola_scenari_strategico(data):
     if not (_occ_r and _prezzo_r and _totale_ricavi_r):
         return
 
-    _costi_ratio = (_totale_costi_r / _totale_ricavi_r) if _totale_ricavi_r else 0
+    # La rata del mutuo NON scala con l'occupazione: si paga uguale che la
+    # casa sia piena o vuota. Scalando anche quella insieme ai ricavi, lo
+    # scenario pessimistico si alleggeriva di una quota di mutuo che nella
+    # realtà resta da pagare — su un report con rata da 400 euro/mese il
+    # profitto peggiore usciva 9.277 invece di ~6.969, sovrastimato di un
+    # terzo proprio nello scenario che serve a mostrare il rischio. Si scala
+    # quindi solo la parte che dipende davvero dal volume (commissioni,
+    # pulizie, biancheria, utenze, manutenzione) e si riaggiunge il mutuo
+    # intero in ogni scenario.
+    _mutuo_annuo_r = (data.get("rata_mutuo_mensile") or 0) * 12 if data.get("mutuo_attivo") else 0
+    _costi_scalabili_r = max(0, _totale_costi_r - _mutuo_annuo_r)
+    _costi_ratio = (_costi_scalabili_r / _totale_ricavi_r) if _totale_ricavi_r else 0
     _bonus_ratio = ((_totale_ricavi_r - _ricavo_lordo_r) / _ricavo_lordo_r) if _ricavo_lordo_r else 0
 
     def _scenario(occ_mult, prezzo_mult):
@@ -3973,7 +4007,7 @@ def _ricalcola_scenari_strategico(data):
         notti = round(365 * occ / 100)
         ricavo_lordo = round(prezzo * notti)
         ricavi_totali = round(ricavo_lordo * (1 + _bonus_ratio))
-        costi = round(ricavi_totali * _costi_ratio)
+        costi = round(ricavi_totali * _costi_ratio) + _mutuo_annuo_r
         return {
             "occupazione": occ, "notti": notti, "prezzo_medio": prezzo,
             "ricavi_lordi": ricavi_totali, "costi_totali": costi,
@@ -4050,28 +4084,36 @@ def _pricing_mensile_deterministico(data):
         sigla = str(mese).strip()[:3].capitalize()
         it, en = _MESI_ESTESI.get(sigla, (str(mese), str(mese)))
         giorni = _GIORNI_MESE.get(sigla, 30)
-        grezzi.append([it, en, prezzo, occ_pct, prezzo * (occ_pct / 100) * giorni, sigla])
+        grezzi.append([it, en, prezzo, occ_pct, prezzo * (occ_pct / 100) * giorni, sigla, giorni])
 
     # La somma dei 12 mesi pesati non coincide con prezzo medio x notti/anno
     # usato dall'analisi economica (medie diverse dello stesso mercato): senza
     # ancoraggio le due pagine chiuderebbero comunque su cifre diverse. Si
     # tiene la FORMA mensile reale e se ne riporta il LIVELLO sul ricavo lordo
-    # del report, così la colonna somma esattamente il totale dichiarato.
+    # del report.
     _lordo = data.get("ricavo_lordo") or 0
     _somma = sum(r[4] for r in grezzi)
     _fattore = (_lordo / _somma) if (_lordo and _somma) else 1.0
 
+    # Il fattore si applica all'OCCUPAZIONE, non al ricavo. Applicandolo al
+    # ricavo la riga stampata smetteva di tornare: con 87 euro/notte, 64% e 31
+    # giorni il lettore calcola 1.726 ma in tabella leggeva 1.579, su tutte e
+    # 12 le righe (-8,5%). E la media delle occupazioni stampate era 83,5%
+    # mentre l'intestazione dichiarava 80%. Normalizzando l'occupazione,
+    # invece, il ricavo si ricava dai due numeri che stanno sulla riga e la
+    # media torna a coincidere con l'occupazione annua dichiarata.
     righe = []
-    for r in grezzi:
-        it, en, prezzo, occ_pct, ricavo_raw, sigla = r
-        righe.append([it, en, prezzo, occ_pct, round(ricavo_raw * _fattore), _EVENTI_MESE.get(sigla, "")])
+    for it, en, prezzo, occ_pct, _ricavo_raw, sigla, giorni in grezzi:
+        occ_norm = max(0, min(100, round(occ_pct * _fattore)))
+        righe.append([it, en, prezzo, occ_norm,
+                      round(prezzo * occ_norm / 100 * giorni),
+                      _EVENTI_MESE.get(sigla, "")])
 
-    # Lo scarto di arrotondamento finisce sull'ultimo mese, così il totale a
-    # video è identico al ricavo lordo al centesimo.
-    if _lordo:
-        _delta = _lordo - sum(r[4] for r in righe)
-        righe[-1][4] += _delta
-
+    # Nessun ritocco dell'ultimo mese per far quadrare il totale al centesimo:
+    # servirebbe a pareggiare una somma che il lettore fa raramente, al prezzo
+    # di una riga che non torna — che il lettore invece controlla eccome. Lo
+    # scarto residuo è quello dell'arrotondamento dell'occupazione a numero
+    # intero, frazioni di punto percentuale sul totale annuo.
     data["pricing_mensile"] = righe
     return data
 
