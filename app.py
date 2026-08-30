@@ -11,6 +11,7 @@ import time
 import base64
 import math
 import datetime
+import json as _json_std
 import requests
 
 # Mesi abbreviati in italiano: servono per la data in testata del PDF, che
@@ -3930,6 +3931,159 @@ _REGOLA_NIENTE_CIFRE_NEI_TESTI = (
 )
 
 
+_CAMPI_ANALISI_STRATEGICO = ("analisi_posizione", "analisi_condizione",
+                             "analisi_potenzialita", "analisi_raccomandazione")
+
+
+def _scheda_numeri_definitivi(data):
+    """Blocco leggibile con i numeri FINALI del report, quelli che finiscono
+    stampati nelle pagine. Serve a _riscrivi_testi_con_numeri_reali."""
+    def eu(v):
+        try:
+            return "€ " + f"{round(float(v)):,}".replace(",", ".")
+        except (TypeError, ValueError):
+            return "n/d"
+
+    righe = [
+        f"Immobile: {data.get('tipologia', '')} a {data.get('comune', '')}"
+        f"{', zona ' + data['zona'] if data.get('zona') and data['zona'] != '—' else ''}",
+        f"Prezzo consigliato per notte: {eu(data.get('prezzo_notte_stimato'))}",
+        f"Occupazione stimata: {data.get('occupazione_percent')}%  ({data.get('notti_anno')} notti/anno)",
+        f"Ricavo lordo annuo: {eu(data.get('ricavo_lordo'))}",
+        f"Ricavi totali annui (con prenotazioni dirette): {eu(data.get('totale_ricavi'))}",
+        f"Costi di gestione annui: {eu(data.get('totale_costi'))}",
+        f"PROFITTO NETTO ANNUO: {eu(data.get('profitto_netto'))}"
+        f"  (margine {data.get('margine_percent')}%)",
+        f"Profitto netto mensile: {eu((data.get('profitto_netto') or 0) / 12)}",
+        f"ADR {eu(data.get('adr'))} · RevPAR {eu(data.get('revpar'))}",
+    ]
+    if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile"):
+        righe.append(f"Rata mutuo dichiarata: {eu(data['rata_mutuo_mensile'])}/mese "
+                     f"({eu(data['rata_mutuo_mensile'] * 12)}/anno), gia' dentro i costi sopra")
+    for chiave, nome in (("scenario_pess", "PESSIMISTICO"),
+                         ("scenario_real", "REALISTICO"),
+                         ("scenario_ott", "OTTIMISTICO")):
+        s = data.get(chiave) or {}
+        if s:
+            righe.append(
+                f"Scenario {nome}: occupazione {s.get('occupazione')}%, "
+                f"{eu(s.get('prezzo_medio'))}/notte, {s.get('notti')} notti, "
+                f"ricavi totali {eu(s.get('ricavi_lordi'))}, "
+                f"profitto netto {eu(s.get('profitto_netto'))}")
+    if data.get("affitto_profitto"):
+        righe.append(f"Affitto tradizionale, stessa unita': ricavo {eu(data.get('affitto_ricavo'))}, "
+                     f"profitto netto {eu(data.get('affitto_profitto'))}")
+    if data.get("valore_mercato"):
+        righe.append(f"Valore come asset B&B: {eu(data.get('valore_mercato'))} "
+                     f"(EBITDA {eu(data.get('ebitda_stimato'))} capitalizzato al "
+                     f"{data.get('saggio_capitalizzazione', 7.0)}%)")
+    pricing = data.get("pricing_mensile") or []
+    if pricing:
+        alto = max(pricing, key=lambda r: r[2])
+        basso = min(pricing, key=lambda r: r[2])
+        righe.append(f"Pricing mensile consigliato: massimo {eu(alto[2])} a {alto[0]}, "
+                     f"minimo {eu(basso[2])} a {basso[0]}")
+    return "\n".join(righe)
+
+
+def _riscrivi_testi_con_numeri_reali(data, timeout=60):
+    """Seconda passata AI sui soli testi liberi dello Strategico.
+
+    Il motore deterministico ricalcola i CAMPI numerici con i dati di mercato
+    reali, ma i TESTI restano parola per parola come li ha scritti l'AI nella
+    prima chiamata — quando i numeri finali non esistevano ancora. Risultato
+    misurato su report veri: pag. 8 dichiarava scenario ottimistico 90% /
+    129 euro / 30.127 di profitto mentre l'analisi personale a pag. 14
+    scriveva "EUR 92/notte, occupazione 81%". Una regola nel system prompt
+    riduce il problema ma non lo elimina: su due esecuzioni identiche sono
+    uscite 12 cifre sbagliate la prima volta e 3 la seconda.
+
+    Qui i testi vengono riscritti DOPO, con i numeri definitivi in mano. Cosi'
+    le analisi possono citare cifre vere — che vale piu' di un testo vago — e
+    la coerenza e' garantita per costruzione invece che sperata.
+
+    Non solleva mai e non svuota mai niente: qualunque errore (chiave assente,
+    timeout, JSON malformato, campo vuoto) lascia il testo originale. Un
+    report con qualche numero discordante resta meglio di nessun report."""
+    if not ANTHROPIC_API_KEY:
+        return
+
+    originali = {k: str(data.get(k) or "").strip() for k in _CAMPI_ANALISI_STRATEGICO}
+    piano = [b for b in (data.get("piano_90") or []) if isinstance(b, dict)]
+    if not any(originali.values()):
+        return
+
+    payload_in = {
+        "analisi": originali,
+        "piano_90": [{"titolo": b.get("titolo", ""), "azioni": list(b.get("azioni") or [])}
+                     for b in piano],
+    }
+
+    system = (
+        "Sei l'editor finale del Report Strategico di ReportUp. Ricevi dei testi di analisi gia' "
+        "scritti e la scheda dei NUMERI DEFINITIVI del report, quelli effettivamente stampati nelle "
+        "pagine. Il tuo unico compito e' restituire gli stessi testi con OGNI cifra economica allineata "
+        "a quella scheda. REGOLE: 1) Conserva ragionamento, struttura, lunghezza e tono di ogni testo: "
+        "non e' una riscrittura creativa, e' un allineamento dei numeri. 2) Ogni importo, prezzo per "
+        "notte, percentuale di occupazione, profitto o valore che compare nei testi deve corrispondere "
+        "esattamente a un valore della scheda; se un numero citato nell'originale non trova riscontro "
+        "nella scheda, sostituiscilo con quello giusto oppure togli la quantificazione e lascia la frase "
+        "qualitativa. 3) Non inventare cifre che non stanno nella scheda. 4) Restano ammessi e vanno "
+        "lasciati come sono gli importi che non dipendono dal calcolo economico: sanzioni di legge, "
+        "imposte e aliquote, tassa di soggiorno, percentuali di commissione delle piattaforme, compensi "
+        "di mercato del property manager, costi di servizi esterni. 5) Scrivi gli importi in euro nel "
+        "formato italiano con il punto per le migliaia. 6) Rispondi SOLO con un oggetto JSON valido, "
+        "nessun testo prima o dopo, nessun markdown, nessun backtick, con esattamente le stesse chiavi "
+        "che ricevi in input."
+    )
+    user = (
+        "NUMERI DEFINITIVI DEL REPORT (fonte di verita', i testi devono allinearsi a questi):\n"
+        f"{_scheda_numeri_definitivi(data)}\n\n"
+        "TESTI DA ALLINEARE (restituisci la stessa struttura JSON):\n"
+        f"{_json_std.dumps(payload_in, ensure_ascii=False, indent=1)}"
+    )
+
+    try:
+        resp = requests.post(
+            ANTHROPIC_URL,
+            headers={"Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY,
+                     "anthropic-version": "2023-06-01"},
+            json={"model": "claude-haiku-4-5", "max_tokens": 4000,
+                  "system": system, "messages": [{"role": "user", "content": user}]},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            print(f"[RISCRITTURA-TESTI] HTTP {resp.status_code}: {resp.text[:300]}")
+            return
+        grezzo = "".join(b.get("text", "") for b in (resp.json().get("content") or []))
+        nuovo = _json_std.loads(grezzo[grezzo.find("{"): grezzo.rfind("}") + 1])
+    except Exception as e:
+        print(f"[RISCRITTURA-TESTI] saltata: {type(e).__name__}: {e}")
+        return
+
+    # Da qui in poi si sovrascrive solo cio' che supera i controlli: un campo
+    # tornato vuoto o di tipo sbagliato non deve cancellare l'originale.
+    aggiornati = []
+    analisi_nuove = nuovo.get("analisi") or {}
+    for campo in _CAMPI_ANALISI_STRATEGICO:
+        testo = analisi_nuove.get(campo)
+        if isinstance(testo, str) and len(testo.strip()) >= 40:
+            data[campo] = testo.strip()
+            aggiornati.append(campo)
+
+    piano_nuovo = nuovo.get("piano_90")
+    if isinstance(piano_nuovo, list) and len(piano_nuovo) == len(piano):
+        for blocco_orig, blocco_nuovo in zip(piano, piano_nuovo):
+            azioni = (blocco_nuovo or {}).get("azioni")
+            if (isinstance(azioni, list) and azioni
+                    and len(azioni) == len(blocco_orig.get("azioni") or [])
+                    and all(isinstance(a, str) and a.strip() for a in azioni)):
+                blocco_orig["azioni"] = [a.strip() for a in azioni]
+                aggiornati.append("piano_90")
+
+    print(f"[RISCRITTURA-TESTI] allineati: {sorted(set(aggiornati))}")
+
+
 @app.route("/ai-generate", methods=["POST"])
 @require_internal_secret
 def ai_generate():
@@ -4318,6 +4472,11 @@ def generate_strategico():
         # Dopo il ricalcolo scenari: usa il profitto netto deterministico
         # finale, non quello di partenza dell'AI.
         _calcola_valore_asset(data)
+
+        # ULTIMO PASSO PRIMA DEL PDF, e deve restare l'ultimo: riallinea i
+        # testi liberi ai numeri appena calcolati. Spostarlo piu' su vorrebbe
+        # dire allinearli a cifre che le funzioni qui sopra cambiano ancora.
+        _riscrivi_testi_con_numeri_reali(data)
 
         # Mappa pag. 1 (roadmap, satellite bloccato da Google in EEA) —
         # stesse lat/long già usate per AirROI sopra, nessuna chiamata
