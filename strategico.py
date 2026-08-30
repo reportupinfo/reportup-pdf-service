@@ -363,10 +363,12 @@ def page1(c, data):
     c.drawCentredString(W/2, y - box_h/2 - font_size*0.18*mm, indirizzo_txt)
     y -= box_h + 5*mm
 
-    # Mappa satellitare (Google Static Maps, vedi _fetch_static_map_png in
-    # app.py \u2014 stessa GOOGLE_MAPS_API_KEY di geocode/AirROI, nessuna chiamata
-    # aggiuntiva oltre quella gi\u00e0 fatta per lat/long). Se manca (chiave assente,
-    # timeout, coordinate mancanti) ricade sul placeholder di sempre.
+    # Mappa stradale (Google Static Maps, vedi _fetch_static_map_png in
+    # app.py \u2014 roadmap, non satellite: Google blocca satellite/hybrid per
+    # account/regione EEA). Stessa GOOGLE_MAPS_API_KEY di geocode/AirROI,
+    # nessuna chiamata aggiuntiva oltre quella gi\u00e0 fatta per lat/long. Se
+    # manca (chiave assente, timeout, coordinate mancanti) ricade sul
+    # placeholder di sempre.
     map_h = 55*mm
     map_png = data.get('_mappa_png')
     map_ok = False
@@ -1224,7 +1226,7 @@ def page4(c, data):
         ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eu(data.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         f"€ {fmt_num(data.get('costi_biancheria', 0))}/anno (media di mercato per la tipologia{_sm_biancheria})",
+         f"€ {fmt_num(data.get('costi_biancheria', 0))}/anno (media di mercato per la tipologia)",
          f"- {fmt_eu(data.get('costi_biancheria', 0))}"],
         # Stessa formulazione del Base: le "convenzioni adottate" e i range
         # sono stati tolti da entrambi i prodotti, resta la voce come media di
@@ -1321,6 +1323,15 @@ def page4(c, data):
     tbl_eco.drawOn(c, 14*mm, y - tbl_eco._height)
     y -= tbl_eco._height + 5*mm
 
+    # Il dettaglio "soggiorno medio + gestione mista" era dentro la cella
+    # biancheria e la mandava fuori tabella (riga singola, ReportLab non
+    # avvolge le celle stringa). Il dato resta ma come nota sotto la
+    # tabella; la cella torna alla stessa lunghezza di Utenze/Manutenzione.
+    _nota_biancheria = "Biancheria e consumabili" + _sm_biancheria + "."
+    y = wrap_simple(c, _nota_biancheria, 14*mm, y, W - 28*mm,
+                     "Helvetica-Oblique", 6.5, 3.2*mm, color=MUTED)
+    y -= 3*mm
+
     # 4 card: margine grigio, ricavo verde, costi rosso, guadagno gold (più grande)
     total_w = W - 28*mm
     small_w = (total_w - 6*mm) * 0.26
@@ -1378,20 +1389,27 @@ def page5(c, data):
         alto = round(valore * 1.1)
         return f"{fmt_eu(basso)} - {fmt_eu(alto)}"
 
-    def _fmt_diff_eu(delta):
-        segno = "+" if delta >= 0 else "-"
-        return f"{segno}{fmt_eu(abs(int(delta)))}"
+    def _fmt_diff_range_eu(esatto, valore_affitto):
+        # Il B&B è un valore secco, l'affitto tradizionale è un range +-10%:
+        # la differenza eredita lo stesso range (estremo alto dell'affitto
+        # -> differenza minima, estremo basso -> differenza massima).
+        basso = esatto - round(valore_affitto * 1.1)
+        alto = esatto - round(valore_affitto * 0.9)
+        segno_b = "+" if basso >= 0 else "-"
+        segno_a = "+" if alto >= 0 else "-"
+        return f"{segno_b}{fmt_eu(abs(int(basso)))} - {segno_a}{fmt_eu(abs(int(alto)))}"
 
     conf_data = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
         ["Ricavo annuo lordo",
          _fmt_range_eu(data.get('affitto_ricavo', 0)), fmt_eu(data.get('ricavo_lordo', 0)),
-         _fmt_diff_eu(data.get('ricavo_lordo', 0) - data.get('affitto_ricavo', 0))],
+         _fmt_diff_range_eu(data.get('ricavo_lordo', 0), data.get('affitto_ricavo', 0))],
         ["Costi di gestione",
-         _fmt_range_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)), "--"],
+         _fmt_range_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)),
+         _fmt_diff_range_eu(data.get('totale_costi', 0), data.get('affitto_costi', 0))],
         ["Profitto netto",
          _fmt_range_eu(data.get('affitto_profitto', 0)), fmt_eu(data.get('profitto_netto', 0)),
-         _fmt_diff_eu(data.get('profitto_netto', 0) - data.get('affitto_profitto', 0))],
+         _fmt_diff_range_eu(data.get('profitto_netto', 0), data.get('affitto_profitto', 0))],
         ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
         ["Rischio morosit\u00e0",       "Alto",  "Nullo", "Eliminato"],
     ]
@@ -1410,6 +1428,7 @@ def page5(c, data):
         ("BOTTOMPADDING", (0,0),  (-1,-1), 4),
         ("LEFTPADDING",   (0,0),  (-1,-1), 5),
         ("TEXTCOLOR",     (3,1),  (3,1),   TEAL), ("FONTNAME", (3,1), (3,1), "Helvetica-Bold"),
+        ("TEXTCOLOR",     (3,2),  (3,2),   TEAL), ("FONTNAME", (3,2), (3,2), "Helvetica-Bold"),
         ("TEXTCOLOR",     (3,3),  (3,3),   TEAL), ("FONTNAME", (3,3), (3,3), "Helvetica-Bold"),
         ("TEXTCOLOR",     (3,4),  (3,4),   TEAL), ("FONTNAME", (3,4), (3,4), "Helvetica-Bold"),
         ("TEXTCOLOR",     (3,5),  (3,5),   TEAL), ("FONTNAME", (3,5), (3,5), "Helvetica-Bold"),

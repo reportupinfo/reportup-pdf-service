@@ -2814,11 +2814,16 @@ GOOGLE_STATICMAP_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
 
 def _fetch_static_map_png(lat, lon, timeout=6):
-    """Immagine satellitare statica (Google Static Maps) per la pagina 1
-    dello Strategico — sostituisce il placeholder "la mappa interattiva
-    sarà integrata nella versione finale". Stessa chiave GOOGLE_MAPS_API_KEY
-    già in uso per geocode/elevation/distance matrix, nessuna nuova env var.
-    Costo trascurabile: una chiamata per report generato, non per visita."""
+    """Immagine mappa statica (Google Static Maps) per la pagina 1 dello
+    Strategico. Stessa chiave GOOGLE_MAPS_API_KEY già in uso per
+    geocode/elevation/distance matrix, nessuna nuova env var.
+
+    maptype=roadmap, non satellite: Google blocca satellite/hybrid su
+    Static Maps per account/regione EEA (403 "not available for your
+    account and region", confermato testando la chiave in uso — non è un
+    problema di API da abilitare). roadmap/terrain restano serviti.
+    size 640x194: deve riempire un riquadro 182x55mm (~3.3:1) in pagina1
+    con preserveAspectRatio=False; 640x360 (1.78:1) usciva stirato."""
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not api_key or lat in (None, "") or lon in (None, ""):
         return None
@@ -2828,9 +2833,9 @@ def _fetch_static_map_png(lat, lon, timeout=6):
             params={
                 "center": f"{lat},{lon}",
                 "zoom": 17,
-                "size": "640x360",
+                "size": "640x194",
                 "scale": 2,
-                "maptype": "satellite",
+                "maptype": "roadmap",
                 "markers": f"color:red|{lat},{lon}",
                 "key": api_key,
             },
@@ -4076,9 +4081,10 @@ def generate_strategico():
         # finale, non quello di partenza dell'AI.
         _calcola_valore_asset(data)
 
-        # Mappa satellitare pag. 1 — stesse lat/long già usate per AirROI
-        # sopra, nessuna chiamata geocode aggiuntiva. None se manca la
-        # chiave o le coordinate: strategico.py ricade sul placeholder.
+        # Mappa pag. 1 (roadmap, satellite bloccato da Google in EEA) —
+        # stesse lat/long già usate per AirROI sopra, nessuna chiamata
+        # geocode aggiuntiva. None se manca la chiave o le coordinate:
+        # strategico.py ricade sul placeholder.
         data["_mappa_png"] = _fetch_static_map_png(data.get("lat"), data.get("long"))
 
         pdf_bytes = build_strategico_pdf_bytes(data)
