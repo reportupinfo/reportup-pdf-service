@@ -1497,7 +1497,10 @@ def page3(c, D):
     elif D.get("situazione_inquilini"):
         sit_label = "Con inquilini"
     else:
-        sit_label = "Disponibile"
+        # Nessun flag vero = il cliente non ha dichiarato la situazione: etichetta
+        # neutra, non "Disponibile" (era comunque un'affermazione, in contrasto
+        # con "Immobile vuoto: NO" stampato in scheda). Allineata allo Strategico.
+        sit_label = "Non dichiarata"
     sit_cards = [
         ("Situazione", sit_label, BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}", TEAL, TEAL_LIGHT),

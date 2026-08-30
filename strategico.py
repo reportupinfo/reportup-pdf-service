@@ -1170,7 +1170,20 @@ def page4(c, data):
     )
 
     # 4 card dati principali situazione dichiarata
-    sit_label = "Immobile vuoto" if data.get('situazione_vuoto', False) else ("B&B attivo" if data.get('situazione_bnb', False) else "Con inquilini")
+    # `situazione_inquilini` va letto esplicitamente: usarlo come ramo di default
+    # faceva stampare "Con inquilini" anche con tutti e tre i flag a False (caso
+    # raggiungibile dal form — i toggle vuoto/inquilini/B&B non si escludono a
+    # vicenda), in contraddizione con la riga "Situazione attuale dichiarata" di
+    # pagina 1 che nello stesso report diceva NO a tutti e tre. Stessa cascata e
+    # stessa etichetta neutra del Base (vedi app.py).
+    if data.get('situazione_vuoto', False):
+        sit_label = "Immobile vuoto"
+    elif data.get('situazione_bnb', False):
+        sit_label = "B&B attivo"
+    elif data.get('situazione_inquilini', False):
+        sit_label = "Con inquilini"
+    else:
+        sit_label = "Non dichiarata"
     sit_cards = [
         ("Situazione",           sit_label,  BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}",  TEAL,         TEAL_LIGHT),
