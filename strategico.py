@@ -2465,13 +2465,37 @@ def page_obiettivi(c, data):
     draw_footer(c, data, 15)
     y = H - 22*mm
 
-    y = draw_section_header(c, 14*mm, y, W - 28*mm, "I tuoi obiettivi — dove trovare le risposte")
-    y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Riepilogo di ci\u00f2 che hai dichiarato \u00b7 le sezioni del report pi\u00f9 rilevanti per te")
-    y -= 8*mm
-
-    obiettivi = data.get('obiettivi_selezionati', [])
+    obiettivi = [o for o in (data.get('obiettivi_selezionati') or [])
+                 if isinstance(o, (list, tuple)) and len(o) == 3]
     pagine_map = data.get('obiettivi_pagine', {})
+
+    # Il form non obbliga a scegliere un obiettivo: senza questo fallback la
+    # pagina usciva con il solo titolo e mezza facciata bianca. Quando il
+    # cliente non ha dichiarato nulla si cambia taglio (guida generale invece
+    # di "riepilogo di quello che hai dichiarato", che sarebbe falso).
+    if not obiettivi:
+        titolo_pagina = "Guida alla lettura \u2014 dove trovare le risposte"
+        sottotitolo = ("Non hai indicato obiettivi specifici al momento dell\u2019acquisto \u00b7 "
+                       "qui sotto le sezioni che rispondono alle domande pi\u00f9 frequenti")
+        obiettivi = [
+            ("massimizzare_guadagno", "Quanto posso guadagnare",
+             "Prezzo, occupazione e profitto netto stimati, con i tre scenari economici"),
+            ("confronto_affitto", "Conviene pi\u00f9 del canone tradizionale",
+             "Confronto diretto tra B&B e affitto a lungo periodo sullo stesso immobile"),
+            ("primo_avvio", "Da dove comincio",
+             "Piano operativo dei primi 90 giorni, settimana per settimana"),
+            ("pianificazione_normativa", "Cosa devo mettere in regola",
+             "CIN, comunicazioni obbligatorie, tassa di soggiorno e regime fiscale"),
+        ]
+    else:
+        titolo_pagina = "I tuoi obiettivi \u2014 dove trovare le risposte"
+        sottotitolo = ("Riepilogo di ci\u00f2 che hai dichiarato \u00b7 "
+                       "le sezioni del report pi\u00f9 rilevanti per te")
+
+    y = draw_section_header(c, 14*mm, y, W - 28*mm, titolo_pagina)
+    y -= 3*mm
+    draw_section_subtitle(c, 14*mm, y, sottotitolo)
+    y -= 8*mm
 
     for emoji_label, titolo, desc in obiettivi:
         # Lookup pagine
