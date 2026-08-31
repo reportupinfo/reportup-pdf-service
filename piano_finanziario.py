@@ -94,9 +94,12 @@ LEGENDA_VOCI = [
      "Cambialo se pensi di posizionarti diversamente."),
     ("Occupazione media annua", "% di notti dell'anno effettivamente prenotate su quelle disponibili.",
      "64% = occupato 64 notti su 100."),
-    ("Commissioni piattaforma", "Trattenuta annua di Airbnb/Booking ecc. sulle prenotazioni.",
-     "Metti l'importo reale se lo conosci dai tuoi estratti."),
-    ("Pulizie", "Costo annuo del servizio pulizie tra un ospite e l'altro.", ""),
+    ("Commissioni piattaforma", "Percentuale trattenuta da Airbnb/Booking ecc. su ogni prenotazione.",
+     "15% e' il valore tipico. L'importo annuo si ricalcola da solo sui ricavi."),
+    ("Costo pulizia a cambio", "Quanto paghi ogni volta che pulisci tra un ospite e l'altro.",
+     "Il costo annuo si ricalcola da solo: piu' cambi = piu' pulizie."),
+    ("Durata media soggiorno", "Quante notti si ferma in media un ospite.",
+     "2 notti in citta', 7 in localita' di vacanza. Piu' alta = meno cambi = meno pulizie."),
     ("Biancheria", "Costo annuo lavaggio/sostituzione lenzuola e asciugamani.", ""),
     ("Utenze", "Luce, gas, acqua, internet, condominio a carico della gestione B&B.", ""),
     ("Manutenzione e ristrutturazione", "Stima libera: quanto pensi di spendere ogni anno per manutenere o rinnovare l'immobile.",
@@ -110,8 +113,16 @@ LEGENDA_VOCI = [
     ("", "", ""),
     ("BLOCCO GESTIONE — risultati calcolati", "", ""),
     ("Notti occupate/anno", "Quante notti l'anno il tuo alloggio è prenotato.", "= 365 × occupazione %"),
+    ("Cambi ospite/anno", "Quante volte l'anno entra un ospite nuovo, e quindi quante pulizie paghi.",
+     "= notti occupate / durata media soggiorno"),
     ("Ricavi da pernottamenti", "Incasso dalle sole notti vendute.", "= prezzo/notte × notti occupate"),
+    ("Bonus prenotazioni dirette", "Ricavo extra stimato dalle prenotazioni fuori piattaforma.",
+     "= ricavi da pernottamenti × % bonus"),
     ("Ricavi totali annui", "Ricavi da pernottamenti + bonus prenotazioni dirette.", ""),
+    ("Commissioni piattaforma (annue)", "Quanto trattengono i portali in un anno.",
+     "= ricavi da pernottamenti × % commissioni"),
+    ("Pulizie (annue)", "Costo annuo delle pulizie tra un ospite e l'altro.",
+     "= costo a cambio × cambi ospite/anno"),
     ("Costi variabili", "Somma di commissioni, pulizie, biancheria, utenze, manutenzione, gestione esterna.", ""),
     ("Costi totali annui", "Costi variabili + costo mutuo annuo (se presente).", ""),
     ("Profitto netto annuo", "Ricavi totali − costi totali.", "Quanto ti resta in tasca ogni anno gestendo l'attività."),
@@ -193,8 +204,14 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
     Ritorna i byte di un .xlsx pronto da allegare alla mail."""
     prezzo_notte = data.get("prezzo_notte_stimato") or 0
     occupazione_percent = data.get("occupazione_percent") or 0
-    commissioni_annue = data.get("costi_commissioni") or 0
-    pulizie_annue = data.get("costi_pulizie") or 0
+    # Commissioni e pulizie NON entrano come importo annuo fisso ma come le due
+    # variabili da cui il motore le deriva (% sui ricavi, costo per cambio +
+    # durata media soggiorno): un importo fisso resterebbe fermo mentre il
+    # cliente cambia prezzo e occupazione, e il foglio smetterebbe di tornare
+    # con il PDF proprio nel momento in cui lo usa.
+    commissioni_percent = data.get("costi_commissioni_pct") or 15
+    pulizia_a_cambio = data.get("costi_pulizie_unit") or 35
+    soggiorno_medio = data.get("soggiorno_medio_notti") or 2
     biancheria_annua = data.get("costi_biancheria") or 0
     utenze_annue = data.get("costi_utenze") or 0
     manutenzione_annua = data.get("costi_manutenzione") or 0
@@ -230,8 +247,9 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
     r += 1
     r_prezzo = _input_row(ws, r, "Prezzo medio a notte", prezzo_notte, "€"); r += 1
     r_occ = _input_row(ws, r, "Occupazione media annua", occupazione_percent, "%"); r += 1
-    r_comm = _input_row(ws, r, "Commissioni piattaforma (annue)", commissioni_annue, "€"); r += 1
-    r_puliz = _input_row(ws, r, "Pulizie (annue)", pulizie_annue, "€"); r += 1
+    r_comm_pct = _input_row(ws, r, "Commissioni piattaforma", commissioni_percent, "%"); r += 1
+    r_puliz_unit = _input_row(ws, r, "Costo pulizia a cambio", pulizia_a_cambio, "€"); r += 1
+    r_soggiorno = _input_row(ws, r, "Durata media soggiorno", soggiorno_medio, "notti"); r += 1
     r_bianch = _input_row(ws, r, "Biancheria (annua)", biancheria_annua, "€"); r += 1
     r_utenze = _input_row(ws, r, "Utenze (annue)", utenze_annue, "€"); r += 1
     r_manut = _input_row(ws, r, "Manutenzione e ristrutturazione (annua, stima tua)",
@@ -252,16 +270,29 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
                           bonus_dirette_percent, "%"); r += 1
 
     r += 1
+    # Stesse formule e stessi arrotondamenti del motore deterministico in
+    # app.py (_arricchisci_report_deterministico): il file aperto senza toccare
+    # nulla deve mostrare esattamente i numeri stampati nel PDF, all'euro.
     r_notti = _result_row(ws, r, "Notti occupate/anno", f"=ROUND(365*{r_occ}/100,0)", "#,##0"); r += 1
-    r_ricavi_base = _result_row(ws, r, "Ricavi da pernottamenti", f"={r_prezzo}*{r_notti}"); r += 1
-    r_ricavi_tot = _result_row(ws, r, "Ricavi totali annui", f"={r_ricavi_base}*(1+{r_bonus}/100)"); r += 1
+    r_cambi = _result_row(ws, r, "Cambi ospite/anno",
+                           f"=MAX(1,ROUND({r_notti}/{r_soggiorno},0))", "#,##0"); r += 1
+    r_ricavi_base = _result_row(ws, r, "Ricavi da pernottamenti", f"=ROUND({r_prezzo}*{r_notti},0)"); r += 1
+    r_bonus_eur = _result_row(ws, r, "Bonus prenotazioni dirette",
+                               f"=ROUND({r_ricavi_base}*{r_bonus}/100,0)"); r += 1
+    r_ricavi_tot = _result_row(ws, r, "Ricavi totali annui", f"={r_ricavi_base}+{r_bonus_eur}"); r += 1
+    r_comm = _result_row(ws, r, "Commissioni piattaforma (annue)",
+                          f"=ROUND({r_ricavi_base}*{r_comm_pct}/100,0)"); r += 1
+    r_puliz = _result_row(ws, r, "Pulizie (annue)",
+                           f"=ROUND({r_puliz_unit}*{r_cambi},0)"); r += 1
     r_costi_var = _result_row(ws, r, "Costi variabili (comm.+pulizie+biancheria+utenze+manut.+gestione)",
                                f"={r_comm}+{r_puliz}+{r_bianch}+{r_utenze}+{r_manut}+{r_gestione}"); r += 1
     r_mutuo_annuo = _result_row(ws, r, "Costo mutuo annuo",
                                  f'=IF({mc.coordinate}="SI",{r_rata}*12,0)'); r += 1
     r_costi_tot = _result_row(ws, r, "Costi totali annui", f"={r_costi_var}+{r_mutuo_annuo}"); r += 1
     r_profitto = _result_row(ws, r, "Profitto netto annuo", f"={r_ricavi_tot}-{r_costi_tot}"); r += 1
-    r_margine = _result_row(ws, r, "Margine", f"=IF({r_ricavi_tot}=0,0,{r_profitto}/{r_ricavi_tot}*100)", "0.0%"); r += 1
+    # Niente *100 nella formula: il formato 0.0% moltiplica gia' lui, e insieme
+    # facevano leggere un margine del 52% come 5200,0%.
+    r_margine = _result_row(ws, r, "Margine", f"=IF({r_ricavi_tot}=0,0,{r_profitto}/{r_ricavi_tot})", "0.0%"); r += 1
 
     r += 1
     r = _section_header(ws, r, "INVESTIMENTO — quanto vale come asset", fill=HEADER_FILL_B,
@@ -294,6 +325,11 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
     wb.security = openpyxl.workbook.protection.WorkbookProtection(
         workbookPassword=None, lockStructure=True
     )
+
+    # openpyxl scrive le formule ma non i valori: senza questo flag un lettore
+    # che non ricalcola (anteprima allegato di Gmail/Drive) mostrerebbe le
+    # celle dei risultati vuote e il file sembrerebbe rotto.
+    wb.calculation.fullCalcOnLoad = True
 
     buf = io.BytesIO()
     wb.save(buf)
