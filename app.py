@@ -4509,6 +4509,7 @@ def generate_strategico():
 
 
 @app.route("/generate-piano-finanziario", methods=["POST"])
+@require_internal_secret
 def generate_piano_finanziario():
     """Excel editabile allegato al Report Strategico, stessa pipeline
     deterministica del PDF (stesso body JSON che Make posta a
