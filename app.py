@@ -1875,7 +1875,7 @@ def page4(c, D):
     # Il badge "IN ARRIVO" e la nota "in fase di sviluppo" che stavano qui sono
     # stati rimossi: lo Strategico è in lancio e acquistabile, tenerli avrebbe
     # scoraggiato l'upsell che questo riquadro esiste per fare.
-    upsell_text = ("Il Report Strategico (€ 149) include tutto il Base piu': pricing stagionale mese per mese, "
+    upsell_text = ("Il Report Strategico (€ 199) include tutto il Base piu': pricing stagionale mese per mese, "
                    "3 scenari economici (pessimistico / realistico / ottimistico), piano d'azione 90 giorni, "
                    "cap rate e valore asset, normativa affitti brevi locale e l'analisi personale "
                    "dell'Arch. Salvatore Junior Sica.")
@@ -1885,7 +1885,7 @@ def page4(c, D):
     c.setFillColor(MUTED)
     uy = draw_wrapped_text(
         c, "Disponibile su reportup.it — chi ha già acquistato il Report Base paga "
-           "solo la differenza rispetto ai € 39 già pagati.",
+           "solo la differenza rispetto ai € 49 già pagati.",
         18 * mm, uy - 1 * mm, W - 36 * mm, "Helvetica-Oblique", 7, 4 * mm, MUTED,
     )
     y -= upsell_h + 6 * mm
@@ -4153,6 +4153,7 @@ def ai_generate():
 
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
 from strategico import build_strategico_pdf_bytes
+from piano_finanziario import build_piano_finanziario_bytes
 
 
 def _ricalcola_scenari_strategico(data):
@@ -4505,6 +4506,60 @@ def generate_strategico():
               f"coda={raw[-300:]!r}")
         return jsonify({"error": str(e), "raw_len": len(raw),
                          "raw_preview": raw[:500], "raw_tail": raw[-300:]}), 500
+
+
+@app.route("/generate-piano-finanziario", methods=["POST"])
+def generate_piano_finanziario():
+    """Excel editabile allegato al Report Strategico, stessa pipeline
+    deterministica del PDF (stesso body JSON che Make posta a
+    /generate-strategico) ma senza i passaggi solo-PDF (testi AI, mappa,
+    pricing mensile, scenari) — qui servono solo i numeri di partenza."""
+    import json as _json
+    raw = ""
+    try:
+        raw = request.get_data(as_text=True)
+        cleaned = raw.strip()
+        m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', cleaned, re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+        else:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end + 1]
+
+        data = _json.loads(cleaned)
+        data = normalize_data(data)
+        data = _arricchisci_report_deterministico(
+            data,
+            lat=request.args.get("lat"),
+            long=request.args.get("long"),
+            generare_descrizione=False,
+            correggere_poi=False,
+        )
+        _calcola_valore_asset(data)
+
+        xlsx_bytes = build_piano_finanziario_bytes(
+            data,
+            cliente=data.get("nome_cliente", ""),
+            indirizzo=data.get("indirizzo", ""),
+            ordine=data.get("ordine_id", ""),
+            data_str=datetime.date.today().strftime("%d/%m/%Y"),
+        )
+        comune = data.get('comune', 'report').replace(' ', '_')
+
+        from flask import Response
+        return Response(
+            xlsx_bytes,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={
+                'Content-Disposition': f'attachment; filename=ReportUp_Piano_Finanziario_{comune}.xlsx',
+                'Content-Length': str(len(xlsx_bytes))
+            }
+        )
+    except Exception as e:
+        print(f"[GENERATE-PIANO-FINANZIARIO] {type(e).__name__}: {e} — len(raw)={len(raw)}")
+        return jsonify({"error": str(e), "raw_len": len(raw), "raw_preview": raw[:500]}), 500
 
 
 if __name__ == "__main__":
