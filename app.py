@@ -560,6 +560,25 @@ def _calcola_valore_asset(data):
         data["valore_mercato"] = round(ebitda / saggio * 100)
 
 
+def _calcola_intervento_mensile(data):
+    """Solo Strategico (pag. 5). Il prompt chiede all'AI di scrivere sempre
+    0 come segnaposto su intervento_mensile (stesso schema fallback degli
+    altri campi economici, vedi _REGOLA_NIENTE_CIFRE_NEI_TESTI), ma qui —
+    a differenza di prezzo/occupazione/scenari — non esisteva nessun
+    ricalcolo deterministico lato backend: se l'AI si limitava a copiare lo
+    0 del segnaposto invece di far di conto da sola, il report stampava
+    "€ 5.000 / 24 mesi = € 0/mese", con "Profitto netto DOPO intervento"
+    identico al profitto PRIMA (nessun impatto), invece di ~€ 208/mese.
+    Importo e mesi restano quelli dichiarati dal cliente: qui si calcola
+    solo la divisione, come già avviene per EBITDA e valore asset sopra."""
+    if data.get("intervento_tipo", "nessuno") == "nessuno":
+        return
+    importo = data.get("intervento_importo") or 0
+    mesi = data.get("intervento_mesi") or 0
+    if mesi > 0:
+        data["intervento_mensile"] = round(importo / mesi)
+
+
 # Mappa statica (non generata dall'AI, come da principio del progetto: il
 # backend decide i fatti strutturali, l'AI scrive solo il testo libero) da
 # obiettivo cliente a pagina del PDF Strategico più rilevante — usata da
@@ -4508,6 +4527,7 @@ def generate_strategico():
         # Dopo il ricalcolo scenari: usa il profitto netto deterministico
         # finale, non quello di partenza dell'AI.
         _calcola_valore_asset(data)
+        _calcola_intervento_mensile(data)
 
         # ULTIMO PASSO PRIMA DEL PDF, e deve restare l'ultimo: riallinea i
         # testi liberi ai numeri appena calcolati. Spostarlo piu' su vorrebbe
@@ -4574,6 +4594,7 @@ def generate_piano_finanziario():
             correggere_poi=False,
         )
         _calcola_valore_asset(data)
+        _calcola_intervento_mensile(data)
 
         xlsx_bytes = build_piano_finanziario_bytes(
             data,
