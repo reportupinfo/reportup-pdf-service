@@ -1359,6 +1359,14 @@ def page2(c, D):
     poi_data = [[Paragraph(h, style_header) for h in header_labels]]
     for label, row in zip(SLOT_LABELS, poi_rows_raw):
         mezzo_distanza, nome, impatto = (row + ["\u2014", "\u2014", "\u2014"])[:3]
+        # "Elemento caratteristico" a volte non ha proprio nulla da mostrare
+        # (comune senza un punto di interesse noto, es. Avigliano): una riga
+        # con tre trattini non informa nessuno, meglio ometterla che
+        # stamparla vuota. Le altre 4 categorie restano sempre visibili
+        # (compreso il "\u2014" forzato per capoluoghi sul Comune di riferimento,
+        # che l\u00ec comunica volutamente "non applicabile").
+        if label == "Elemento caratteristico" and mezzo_distanza == nome == impatto == "\u2014":
+            continue
         poi_data.append([
             Paragraph(label, style_cell_bold),
             Paragraph(str(mezzo_distanza), style_cell_reg),
@@ -2258,7 +2266,18 @@ def _pulisci_wikitext(testo):
     testo = '\n'.join(righe)
     testo = re.sub(r'\([^)]{0,8}\)', '', testo)
     righe = testo.split('\n')
-    righe = [r.strip() for r in righe if len(r.strip()) > 30 and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))]
+    # Una riga che finisce con ":" introduce quasi sempre un elenco puntato
+    # sottostante (es. "Nel territorio sono presenti tre stazioni
+    # ferroviarie:"). Gli elenchi vengono scartati dal filtro sopra (righe
+    # che iniziano per *, #, :, ecc.), quindi l'intro con i due punti restava
+    # sola e si concatenava con la prima riga di prosa successiva, spesso
+    # su un soggetto diverso (bug osservato su Avigliano: "...tre stazioni
+    # ferroviarie: Sempre nel territorio... si trova la Stazione di
+    # Pietragalla" — frase incoerente, promette tre stazioni e ne descrive
+    # una). Si scarta anche l'intro orfana.
+    righe = [r.strip() for r in righe if len(r.strip()) > 30
+             and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))
+             and not r.strip().endswith(':')]
     testo = ' '.join(righe)
     for _ in range(3):
         nuovo = re.sub(
@@ -2720,7 +2739,11 @@ def genera_descrizione_standard(data):
         if elemento_frase:
             desc += f"{elemento_frase} "
         if servizi_frase:
-            desc += f"{servizi_frase.rstrip('.')} nelle vicinanze per le esigenze quotidiane. "
+            # servizi_frase può già contenere "— Nelle vicinanze" quando la
+            # distanza non è numerica (vedi _poi_riga_frase): ripetere "nelle
+            # vicinanze" qui produceva il doppione "Nelle vicinanze nelle
+            # vicinanze per le esigenze quotidiane."
+            desc += f"{servizi_frase.rstrip('.')} per le esigenze quotidiane. "
 
     if fatto_wiki:
         desc += fatto_wiki + " "
@@ -3928,6 +3951,11 @@ _REGOLA_NIENTE_CIFRE_NEI_TESTI = (
     "UNICA ECCEZIONE: puoi citare importi che NON dipendono dal calcolo economico e che il backend non tocca, "
     "cioe' sanzioni di legge, imposte e aliquote, tariffe della tassa di soggiorno, tempi in giorni delle "
     "pratiche, percentuali di commissione delle piattaforme e compensi di mercato del property manager."
+    "\n\nREGOLA SOLA LINGUA ITALIANA - il report esiste SOLO in italiano, la versione inglese e' stata "
+    "eliminata dal prodotto. In tutti i testi liberi (compresi i punti del piano_90) non nominare mai "
+    "l'inglese e non chiedere di preparare contenuti bilingue: niente 'in italiano e inglese', niente "
+    "'italiano/inglese', niente indicazioni di tradurre o duplicare descrizioni/annunci in un'altra lingua. "
+    "Scrivi sempre come se l'unica lingua possibile per host, annunci e comunicazioni fosse l'italiano."
 )
 
 
@@ -4373,6 +4401,13 @@ def _poi_strategico_in_formato_base(data):
                 break
 
     righe_base = [s if s else ["—", "—", "—"] for s in slot]
+    # Stessa correzione deterministica del Base: l'AI dello Strategico scrive
+    # il suo "impatto" a occhio, quindi la stessa distanza (es. "8 min a
+    # piedi") poteva uscire "Alto" sul Base e "Medio" sullo Strategico per lo
+    # stesso immobile — nessun bug nel calcolo, solo due giudizi umani-AI
+    # diversi mai confrontati. _correggi_poi_invertiti lo ricalcola da soglie
+    # fisse sulla distanza, la stessa funzione che il Base applica da sempre.
+    righe_base = _correggi_poi_invertiti(righe_base)
     # Stesse due regole del Base: 5° slot sempre l'aeroporto più vicino
     # (deterministico, non AI) e slot "Comune di riferimento" vuoto quando
     # l'immobile è già in un capoluogo o in una grande città.

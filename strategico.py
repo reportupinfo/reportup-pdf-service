@@ -914,6 +914,11 @@ def page4_manutenzione(c, data):
 
         col_w_int = [(W-28*mm)*0.30, (W-28*mm)*0.50, (W-28*mm)*0.20]
         tbl_int = Table(int_data, colWidths=col_w_int)
+        # Riga finale verde/teal solo se il profitto DOPO l'intervento resta
+        # positivo: un valore negativo colorato di verde nascondeva il segno
+        # meno dietro un colore che comunica "va tutto bene".
+        _colore_bg_finale = TEAL_LIGHT if profitto_dopo >= 0 else RED_LIGHT
+        _colore_fg_finale = TEAL if profitto_dopo >= 0 else RED
         style_int = [
             ("BACKGROUND",    (0,0),  (-1,0),  BLUE_NIGHT),
             ("TEXTCOLOR",     (0,0),  (-1,0),  WHITE),
@@ -933,8 +938,8 @@ def page4_manutenzione(c, data):
             ("TEXTCOLOR",     (2,3),  (2,3),   RED),
             ("TEXTCOLOR",     (2,4),  (2,4),   RED),
             ("FONTNAME",      (2,3),  (2,4),   "Helvetica-Bold"),
-            ("BACKGROUND",    (0,6),  (-1,6),  TEAL_LIGHT),
-            ("TEXTCOLOR",     (0,6),  (-1,6),  TEAL),
+            ("BACKGROUND",    (0,6),  (-1,6),  _colore_bg_finale),
+            ("TEXTCOLOR",     (0,6),  (-1,6),  _colore_fg_finale),
             ("FONTNAME",      (0,6),  (-1,6),  "Helvetica-Bold"),
             ("TEXTCOLOR",     (2,5),  (2,5),   RED),
             ("FONTNAME",      (2,5),  (2,5),   "Helvetica-Bold"),
@@ -1017,6 +1022,13 @@ def page4_manutenzione(c, data):
 
     col_w_opt = [(W-28*mm)*0.42, (W-28*mm)*0.40, (W-28*mm)*0.18]
     tbl_opt = Table(opt_data, colWidths=col_w_opt)
+    # Righe scenario basso/alto: azzurro neutro se il profitto resta positivo,
+    # rosso tenue se l'aggiunta di PM/intervento lo porta sotto zero — stesso
+    # criterio della tabella "Dettaglio diluizione nel tempo".
+    _bg_basso = HexColor("#E3F2FA") if prof_basso >= 0 else RED_LIGHT
+    _fg_basso = BLUE_NIGHT if prof_basso >= 0 else RED
+    _bg_alto  = HexColor("#E3F2FA") if prof_alto  >= 0 else RED_LIGHT
+    _fg_alto  = BLUE_NIGHT if prof_alto  >= 0 else RED
     style_opt = [
         ("BACKGROUND",    (0,0),  (-1,0),  BLUE_NIGHT),
         ("TEXTCOLOR",     (0,0),  (-1,0),  WHITE),
@@ -1035,11 +1047,11 @@ def page4_manutenzione(c, data):
         ("FONTNAME",      (0,1),  (0,-1),  "Helvetica-Bold"),
         ("TEXTCOLOR",     (2,1),  (2,2),   RED if has_pm or has_int else MUTED),
         ("FONTNAME",      (2,1),  (2,2),   "Helvetica-Bold"),
-        ("BACKGROUND",    (0,3),  (-1,3),  HexColor("#E3F2FA")),
-        ("TEXTCOLOR",     (0,3),  (-1,3),  BLUE_NIGHT),
+        ("BACKGROUND",    (0,3),  (-1,3),  _bg_basso),
+        ("TEXTCOLOR",     (0,3),  (-1,3),  _fg_basso),
         ("FONTNAME",      (0,3),  (-1,3),  "Helvetica-Bold"),
-        ("BACKGROUND",    (0,4),  (-1,4),  HexColor("#E3F2FA")),
-        ("TEXTCOLOR",     (0,4),  (-1,4),  BLUE_NIGHT),
+        ("BACKGROUND",    (0,4),  (-1,4),  _bg_alto),
+        ("TEXTCOLOR",     (0,4),  (-1,4),  _fg_alto),
         ("FONTNAME",      (0,4),  (-1,4),  "Helvetica-Bold"),
     ]
     tbl_opt.setStyle(TableStyle(style_opt))
@@ -1463,13 +1475,13 @@ def page5(c, data):
     # ── PRICING STAGIONALE ──
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano di pricing stagionale — mese per mese")
     y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Prezzi consigliati per notte · aggiornati su dati mercato zona · in italiano e inglese")
+    draw_section_subtitle(c, 14*mm, y, "Prezzi consigliati per notte · aggiornati su dati mercato zona")
     y -= 6*mm
 
-    pr_data = [["Mese / Month", "Prezzo notte", "Occup.", "Ricavo stimato", "Evento / Note"]]
+    pr_data = [["Mese", "Prezzo notte", "Occup.", "Ricavo stimato", "Evento / Note"]]
     for mese_it, mese_en, prezzo, occ_p, ricavo, evento in data.get('pricing_mensile', []):
         pr_data.append([
-            f"{mese_it} / {mese_en}",
+            mese_it,
             f"\u20ac {prezzo}",
             f"{occ_p}%",
             f"\u20ac {ricavo:,}".replace(",","."),
@@ -1526,7 +1538,8 @@ def page5(c, data):
     c.setFillColor(MUTED)
     adr = data.get('adr', 0)
     revpar = data.get('revpar', 0)
-    nota_pr = f"ADR (Average Daily Rate) ponderato annuo: \u20ac {adr}  \u00b7  RevPAR: \u20ac {revpar}  \u00b7  I prezzi si aggiornano automaticamente in base ai dati di mercato della zona al momento della generazione del report."
+    nota_pr = (f"ADR (Average Daily Rate) ponderato annuo: \u20ac {adr}  \u00b7  RevPAR: \u20ac {revpar}  \u00b7  I prezzi si aggiornano automaticamente in base ai dati di mercato della zona al momento della generazione del report. "
+               "L'occupazione mese per mese qui sopra \u00e8 tarata sul ricavo lordo annuo del report (pu\u00f2 differire di qualche punto percentuale dalla curva reale di pag. 3): il totale annuo di questa tabella coincide sempre col ricavo lordo, non \u00e8 un dato di mercato indipendente.")
     wrap_simple(c, nota_pr, 14*mm, y, W-28*mm, "Helvetica-Oblique", 7, 4.5*mm, MUTED)
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1646,8 +1659,8 @@ def page7(c, data):
          f"EBITDA  /  Valore mercato  x  100  =  \u20ac {ebitda:,}  /  \u20ac {v_stimato:,}  x  100".replace(",",".")
          if v_stimato else "Richiede la stima di mercato dell'immobile, non disponibile per questa zona",
          f"{round(ebitda/v_stimato*100, 2)}%" if v_stimato else "n/d"],
-        ["Rendita mensile netta stimata",
-         f"Profitto netto annuo  /  12 mesi  =  \u20ac {ebitda:,}  /  12".replace(",","."),
+        ["Rendita mensile (EBITDA)",
+         f"EBITDA  /  12 mesi  =  \u20ac {ebitda:,}  /  12".replace(",","."),
          fmt_eu(round(ebitda/12))],
     ]
 
@@ -1709,6 +1722,11 @@ def page7(c, data):
         ("* FF&E Reserve",
          "Fondo accantonamento per la manutenzione e sostituzione straordinaria di arredi, attrezzature e dotazioni "
          "(Furniture, Fixtures & Equipment). Standard del settore ricettivo professionale."),
+        ("* Rendita mensile (EBITDA) vs Rendita mensile netta",
+         "La rendita mensile calcolata qui parte dall’EBITDA, quindi PRIMA della rata del mutuo (è il numero che "
+         "un investitore usa per valutare l’asset a prescindere da come lo finanzi tu). La “Rendita mensile "
+         "netta” nel riepilogo indicatori chiave, invece, è quella che ti resta in tasca DOPO il mutuo: sono "
+         "due misure diverse per due domande diverse, non un errore di calcolo."),
         ("Nota privacy",
          "I valori di superficie e valore al metro quadro non sono calcolati in quanto la superficie non \u00e8 "
          "sempre disponibile al momento dell\u2019analisi. Il valore di mercato \u00e8 orientativo e non sostituisce "
@@ -2655,6 +2673,15 @@ def page_riepilogo(c, data):
 
     # Riga 3 — il trimestre affidabile e il confronto con l'affitto classico.
     _trim = "trimestre_ricavo_atteso" in data
+    # max(0, ...) nascondeva il caso (frequente in zone a bassa domanda B&B
+    # come Avigliano) in cui l'affitto tradizionale rende PIÙ del B&B: la
+    # tile mostrava "+€ 0" come se fosse pari merito, mentre il B&B perdeva
+    # migliaia di euro/anno rispetto al tradizionale. Ora il segno è reale.
+    _diff_bb_trad = data.get('profitto_netto', 0) - data.get('affitto_profitto', 0)
+    if _diff_bb_trad >= 0:
+        _diff_label, _diff_val, _diff_sub = "DIFFERENZA A FAVORE B&B", f"+{fmt_eur(_diff_bb_trad)}", "in più all'anno"
+    else:
+        _diff_label, _diff_val, _diff_sub = "DIFFERENZA A SFAVORE B&B", fmt_eur(_diff_bb_trad), "in meno all'anno"
     y = card_row([
         ("PROSSIMI 3 MESI",
          fmt_eur(data.get('trimestre_ricavo_atteso', 0)) if _trim else "n/d", "ricavo atteso",
@@ -2665,8 +2692,7 @@ def page_riepilogo(c, data):
         ("AFFITTO TRADIZIONALE",
          fmt_eur(data.get('affitto_profitto', 0)), "profitto netto",
          "Stessa unità, locazione classica"),
-        ("DIFFERENZA A FAVORE B&B",
-         f"+{fmt_eur(max(0, data.get('profitto_netto', 0) - data.get('affitto_profitto', 0)))}", "in più all'anno",
+        (_diff_label, _diff_val, _diff_sub,
          "Rispetto all'affitto tradizionale"),
     ], y)
 
