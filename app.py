@@ -573,8 +573,22 @@ def _calcola_intervento_mensile(data):
     solo la divisione, come già avviene per EBITDA e valore asset sopra."""
     if data.get("intervento_tipo", "nessuno") == "nessuno":
         return
-    importo = data.get("intervento_importo") or 0
-    mesi = data.get("intervento_mesi") or 0
+    # L'AI a volte scrive questi due numeri come stringa ("5000" invece di
+    # 5000): la divisione sotto va in TypeError e /generate-strategico
+    # risponde 500 (visto in produzione su un test reale, esecuzione Make
+    # fallita all'esatto modulo /generate-strategico). Si riscrivono in
+    # data anche i valori già puliti, cosi' il resto della pagina (che li
+    # formatta con "{:,}") non eredita lo stesso problema di tipo.
+    try:
+        importo = float(data.get("intervento_importo") or 0)
+    except (TypeError, ValueError):
+        importo = 0
+    try:
+        mesi = float(data.get("intervento_mesi") or 0)
+    except (TypeError, ValueError):
+        mesi = 0
+    data["intervento_importo"] = round(importo)
+    data["intervento_mesi"] = round(mesi)
     if mesi > 0:
         data["intervento_mensile"] = round(importo / mesi)
 
