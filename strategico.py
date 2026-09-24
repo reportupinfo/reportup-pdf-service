@@ -566,6 +566,10 @@ def page2(c, data):
     poi_data = [[Paragraph(h, style_header) for h in header_labels]]
     for label, row in zip(SLOT_LABELS, poi_rows_raw):
         mezzo_distanza, nome, impatto = (row + ["—", "—", "—"])[:3]
+        # Stessa regola del Base: riga vuota (tre trattini) omessa invece di
+        # stampata, es. "Elemento caratteristico" quando il comune non ne ha uno.
+        if label == "Elemento caratteristico" and mezzo_distanza == nome == impatto == "—":
+            continue
         poi_data.append([
             Paragraph(label, style_cell_bold),
             Paragraph(str(mezzo_distanza), style_cell_reg),
