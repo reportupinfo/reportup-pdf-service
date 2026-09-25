@@ -34,6 +34,30 @@ import omi_canoni
 
 app = Flask(__name__)
 
+
+def _json_loads_resiliente(testo, max_tentativi=20):
+    """json.loads() con riparazione automatica per il tipo di errore che
+    l'AI produce più spesso su testi lunghi (Strategico): "Expecting ','
+    delimiter" — una virgola mancante tra due elementi, quasi sempre dentro
+    un campo di testo libero (obiettivi_selezionati, descrizioni) — e la
+    virgola finale prima di '}'/']'. json.loads() nudo fa fallire l'intero
+    report per un carattere di punteggiatura, buttando via un'AI call intera
+    e lasciando il cliente senza PDF (visto in produzione 25/9: due ordini
+    Strategico persi di fila, posizione dell'errore diversa ogni volta —
+    quindi contenuto-dipendente, non un bug di posizione fissa). Se la
+    riparazione non basta rilancia l'errore originale così il chiamante
+    continua a loggare raw_preview/raw_tail come prima."""
+    testo = re.sub(r',(\s*[}\]])', r'\1', testo)  # virgole finali
+    for _ in range(max_tentativi):
+        try:
+            return _json_std.loads(testo)
+        except _json_std.JSONDecodeError as e:
+            if not e.msg.startswith("Expecting ',' delimiter"):
+                raise
+            testo = testo[:e.pos] + "," + testo[e.pos:]
+    return _json_std.loads(testo)  # esaurisce i tentativi, propaga se ancora rotto
+
+
 # ── AirROI: dato di mercato reale per il prezzo/notte ───────────────────────────
 AIRROI_API_KEY = os.environ.get("AIRROI_API_KEY", "")
 AIRROI_BASE = "https://api.airroi.com"
@@ -3897,7 +3921,7 @@ def extract_strategico_fields():
             if start != -1 and end != -1 and end > start:
                 cleaned = cleaned[start:end+1]
 
-        data = _json.loads(cleaned)
+        data = _json_loads_resiliente(cleaned)
         data = normalize_data(data)
         data = _arricchisci_report_deterministico(
             data,
@@ -4470,7 +4494,7 @@ def generate_strategico():
             if start != -1 and end != -1 and end > start:
                 cleaned = cleaned[start:end+1]
 
-        data = _json.loads(cleaned)
+        data = _json_loads_resiliente(cleaned)
         data = normalize_data(data)
 
         # Riapertura cantiere Strategico: motore deterministico condiviso col
@@ -4598,7 +4622,7 @@ def generate_piano_finanziario():
             if start != -1 and end != -1 and end > start:
                 cleaned = cleaned[start:end + 1]
 
-        data = _json.loads(cleaned)
+        data = _json_loads_resiliente(cleaned)
         data = normalize_data(data)
         data = _arricchisci_report_deterministico(
             data,
