@@ -198,8 +198,11 @@ RATIO_PREZZO_TIPOLOGIA_COMPETITOR = {
 }
 
 _BUCKET_COMPETITOR_PER_TIPOLOGIA = [
-    ("stanza singola", "B&B e camere"), ("stanza doppia", "B&B e camere"),
-    ("monolocale", "Monolocali"),
+    # "stanza singola" resta come alias di compatibilita': il form ora manda
+    # "monolocale" (rinominato 25/9/2026, stessa logica di prima), ma finche'
+    # il deploy Netlify del form non e' allineato a quello di questo backend
+    # potrebbero arrivare ancora ordini col vecchio codice.
+    ("monolocale", "B&B e camere"), ("stanza singola", "B&B e camere"), ("stanza doppia", "B&B e camere"),
     ("bilocale", "Bilocali"),
     ("trilocale", "Trilocali"),
     ("quadrilocale", "Trilocali"), ("4 locali", "Trilocali"), ("4+ locali", "Trilocali"), ("appartamento grande", "Trilocali"),
@@ -209,14 +212,14 @@ _BUCKET_COMPETITOR_PER_TIPOLOGIA = [
 
 def _bucket_competitor(tipologia):
     # .replace("_", " "): la Strategico manda qui il codice grezzo del form
-    # (es. "stanza_singola", "appartamento_grande"), il Base il testo già
-    # scritto dall'AI (es. "Stanza singola") — stesso identico immobile,
-    # due formati diversi in arrivo. I frammenti sotto sono scritti con lo
-    # spazio: senza questa normalizzazione "stanza_singola" non matcha mai
-    # "stanza singola" e cade sul default "Bilocali", mentre lo stesso
-    # immobile sul Base matcha giusto "B&B e camere" — Base e Strategico
-    # mostravano tabelle competitor diverse per lo stesso indirizzo
-    # (Torino, Praiano: scarto ~+53% sulle 3 righe derivate).
+    # (es. "monolocale", "appartamento_grande"), il Base il testo già
+    # scritto dall'AI (es. "Monolocale") — stesso identico immobile,
+    # due formati diversi in arrivo. Bug reale trovato su Torino/Praiano
+    # (stanza_singola, poi rinominata Monolocale) e Siena (appartamento_grande):
+    # senza questa normalizzazione il codice con underscore non matcha mai i
+    # frammenti sotto scritti con lo spazio e cade sul default "Bilocali",
+    # mentre lo stesso immobile sul Base matchava giusto — scarto ~+53%
+    # sulle 3 righe derivate della tabella competitor tra Base e Strategico.
     t = str(tipologia or "").strip().lower().replace("_", " ")
     for frammento, bucket in _BUCKET_COMPETITOR_PER_TIPOLOGIA:
         if frammento in t:
@@ -933,13 +936,13 @@ _TIPOLOGIA_MAP = [
     # (frammento_tipologia, camere, posti_default)
     # I frammenti sono confrontati in minuscolo con `in`: mettere i più
     # specifici PRIMA dei più generici. Le etichette reali inviate dai form
-    # sono "Stanza singola", "Stanza doppia", "Bilocale", "Trilocale",
+    # sono "Monolocale", "Stanza doppia", "Bilocale", "Trilocale",
     # "Appartamento 4+ locali", "Villa / Casa indipendente" — i frammenti qui
     # sotto devono matchare quelle stringhe (verificato: "4+ locali" cattura
     # l'appartamento grande, "casa indipendente" e "villa" catturano l'ultima).
-    ("stanza singola", 0, 1),
+    ("monolocale", 0, 1),
+    ("stanza singola", 0, 1),  # alias compatibilita', vedi nota sopra su _BUCKET_COMPETITOR_PER_TIPOLOGIA
     ("stanza doppia", 0, 2),
-    ("monolocale", 0, 2),
     ("bilocale", 1, 3),
     ("trilocale", 2, 4),
     ("quadrilocale", 3, 6),
@@ -2187,7 +2190,8 @@ def _concorda_numero(valore, singolare, plurale):
 # usati come chiavi di calcolo a valle (camere deterministiche, comparabili
 # AirROI, nota costi per tipologia).
 _LABEL_TIPOLOGIA = {
-    "stanza_singola":      "Stanza singola",
+    "monolocale":          "Monolocale",
+    "stanza_singola":      "Monolocale",  # alias compatibilita', vedi nota su _BUCKET_COMPETITOR_PER_TIPOLOGIA
     "stanza_doppia":       "Stanza doppia",
     "bilocale":            "Bilocale",
     "trilocale":           "Trilocale",
