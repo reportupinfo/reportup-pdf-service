@@ -1543,7 +1543,7 @@ def page5(c, data):
     adr = data.get('adr', 0)
     revpar = data.get('revpar', 0)
     nota_pr = (f"ADR (Average Daily Rate) ponderato annuo: \u20ac {adr}  \u00b7  RevPAR: \u20ac {revpar}  \u00b7  I prezzi si aggiornano automaticamente in base ai dati di mercato della zona al momento della generazione del report. "
-               "L'occupazione mese per mese qui sopra \u00e8 tarata sul ricavo lordo annuo del report (pu\u00f2 differire di qualche punto percentuale dalla curva reale di pag. 3): il totale annuo di questa tabella coincide sempre col ricavo lordo, non \u00e8 un dato di mercato indipendente.")
+               "L'occupazione mese per mese qui sopra \u00e8 tarata sul ricavo lordo annuo del report (pu\u00f2 differire di qualche punto percentuale dalla curva reale di pag. 3): il totale annuo di questa tabella \u00e8 allineato al ricavo lordo (scarto di pochi euro possibile per l'arrotondamento mese per mese), non \u00e8 un dato di mercato indipendente.")
     wrap_simple(c, nota_pr, 14*mm, y, W-28*mm, "Helvetica-Oblique", 7, 4.5*mm, MUTED)
 
 # ═══════════════════════════════════════════════════════════════════════════

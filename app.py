@@ -202,13 +202,22 @@ _BUCKET_COMPETITOR_PER_TIPOLOGIA = [
     ("monolocale", "Monolocali"),
     ("bilocale", "Bilocali"),
     ("trilocale", "Trilocali"),
-    ("quadrilocale", "Trilocali"), ("4 locali", "Trilocali"), ("appartamento grande", "Trilocali"),
+    ("quadrilocale", "Trilocali"), ("4 locali", "Trilocali"), ("4+ locali", "Trilocali"), ("appartamento grande", "Trilocali"),
     ("villa", "Trilocali"), ("casa indipendente", "Trilocali"),
 ]
 
 
 def _bucket_competitor(tipologia):
-    t = str(tipologia or "").strip().lower()
+    # .replace("_", " "): la Strategico manda qui il codice grezzo del form
+    # (es. "stanza_singola", "appartamento_grande"), il Base il testo già
+    # scritto dall'AI (es. "Stanza singola") — stesso identico immobile,
+    # due formati diversi in arrivo. I frammenti sotto sono scritti con lo
+    # spazio: senza questa normalizzazione "stanza_singola" non matcha mai
+    # "stanza singola" e cade sul default "Bilocali", mentre lo stesso
+    # immobile sul Base matcha giusto "B&B e camere" — Base e Strategico
+    # mostravano tabelle competitor diverse per lo stesso indirizzo
+    # (Torino, Praiano: scarto ~+53% sulle 3 righe derivate).
+    t = str(tipologia or "").strip().lower().replace("_", " ")
     for frammento, bucket in _BUCKET_COMPETITOR_PER_TIPOLOGIA:
         if frammento in t:
             return bucket
