@@ -31,6 +31,8 @@ import comuni_lookup
 import territorio_gps
 import stagionalita_turistica
 import omi_canoni
+import affitti_mercato
+import confronto_affitto
 
 app = Flask(__name__)
 
@@ -1808,53 +1810,13 @@ def page3(c, D):
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Confronto con affitto tradizionale")
     y -= 5 * mm
-    _diff_ricavo = D.get('ricavo_lordo', 0) - D.get('affitto_ricavo', 0)
-    _diff_profitto = D.get('profitto_netto', 0) - D.get('affitto_profitto', 0)
-
-    def _fmt_diff(delta):
-        segno = "+" if delta >= 0 else "-"
-        numero = f"{abs(int(delta)):,}".replace(",", ".")
-        return f"{segno}\u20ac {numero}"
-
-    # Il valore preciso di affitto_ricavo/costi/profitto resta quello usato per
-    # calcolare la Differenza (matematicamente corretta) \u2014 solo la colonna
-    # "Affitto tradizionale" mostra un range +-10% invece del numero secco,
-    # per non esporre una precisione sul mercato dell'affitto tradizionale
-    # che il dato non ha davvero.
-    def _fmt_range_eur(valore):
-        basso = round(valore * 0.9)
-        alto = round(valore * 1.1)
-        return f"{fmt_eur(basso)} - {fmt_eur(alto)}"
-
-    conf_data = [
-        ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
-        ["Ricavo annuo lordo", _fmt_range_eur(D.get("affitto_ricavo", 0)), fmt_eur(D.get("ricavo_lordo", 0)),
-         _fmt_diff(_diff_ricavo)],
-        ["Costi di gestione", _fmt_range_eur(D.get("affitto_costi", 0)), fmt_eur(D.get("totale_costi", 0)), "--"],
-        ["Profitto netto", _fmt_range_eur(D.get("affitto_profitto", 0)), fmt_eur(D.get("profitto_netto", 0)),
-         _fmt_diff(_diff_profitto)],
-        ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
-        ["Rischio morosit\u00e0", "Alto", "Nullo", "Eliminato"],
-    ]
-    _colore_ricavo = TEAL if _diff_ricavo >= 0 else RED
-    _colore_profitto = TEAL if _diff_profitto >= 0 else RED
-    col_w_conf = [(W - 28 * mm) * 0.28, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.28]
-    tbl_conf = Table(conf_data, colWidths=col_w_conf)
-    tbl_conf.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), BLUE_NIGHT), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -1), BLUE_NIGHT),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, CREAM]),
-        ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("TEXTCOLOR", (3, 1), (3, 1), _colore_ricavo), ("FONTNAME", (3, 1), (3, 1), "Helvetica-Bold"),
-        ("TEXTCOLOR", (3, 3), (3, 3), _colore_profitto), ("FONTNAME", (3, 3), (3, 3), "Helvetica-Bold"),
-        ("TEXTCOLOR", (3, 4), (3, 4), TEAL), ("FONTNAME", (3, 4), (3, 4), "Helvetica-Bold"),
-        ("TEXTCOLOR", (3, 5), (3, 5), TEAL), ("FONTNAME", (3, 5), (3, 5), "Helvetica-Bold"),
-    ]))
+    tbl_conf = confronto_affitto.tabella_confronto(D, W - 28 * mm)
     tbl_conf.wrapOn(c, W - 28 * mm, 300)
     tbl_conf.drawOn(c, 14 * mm, y - tbl_conf._height)
+    y -= tbl_conf._height + 3 * mm
+    _disc = confronto_affitto.disclaimer_mercato(D)
+    if _disc:
+        draw_wrapped_text(c, _disc, 14 * mm, y, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
 
 
 def page4(c, D):
@@ -1990,7 +1952,9 @@ def page5(c, D):
     y -= 6 * mm
 
     _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_airroi")
-    if _fonte_affitto == "omi_reale":
+    if _fonte_affitto == "mercato_reale":
+        _desc_affitto = affitti_mercato.fonte_descrizione()
+    elif _fonte_affitto == "omi_reale":
         _desc_affitto = ("Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate. Canone di "
                           "locazione medio al m² per la zona, ultimo semestre disponibile, applicato alla "
                           "superficie dichiarata dell'immobile. Dato ufficiale, aggiornamento semestrale.")
@@ -3759,8 +3723,28 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # OMI sballato quanto l'AirROI di partenza — in quel caso si ignora il
     # dato dichiarato e si usa la superficie tipica per tipologia già
     # prevista in omi_canoni.py, più rappresentativa.
+    # Canone di mercato reale per comune (affitti_mercato.csv): ha la
+    # precedenza su OMI e AirROI quando il comune è coperto. Valore al m2 x
+    # superficie dichiarata (stessa regola di plausibilità sotto).
+    _mercato = None
+    _codice_istat_mercato = _record_comune.get("codice_istat") if _record_comune else None
+    if _codice_istat_mercato:
+        try:
+            _sup_m = float(data.get("superficie") or 0) or None
+        except (TypeError, ValueError):
+            _sup_m = None
+        try:
+            _cam_m = float(data.get("camere") or 1) or 1
+        except (TypeError, ValueError):
+            _cam_m = 1
+        if not _sup_m or _sup_m < _cam_m * 20:
+            _sup_m = omi_canoni._superficie_tipica(data.get("tipologia"))
+        _mercato = affitti_mercato.stima_affitto_mercato(_codice_istat_mercato, _sup_m)
+        print(f"[AFFITTO-MERCATO] comune={data.get('comune')!r} "
+              f"esito={'trovato' if _mercato else 'non coperto, fallback OMI/AirROI'}")
+
     _omi_risultato = None
-    if _fonte_correttivo == "generico":
+    if _fonte_correttivo == "generico" and not _mercato:
         _codice_istat_omi = _record_comune.get("codice_istat") if _record_comune else None
         try:
             _superficie_omi = float(data.get("superficie") or 0) or None
@@ -3780,7 +3764,17 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         print(f"[AFFITTO-OMI] comune={data.get('comune')!r} codice_istat={_codice_istat_omi!r} "
               f"esito={'trovato' if _omi_risultato else 'non coperto, fallback AirROI'}")
 
-    if _omi_risultato:
+    if _mercato:
+        data["affitto_ricavo"] = _mercato["ricavo"]
+        data["affitto_costi"] = _mercato["costi"]
+        data["affitto_profitto"] = _mercato["profitto"]
+        data["affitto_ricavo_min"] = _mercato["ricavo_min"]
+        data["affitto_ricavo_max"] = _mercato["ricavo_max"]
+        data["affitto_profitto_min"] = _mercato["profitto_min"]
+        data["affitto_profitto_max"] = _mercato["profitto_max"]
+        data["sconto_affitto_tradizionale_pct"] = None
+        data["fonte_affitto_tradizionale"] = "mercato_reale"
+    elif _omi_risultato:
         (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], _) = _omi_risultato
         data["sconto_affitto_tradizionale_pct"] = None
         data["fonte_affitto_tradizionale"] = "omi_reale"

@@ -13,6 +13,8 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 import datetime
+import affitti_mercato
+import confronto_affitto
 import io
 import math
 
@@ -1420,61 +1422,20 @@ def page5(c, data):
     draw_section_subtitle(c, 14*mm, y, "Proiezione annuale · affitto tradizionale vs B&B short rent")
     y -= 6*mm
 
-    # Stesso criterio del Base: la colonna "Affitto tradizionale" mostra un
-    # range +-10% invece del numero secco, la Differenza resta calcolata sul
-    # valore preciso (altrimenti il conto non tornerebbe).
-    def _fmt_range_eu(valore):
-        basso = round(valore * 0.9)
-        alto = round(valore * 1.1)
-        return f"{fmt_eu(basso)} - {fmt_eu(alto)}"
-
-    def _fmt_diff_range_eu(esatto, valore_affitto):
-        # Il B&B è un valore secco, l'affitto tradizionale è un range +-10%:
-        # la differenza eredita lo stesso range (estremo alto dell'affitto
-        # -> differenza minima, estremo basso -> differenza massima).
-        basso = esatto - round(valore_affitto * 1.1)
-        alto = esatto - round(valore_affitto * 0.9)
-        segno_b = "+" if basso >= 0 else "-"
-        segno_a = "+" if alto >= 0 else "-"
-        return f"{segno_b}{fmt_eu(abs(int(basso)))} - {segno_a}{fmt_eu(abs(int(alto)))}"
-
-    conf_data = [
-        ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
-        ["Ricavo annuo lordo",
-         _fmt_range_eu(data.get('affitto_ricavo', 0)), fmt_eu(data.get('ricavo_lordo', 0)),
-         _fmt_diff_range_eu(data.get('ricavo_lordo', 0), data.get('affitto_ricavo', 0))],
-        ["Costi di gestione",
-         _fmt_range_eu(data.get('affitto_costi', 0)), fmt_eu(data.get('totale_costi', 0)),
-         _fmt_diff_range_eu(data.get('totale_costi', 0), data.get('affitto_costi', 0))],
-        ["Profitto netto",
-         _fmt_range_eu(data.get('affitto_profitto', 0)), fmt_eu(data.get('profitto_netto', 0)),
-         _fmt_diff_range_eu(data.get('profitto_netto', 0), data.get('affitto_profitto', 0))],
-        ["Flessibilit\u00e0 utilizzo", "Bassa", "Alta", "Molto alta"],
-        ["Rischio morosit\u00e0",       "Alto",  "Nullo", "Eliminato"],
-    ]
-    col_w_conf = [(W-28*mm)*0.28, (W-28*mm)*0.22, (W-28*mm)*0.22, (W-28*mm)*0.28]
-    tbl_conf = Table(conf_data, colWidths=col_w_conf)
-    tbl_conf.setStyle(TableStyle([
-        ("BACKGROUND",    (0,0),  (-1,0),  BLUE_NIGHT),
-        ("TEXTCOLOR",     (0,0),  (-1,0),  WHITE),
-        ("FONTNAME",      (0,0),  (-1,0),  "Helvetica-Bold"),
-        ("FONTSIZE",      (0,0),  (-1,-1), 8),
-        ("FONTNAME",      (0,1),  (-1,-1), "Helvetica"),
-        ("TEXTCOLOR",     (0,1),  (-1,-1), BLUE_NIGHT),
-        ("ROWBACKGROUNDS",(0,1),  (-1,-1), [WHITE, CREAM]),
-        ("GRID",          (0,0),  (-1,-1), 0.25, BORDER),
-        ("TOPPADDING",    (0,0),  (-1,-1), 4),
-        ("BOTTOMPADDING", (0,0),  (-1,-1), 4),
-        ("LEFTPADDING",   (0,0),  (-1,-1), 5),
-        ("TEXTCOLOR",     (3,1),  (3,1),   TEAL), ("FONTNAME", (3,1), (3,1), "Helvetica-Bold"),
-        ("TEXTCOLOR",     (3,2),  (3,2),   TEAL), ("FONTNAME", (3,2), (3,2), "Helvetica-Bold"),
-        ("TEXTCOLOR",     (3,3),  (3,3),   TEAL), ("FONTNAME", (3,3), (3,3), "Helvetica-Bold"),
-        ("TEXTCOLOR",     (3,4),  (3,4),   TEAL), ("FONTNAME", (3,4), (3,4), "Helvetica-Bold"),
-        ("TEXTCOLOR",     (3,5),  (3,5),   TEAL), ("FONTNAME", (3,5), (3,5), "Helvetica-Bold"),
-    ]))
+    # Tabella e disclaimer identici al Base: costruiti da confronto_affitto.py.
+    tbl_conf = confronto_affitto.tabella_confronto(data, W-28*mm)
     tbl_conf.wrapOn(c, W-28*mm, 300)
     tbl_conf.drawOn(c, 14*mm, y - tbl_conf._height)
-    y -= tbl_conf._height + 8*mm
+    y -= tbl_conf._height + 3*mm
+    _disc = confronto_affitto.disclaimer_mercato(data)
+    if _disc:
+        _st_disc = ParagraphStyle("disc_affitto", fontName="Helvetica-Oblique", fontSize=6.5,
+                                  leading=8.5, textColor=MUTED)
+        _p_disc = Paragraph(_disc, _st_disc)
+        _, _h_disc = _p_disc.wrap(W - 28*mm, 100*mm)
+        _p_disc.drawOn(c, 14*mm, y - _h_disc)
+        y -= _h_disc
+    y -= 6*mm
 
     # ── PRICING STAGIONALE ──
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Piano di pricing stagionale — mese per mese")
@@ -2378,6 +2339,8 @@ def page11(c, data):
         ("Prezzi e tasso occupazione",
          "Elaborazione su dati aggregati Airbnb, Booking.com, VRBO. Medie di mercato per tipologia e zona alla data di generazione."),
         ("Canoni affitto tradizionale",
+         affitti_mercato.fonte_descrizione()
+         if data.get("fonte_affitto_tradizionale") == "mercato_reale" else
          f"Stima comparativa: prezzo/notte medio (fonte AirROI) x 30 giorni, scontato del "
          f"{data.get('sconto_affitto_tradizionale_pct', 40)}% per riflettere il differenziale tipico "
          f"tra locazione tradizionale e affitto breve sulla stessa unità e zona."),
