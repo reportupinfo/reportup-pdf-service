@@ -25,6 +25,10 @@ def _num(txt):
         return None
 
 
+# Comuni esclusi a mano: dato del CSV non attendibile, si usa il metodo base
+# (codice ISTAT). 25063 = Valle di Cadore (41,33 EUR/m2 piatto, canone di lusso).
+_ESCLUSI = {25063}
+
 # Fascia usata quando min/max del CSV non sono affidabili a livello comunale.
 _FASCIA = 0.15
 _RATIO_MAX_AFFIDABILE = 2.5   # max/min oltre questo = range non credibile
@@ -48,7 +52,10 @@ def _carica():
                 if not (_MQ_MIN_PLAUSIBILE <= v[1] <= _MQ_MAX_PLAUSIBILE):
                     continue
                 try:
-                    grezzi.append((int(r["codice_istat"]), v))
+                    cod = int(r["codice_istat"])
+                    if cod in _ESCLUSI:
+                        continue
+                    grezzi.append((cod, v))
                 except (KeyError, ValueError, TypeError):
                     continue
     except FileNotFoundError:
