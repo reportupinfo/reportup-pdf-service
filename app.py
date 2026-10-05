@@ -3729,14 +3729,8 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     _mercato = None
     _codice_istat_mercato = _record_comune.get("codice_istat") if _record_comune else None
     if _codice_istat_mercato:
-        try:
-            _sup_m = float(data.get("superficie") or 0) or None
-        except (TypeError, ValueError):
-            _sup_m = None
-        try:
-            _cam_m = float(data.get("camere") or 1) or 1
-        except (TypeError, ValueError):
-            _cam_m = 1
+        _sup_m = affitti_mercato.numero_da_testo(data.get("superficie"))
+        _cam_m = affitti_mercato.numero_da_testo(data.get("camere"), 1)
         if not _sup_m or _sup_m < _cam_m * 20:
             _sup_m = omi_canoni._superficie_tipica(data.get("tipologia"))
         _mercato = affitti_mercato.stima_affitto_mercato(_codice_istat_mercato, _sup_m)
@@ -3746,14 +3740,8 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     _omi_risultato = None
     if _fonte_correttivo == "generico" and not _mercato:
         _codice_istat_omi = _record_comune.get("codice_istat") if _record_comune else None
-        try:
-            _superficie_omi = float(data.get("superficie") or 0) or None
-        except (TypeError, ValueError):
-            _superficie_omi = None
-        try:
-            _camere_omi = float(data.get("camere") or 1) or 1
-        except (TypeError, ValueError):
-            _camere_omi = 1
+        _superficie_omi = affitti_mercato.numero_da_testo(data.get("superficie"))
+        _camere_omi = affitti_mercato.numero_da_testo(data.get("camere"), 1)
         if _superficie_omi and _superficie_omi < _camere_omi * 20:
             print(f"[AFFITTO-OMI] superficie dichiarata {_superficie_omi}m2 non plausibile per "
                   f"{_camere_omi} camere: ignorata, uso superficie tipica per tipologia")

@@ -8,6 +8,7 @@
 
 import csv
 import os
+import re
 
 _PATH = os.path.join(os.path.dirname(__file__), "affitti_mercato.csv")
 _DATI = None
@@ -33,6 +34,18 @@ _ESCLUSI = {25063}
 _FASCIA = 0.15
 _RATIO_MAX_AFFIDABILE = 2.5   # max/min oltre questo = range non credibile
 _SOGLIA_PROVINCIALE = 3       # stessa coppia min/max su >=3 comuni = dato provinciale
+
+
+def numero_da_testo(valore, default=None):
+    """Estrae il primo numero da '70', '70 m2', '70,5 mq', '2 camere'.
+    Il form/Make può passare la superficie con l'unità attaccata: un
+    float() secco fallirebbe e il calcolo ricadrebbe sulla superficie tipica."""
+    if isinstance(valore, (int, float)):
+        return float(valore) or default
+    m = re.search(r"\d+(?:[.,]\d+)?", str(valore or ""))
+    if not m:
+        return default
+    return float(m.group(0).replace(",", ".")) or default
 
 
 def _carica():
