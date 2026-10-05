@@ -3300,12 +3300,11 @@ def quick_estimate():
             print(f"[QUICK] AirROI assente — fallback deterministico. prezzo_medio_grezzo={_prezzo_medio_grezzo} "
                   f"fonte_prezzo_mese={_fonte_prezzo_mese!r} prezzo_notte_mese_corrente={prezzo_notte}")
 
-        # Il potenziale annuo lordo resta calcolato sul prezzo MEDIO annuo, non sul
-        # prezzo del mese corrente appena mostrato: mischiare un prezzo di un
-        # singolo mese con un numero di notti annuo darebbe un potenziale annuo
-        # falsato (gonfiato in alta stagione, sottostimato in bassa stagione).
+        # Decisione Salvatore 5/10/2026: il Quick è "foto di oggi", quindi il lordo
+        # è prezzo mostrato (mese corrente) x notti annue, così la moltiplicazione
+        # a mano torna esatta. Il lordo varia col mese in cui si genera il Quick.
         notti_anno = round(365 * occupazione_percent / 100)
-        potenziale_lordo = _prezzo_medio_grezzo * notti_anno
+        potenziale_lordo = prezzo_notte * notti_anno
 
         if airroi and airroi.get("comparable_listings"):
             prezzi_comparabili = [
