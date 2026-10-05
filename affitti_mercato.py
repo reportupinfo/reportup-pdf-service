@@ -36,6 +36,24 @@ _RATIO_MAX_AFFIDABILE = 2.5   # max/min oltre questo = range non credibile
 _SOGLIA_PROVINCIALE = 3       # stessa coppia min/max su >=3 comuni = dato provinciale
 
 
+# Superficie tipica per tipologia, usata solo se la superficie dichiarata è
+# vuota o non plausibile.
+_SUPERFICIE_TIPICA = [
+    ("villa", 180), ("casa indipendente", 180),
+    ("appartamento", 110), ("4+", 110), ("grande", 110),
+    ("trilocale", 85), ("bilocale", 60), ("doppia", 45),
+    ("singola", 35), ("stanza", 35), ("monolocale", 35),
+]
+
+
+def superficie_tipica(tipologia):
+    t = str(tipologia or "").strip().lower()
+    for frammento, mq in _SUPERFICIE_TIPICA:
+        if frammento in t:
+            return mq
+    return 65
+
+
 def numero_da_testo(valore, default=None):
     """Estrae il primo numero da '70', '70 m2', '70,5 mq', '2 camere'.
     Il form/Make può passare la superficie con l'unità attaccata: un

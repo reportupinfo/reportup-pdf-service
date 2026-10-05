@@ -30,7 +30,6 @@ from reportlab.lib.enums import TA_CENTER
 import comuni_lookup
 import territorio_gps
 import stagionalita_turistica
-import omi_canoni
 import affitti_mercato
 import confronto_affitto
 
@@ -1965,10 +1964,6 @@ def page5(c, D):
     _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_airroi")
     if _fonte_affitto == "mercato_reale":
         _desc_affitto = affitti_mercato.fonte_descrizione()
-    elif _fonte_affitto == "omi_reale":
-        _desc_affitto = ("Osservatorio del Mercato Immobiliare (OMI) - Agenzia delle Entrate. Canone di "
-                          "locazione medio al m² per la zona, ultimo semestre disponibile, applicato alla "
-                          "superficie dichiarata dell'immobile. Dato ufficiale, aggiornamento semestrale.")
     else:
         _sconto_affitto = D.get("sconto_affitto_tradizionale_pct", 40)
         _desc_affitto = (f"Stima comparativa di mercato: prezzo/notte medio (fonte AirROI) x 30 giorni, "
@@ -3741,35 +3736,21 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # camere ma pochi m2 dichiarati (es. 4 camere su 50 m2) produce un canone
     # OMI sballato quanto l'AirROI di partenza — in quel caso si ignora il
     # dato dichiarato e si usa la superficie tipica per tipologia già
-    # prevista in omi_canoni.py, più rappresentativa.
+    # prevista in affitti_mercato.py, più rappresentativa.
     # Canone di mercato reale per comune (affitti_mercato.csv): ha la
-    # precedenza su OMI e AirROI quando il comune è coperto. Valore al m2 x
-    # superficie dichiarata (stessa regola di plausibilità sotto).
+    # precedenza quando il comune è coperto, altrimenti si usa la stima da
+    # AirROI (nessun OMI: scelta di Salvatore, 6/10/2026). Valore al m2 x
+    # superficie dichiarata.
     _mercato = None
     _codice_istat_mercato = _record_comune.get("codice_istat") if _record_comune else None
     if _codice_istat_mercato:
         _sup_m = affitti_mercato.numero_da_testo(data.get("superficie"))
         _cam_m = affitti_mercato.numero_da_testo(data.get("camere"), 1)
         if not _sup_m or _sup_m < _cam_m * 20:
-            _sup_m = omi_canoni._superficie_tipica(data.get("tipologia"))
+            _sup_m = affitti_mercato.superficie_tipica(data.get("tipologia"))
         _mercato = affitti_mercato.stima_affitto_mercato(_codice_istat_mercato, _sup_m)
         print(f"[AFFITTO-MERCATO] comune={data.get('comune')!r} "
-              f"esito={'trovato' if _mercato else 'non coperto, fallback OMI/AirROI'}")
-
-    _omi_risultato = None
-    if _fonte_correttivo == "generico" and not _mercato:
-        _codice_istat_omi = _record_comune.get("codice_istat") if _record_comune else None
-        _superficie_omi = affitti_mercato.numero_da_testo(data.get("superficie"))
-        _camere_omi = affitti_mercato.numero_da_testo(data.get("camere"), 1)
-        if _superficie_omi and _superficie_omi < _camere_omi * 20:
-            print(f"[AFFITTO-OMI] superficie dichiarata {_superficie_omi}m2 non plausibile per "
-                  f"{_camere_omi} camere: ignorata, uso superficie tipica per tipologia")
-            _superficie_omi = None
-        _omi_risultato = omi_canoni.stima_canone_omi(
-            _codice_istat_omi, _superficie_omi, data.get("tipologia")
-        )
-        print(f"[AFFITTO-OMI] comune={data.get('comune')!r} codice_istat={_codice_istat_omi!r} "
-              f"esito={'trovato' if _omi_risultato else 'non coperto, fallback AirROI'}")
+              f"esito={'trovato' if _mercato else 'non coperto, fallback AirROI'}")
 
     if _mercato:
         data["affitto_ricavo"] = _mercato["ricavo"]
@@ -3781,10 +3762,6 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         data["affitto_profitto_max"] = _mercato["profitto_max"]
         data["sconto_affitto_tradizionale_pct"] = None
         data["fonte_affitto_tradizionale"] = "mercato_reale"
-    elif _omi_risultato:
-        (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"], _) = _omi_risultato
-        data["sconto_affitto_tradizionale_pct"] = None
-        data["fonte_affitto_tradizionale"] = "omi_reale"
     else:
         (data["affitto_ricavo"], data["affitto_costi"], data["affitto_profitto"],
          data["sconto_affitto_tradizionale_pct"]) = stagionalita_turistica.stima_affitto_tradizionale(
