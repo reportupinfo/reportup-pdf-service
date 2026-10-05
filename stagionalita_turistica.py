@@ -200,6 +200,24 @@ def prezzo_mese_corrente(prezzo_medio, sottocategoria, categoria, comune,
     return prezzo, fonte
 
 
+def comprimi_picchi(valori, tetto):
+    """Evita il tetto a 95% 'piatto' (5 mesi tutti identici) che sembra finto.
+    Se il picco grezzo supera `limite` (= tetto - 5), i mesi sopra `knee`
+    (= limite - 12) vengono riscalati in modo lineare perché il massimo
+    atterri a `limite`: l'ordine e le differenze tra i mesi alti restano,
+    i mesi sotto knee non si toccano (la bassa stagione è già protetta da
+    smorza_peso_occupazione). Ritorna interi tra 5 e `tetto`."""
+    limite = tetto - 5
+    knee = limite - 12
+    m = max(valori)
+    out = []
+    for v in valori:
+        if m > limite and v > knee:
+            v = knee + (v - knee) * (limite - knee) / (m - knee)
+        out.append(max(5, min(tetto, round(v))))
+    return out
+
+
 def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5, tetto_massimo=85):
     """Versione generica: ricostruisce le 12 righe usando una qualsiasi
     curva di forma a 12 valori relativi, mantenendo la media reale.
@@ -246,9 +264,13 @@ def applica_curva(occ_annuale, adr_annuale, curva, smorzamento_prezzo=0.5, tetto
         # (mesi deboli compressi verso la media, picchi intoccati) — vedi
         # smorza_peso_occupazione per motivazione ed evidenze.
         peso_occ_mese = smorza_peso_occupazione(peso_occ)
-        occ_mese = max(5, min(tetto_massimo, round(occ_annuale * peso_occ_mese))) if occ_annuale else None
+        occ_mese = (occ_annuale * peso_occ_mese) if occ_annuale else None
         prezzo_mese = max(1, round(adr_annuale * peso_prezzo)) if adr_annuale else None
         righe.append([nome_mese, occ_mese, prezzo_mese, etichetta[i]])
+    if occ_annuale:
+        _occ = comprimi_picchi([r[1] for r in righe], tetto_massimo)
+        for r, o in zip(righe, _occ):
+            r[1] = o
     return righe
 
 

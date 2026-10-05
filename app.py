@@ -781,6 +781,7 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
         else:
             _etichetta[_i] = "Bassa"
     nuova = []
+    _occ_grezze = []
     for i, row in enumerate(occ):
         peso = distribuzione_mensile[i] / media
         # Smorzamento simmetrico sul prezzo (Sessione 66) — anche quando il
@@ -796,8 +797,12 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
             # dato di bassa stagione eredita la stessa sottostima che
             # correggiamo altrove (stesso principio della curva bimodale).
             peso_occ_mese = stagionalita_turistica.smorza_peso_occupazione(peso)
-            nuova_row[1] = max(5, min(tetto_massimo, round(occ_annuale * peso_occ_mese)))
+            _occ_grezze.append(occ_annuale * peso_occ_mese)
         nuova.append(nuova_row)
+    if occ_annuale is not None:
+        # Picchi compressi invece che tagliati al tetto: vedi comprimi_picchi.
+        for _r, _o in zip(nuova, stagionalita_turistica.comprimi_picchi(_occ_grezze, tetto_massimo)):
+            _r[1] = _o
     return nuova
 
 
