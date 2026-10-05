@@ -149,7 +149,18 @@ def _tipologia_da_camere(n_camere):
     return {0: "Monolocali", 1: "Bilocali"}.get(n, f"{n + 1} locali" if n >= 2 else "Monolocali")
 
 
-def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
+def _mediana(valori):
+    """Mediana semplice. Usata al posto della media sui comparabili AirROI:
+    pochi annunci quasi sempre pieni o di lusso spostano la media molto sopra
+    il valore tipico (caso Sorrento: media occupazione ~82% con mediana 57%)."""
+    v = sorted(valori)
+    n = len(v)
+    if n == 0:
+        return None
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def _occupazione_da_comparabili(comparable_listings, sconto=0.95):
     """Calcola l'occupazione media dai singoli annunci comparabili REALI di
     AirROI (non il dato percentili generico), quando ce ne sono abbastanza
     per essere affidabili. Sessione 66: confrontando i due dati nello stesso
@@ -160,9 +171,10 @@ def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
     partiva dal dato più grezzo; qui, quando disponibile, usiamo il dato più
     reale direttamente.
 
-    Lo sconto (default 0.90) tiene conto che un nuovo annuncio short-rental
-    parte senza recensioni/storico: realisticamente performa un po' sotto la
-    media di annunci già affermati, non identico. Ritorna None se i
+    Si usa la MEDIANA, non la media (vedi _mediana). Lo sconto (default 0.95,
+    AirROI è già conservativo di suo) tiene conto che un nuovo annuncio
+    short-rental parte senza recensioni/storico: performa un po' sotto gli
+    annunci già affermati. Ritorna None se i
     comparabili non hanno abbastanza dati di occupazione (soglia minima 3,
     stessa usata altrove per considerare il dato affidabile)."""
     if not comparable_listings:
@@ -178,8 +190,7 @@ def _occupazione_da_comparabili(comparable_listings, sconto=0.90):
             occ_vals.append(occ)
     if len(occ_vals) < 3:
         return None
-    media = sum(occ_vals) / len(occ_vals)
-    return media * sconto
+    return _mediana(occ_vals) * sconto
 
 
 # ── Tabella competitor — deterministica, niente più AirROI/AI (Sessione 69) ──
@@ -282,7 +293,7 @@ def _prezzo_da_comparabili_stessa_tipologia(comparable_listings, n_camere_immobi
             prezzi.append(prezzo)
     if len(prezzi) < minimo:
         return None
-    return sum(prezzi) / len(prezzi)
+    return _mediana(prezzi)
 
 
 def _numero_da_stringa(valore, default=1):
@@ -3532,6 +3543,11 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         _occ_comparabili = _occupazione_da_comparabili(_airroi.get("comparable_listings"))
         if _occ_comparabili is not None:
             _occ_new = min(_tetto_occ, round(_occ_comparabili))
+            # Un annuncio nuovo non parte nel quarto migliore della zona:
+            # occupazione tenuta tra P25 e P75 dei percentili reali AirROI.
+            _perc_o = _airroi.get("percentili_occupazione")
+            if _perc_o and _perc_o.get("p25") and _perc_o.get("p75"):
+                _occ_new = max(_perc_o["p25"], min(_perc_o["p75"], _occ_new))
             data["fonte_occupazione"] = "comparabili_reali"
             print(f"[OCCUPAZIONE] uso media comparabili reali (scontata 10%): {round(_occ_comparabili)}% "
                   f"invece del correttivo generico ({round(min(_tetto_occ, _airroi['occupazione_percent'] * _correttivo_occ))}%)")

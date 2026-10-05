@@ -295,10 +295,10 @@ CORRETTIVO_OCCUPAZIONE_PER_CATEGORIA = {
 #   generico, residenziale) — nessun mercato reale sta pieno quasi tutto
 #   l'anno senza un motivo turistico forte.
 TETTO_OCCUPAZIONE_PER_CATEGORIA = {
-    "citta": 98,
-    "montano_invernale": 98,
-    "costiero": 95,
-    "lacuale": 95,
+    "citta": 95,
+    "montano_invernale": 95,
+    "costiero": 90,
+    "lacuale": 90,
     "montano_estivo": 85,
     "generico": 85,
 }
