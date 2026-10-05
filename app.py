@@ -3555,6 +3555,9 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
             _occ_new = min(_tetto_occ, round(_airroi["occupazione_percent"] * _correttivo_occ))
             data["fonte_occupazione"] = "correttivo_percentili"
 
+        # Tetto sul livello annuo per categoria (vedi OCCUPAZIONE_ANNUA_MASSIMA)
+        _occ_new = min(_occ_new, stagionalita_turistica.tetto_occupazione_annua(_fonte_correttivo))
+
         # Posizionamento stagionale (pag. 10 Strategico, L90D/TTM): stesso
         # correttivo_occ + tetto applicati sopra all'occupazione_percent
         # principale, altrimenti questa tabella mostra l'occupazione AirROI

@@ -302,6 +302,26 @@ TETTO_OCCUPAZIONE_PER_CATEGORIA = {
     "montano_estivo": 85,
     "generico": 85,
 }
+# Tetto sul LIVELLO ANNUO (non sui picchi mensili sopra) — 6/10/2026.
+# Il correttivo moltiplicativo sopra (1.35-1.45) su un dato AirROI già alto
+# porta oltre il reale: Torino test = 81% annuo, mentre le fonti AirDNA
+# citate qui sopra danno città 57-66% (solo Roma 84%), costiero 49-61%.
+# Il tetto è la media reale delle fonti + ~10 punti, per non penalizzare
+# AirROI (conservativo) né gonfiare il report.
+OCCUPAZIONE_ANNUA_MASSIMA = {
+    "citta": 75,
+    "montano_invernale": 72,
+    "costiero": 68,
+    "lacuale": 65,
+    "montano_estivo": 58,
+    "generico": 58,
+}
+
+
+def tetto_occupazione_annua(fonte):
+    return OCCUPAZIONE_ANNUA_MASSIMA.get(fonte, 58)
+
+
 OCCUPAZIONE_TETTO_MASSIMO = 85  # fallback per fonti non mappate, mantenuto per compatibilità
 
 
