@@ -2883,13 +2883,15 @@ def _applica_poi_stabili(data):
     # gastronomia come "supermercato"): si scartano per tipo e per nome.
     _non_fermata = {"tourist_attraction", "museum", "church", "place_of_worship", "art_gallery",
                     "park", "restaurant", "food", "cafe", "bar", "store", "lodging"}
-    trasporto = [l for l in _luoghi_vicini_google(lat, lon, "transit_station")
-                 if not (set(l.get("types") or []) & _non_fermata)]
-    attrazioni = [l for l in _luoghi_vicini_google(lat, lon, "tourist_attraction") if l["recensioni"] >= 500]
+    _tr_grezzi = _luoghi_vicini_google(lat, lon, "transit_station")
+    trasporto = [l for l in _tr_grezzi if not (set(l.get("types") or []) & _non_fermata)]
+    _at_grezzi = _luoghi_vicini_google(lat, lon, "tourist_attraction")
+    attrazioni = [l for l in _at_grezzi if l["recensioni"] >= 500]
     _non_super = re.compile(r"gastronom|macelleri|salumeri|rosticcer|panific|forno|pasticcer|enotec|bottega|"
                             r"ortofrutt|frutta|pescheri|caff|bar|ristorant|pizzeri|tabacc|farmaci|paninoteca|"
                             r"gelateri|kebab|sushi", re.IGNORECASE)
-    super_ = [l for l in _luoghi_vicini_google(lat, lon, "supermarket")
+    _su_grezzi = _luoghi_vicini_google(lat, lon, "supermarket")
+    super_ = [l for l in _su_grezzi
               if not _non_super.search(l["nome"])
               and not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar"})]
     # Il nome di una fermata e' spesso solo la via o il quartiere ("Castello"):
@@ -2897,6 +2899,11 @@ def _applica_poi_stabili(data):
     if trasporto and not re.search(r"stazione|fermata|bus|metro|tram|autobus|capolinea|linea|treno|ferrovia|aeroporto",
                                    trasporto[0]["nome"], re.IGNORECASE):
         trasporto[0] = dict(trasporto[0], nome="Fermata " + trasporto[0]["nome"])
+    # Diagnostica (solo /debug-poi): primi candidati grezzi e scartati.
+    _ok = lambda L: [f"{l['nome']} [{round(l['_dist_km']*1000)}m, {l['recensioni']}rec, {','.join((l.get('types') or [])[:3])}]" for l in L[:4]]
+    data["_poi_diag"] = {"transit_grezzi": _ok(_tr_grezzi), "transit_ok": _ok(trasporto),
+                         "attr_grezzi": _ok(_at_grezzi), "attr_ok": _ok(attrazioni),
+                         "super_grezzi": _ok(_su_grezzi), "super_ok": _ok(super_)}
     nuovi = {
         0: _riga_poi_da_luogo(lat, lon, trasporto[0], "piedi") if trasporto else None,
         2: _riga_poi_da_luogo(lat, lon, attrazioni[0], "auto") if attrazioni else None,
@@ -4755,6 +4762,18 @@ def _poi_strategico_in_formato_base(data):
 
     data["poi"] = righe_base
     return data
+
+
+@app.route("/debug-poi", methods=["POST"])
+@require_internal_secret
+def debug_poi():
+    """Diagnostica POI stabili su coordinate arbitrarie (solo per collaudo su
+    scala nazionale: serve a vedere cosa restituisce Google e cosa scartano i
+    filtri, comune per comune). Protetto da X-Internal-Secret."""
+    body = request.get_json(silent=True) or {}
+    d = {"lat": body.get("lat"), "long": body.get("long"), "categoria": body.get("categoria"), "poi": []}
+    _applica_poi_stabili(d)
+    return jsonify({"poi": d.get("poi"), "diag": d.get("_poi_diag")})
 
 
 @app.route("/generate-strategico", methods=["POST"])
