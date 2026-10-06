@@ -2187,7 +2187,7 @@ _PARTICELLE_MINUSCOLE = {"di", "de", "dei", "del", "della", "delle", "dello", "d
                          # "Santa Maria a Vico", "Sesto Calende sul Lago"
                          "a", "al", "alla", "alle", "allo", "ai", "agli", "all",
                          "in", "su", "sul", "sulla", "sullo", "sull", "nel", "nella",
-                         "nello", "nell", "nei", "nelle", "da", "dall", "e", "con", "tra", "fra", "d"}
+                         "nello", "nell", "nei", "nelle", "da", "dall", "e", "con", "tra", "fra"}
 
 
 def _title_preserva_romani(testo):
