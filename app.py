@@ -2811,7 +2811,7 @@ def _correggi_poi_invertiti(poi):
     return corrette
 
 
-def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5):
+def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5, parola_chiave=None):
     """Nearby Search per TIPO (non per parola chiave), ordinato per distanza.
     Ritorna [{nome, lat, lon, recensioni, _dist_km}] oppure []."""
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
@@ -2821,7 +2821,8 @@ def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5):
         resp = requests.get(
             GOOGLE_PLACES_NEARBY_URL,
             params={"location": f"{lat},{lon}", "rankby": "distance", "type": place_type,
-                    "language": "it", "key": api_key}, timeout=timeout)
+                    "language": "it", "key": api_key,
+                    **({"keyword": parola_chiave} if parola_chiave else {})}, timeout=timeout)
         if resp.status_code != 200:
             return []
         dati = resp.json()
@@ -2841,6 +2842,81 @@ def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5):
     except Exception as e:
         print(f"[POI-STABILI] eccezione {place_type}: {e}")
         return []
+
+
+# ── Selezione dei POI: regole GENERALI (collaudo su 74 comuni, 6/10/2026) ────
+# Il tipo Google ("supermarket", "transit_station", "tourist_attraction") e'
+# molto rumoroso: dentro "supermarket" escono salumerie, aziende agricole,
+# distributori all'ingrosso, fontanelle; dentro "tourist_attraction" noleggi
+# barche, scuole sci, parchi avventura. Le regole sotto valgono per qualunque
+# comune: nessuna eccezione per citta'.
+_RE_SUPERMERCATO = re.compile(
+    r"conad|\bcoop\b|carrefour|esselunga|lidl|eurospin|\bmd\b|despar|eurospar|interspar|\bspar\b|\bpam\b|"
+    r"panorama|\bsisa\b|\bcrai\b|\bdok\b|famila|\biper|simply|\bsigma\b|tigre|todis|\baldi\b|penny|"
+    r"migross|migros|bennet|superstore|supermerc|supermarket|mini ?market|\bmarket\b|dec[o\u00f2]\b|dpi[u\u00f9]|"
+    r"maxi ?store|\bgala\b|\bemi\b|\bard\b|\bins\b|sole ?365|italmark|\bunes\b|\bu2\b|prix|il gigante|"
+    r"alimentari|punto spesa|centro commerciale", re.IGNORECASE)
+_RE_CATENA = re.compile(
+    r"conad|\bcoop\b|carrefour|esselunga|lidl|eurospin|\bmd\b|despar|eurospar|interspar|\bspar\b|\bpam\b|"
+    r"panorama|\bsisa\b|\bcrai\b|\bdok\b|famila|\biper|simply|\bsigma\b|tigre|todis|\baldi\b|penny|"
+    r"migross|migros|bennet|superstore|supermerc|dec[o\u00f2]\b|dpi[u\u00f9]|maxi ?store|\bgala\b|\bemi\b|"
+    r"\bard\b|\bins\b|sole ?365|italmark|\bunes\b|\bu2\b|prix|il gigante", re.IGNORECASE)
+_RE_NON_SUPERMERCATO = re.compile(
+    r"gastronom|macelleri|salumi|salumer|rosticcer|panific|panetter|forno|pasticcer|enotec|wine|cantina|"
+    r"ortofrutt|frutta|pescheri|caseific|formaggi|latteria|frantoio|azienda agricola|agricol|"
+    r"distribuzion|ingrosso|spaccio|vivaio|fontanell|tipici|specialit|caff|\bbar\b|ristorant|"
+    r"pizzeri|tabacc|farmaci|paninoteca|gelateri|kebab|sushi|detersiv", re.IGNORECASE)
+_RE_ATTIVITA_NON_ATTRAZIONE = re.compile(
+    r"\brent\b|noleggio|\bski\b|funiv|seggiov|parco avventura|acquatic|aquapark|\bspa\b|s\.p\.a|\bsrl\b|s\.r\.l|"
+    r"hotel|resort|camping|\btour|escursion|agenzia|\bboat|\bbike|diving|\bscuola|\bclub\b|\bgolf\b|ippica|"
+    r"outlet|negozio|shop|ristorant|pizzeri|\bbar\b", re.IGNORECASE)
+_TIPI_NON_ATTRAZIONE = {"travel_agency", "store", "lodging", "amusement_park", "campground", "gym", "spa",
+                        "restaurant", "food", "cafe", "bar", "car_rental", "bicycle_store", "shopping_mall"}
+_TIPI_NON_FERMATA = {"tourist_attraction", "museum", "church", "place_of_worship", "art_gallery",
+                     "park", "restaurant", "food", "cafe", "bar", "store", "lodging"}
+# Distanze massime in linea d'aria: oltre, il punto non "serve" l'immobile e
+# stamparlo sarebbe fuorviante (fermata a 40 km, supermercato a 15 km).
+_MAX_KM_TRASPORTO = 3.0
+_MAX_KM_SERVIZI = 6.0
+_MAX_KM_ATTRAZIONE = 6.0
+
+
+def _scegli_poi_candidati(trasporto_grezzi, attrazioni_grezze, supermercati_grezzi):
+    """Applica i filtri generali e restituisce (trasporto, attrazioni,
+    supermercati) ordinati per vicinanza, ciascuno gia' filtrato per tipo,
+    nome e distanza massima. Funzione pura (niente rete): testabile."""
+    trasporto = [l for l in trasporto_grezzi
+                 if not (set(l.get("types") or []) & _TIPI_NON_FERMATA)
+                 and not re.search(r"sightseeing|city tour|hop[- ]on", l["nome"], re.IGNORECASE)
+                 and l["_dist_km"] <= _MAX_KM_TRASPORTO]
+    # Il nome di una fermata e' spesso solo la via o il quartiere ("Castello"):
+    # si esplicita il tipo di punto per non farlo sembrare un monumento.
+    if trasporto and not re.search(
+            r"stazione|fermata|bus|metro|tram|autobus|capolinea|linea|treno|ferrovia|aeroporto|porto|molo|imbarco",
+            trasporto[0]["nome"], re.IGNORECASE):
+        trasporto[0] = dict(trasporto[0], nome="Fermata " + trasporto[0]["nome"])
+    attrazioni = [l for l in attrazioni_grezze
+                  if l["recensioni"] >= 500
+                  and not (set(l.get("types") or []) & _TIPI_NON_ATTRAZIONE)
+                  and not _RE_ATTIVITA_NON_ATTRAZIONE.search(l["nome"])
+                  and l["_dist_km"] <= _MAX_KM_ATTRAZIONE]
+    # Supermercato: prima i nomi riconoscibili (catene, "supermercato",
+    # "alimentari", "minimarket"), scartando negozi specializzati e aziende;
+    # se nessuno, un luogo tipizzato supermarket con almeno 150 recensioni.
+    validi = [l for l in supermercati_grezzi
+              if not _RE_NON_SUPERMERCATO.search(l["nome"])
+              and not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar", "bakery"})
+              and l["_dist_km"] <= _MAX_KM_SERVIZI]
+    nomi_ok = [l for l in validi if _RE_SUPERMERCATO.search(l["nome"])]
+    catene = [l for l in nomi_ok if _RE_CATENA.search(l["nome"])]
+    # Una catena riconosciuta vince su "alimentari"/"market" generici se non e'
+    # molto piu' lontana (entro 500 m dal generico piu' vicino): un
+    # supermercato vero serve meglio la spesa di un negozio di quartiere.
+    if catene and (not nomi_ok or catene[0]["_dist_km"] <= nomi_ok[0]["_dist_km"] + 0.5):
+        super_ = catene + [l for l in nomi_ok if l not in catene]
+    else:
+        super_ = nomi_ok or [l for l in validi if l["recensioni"] >= 150]
+    return trasporto, attrazioni, super_
 
 
 def _riga_poi_da_luogo(lat, lon, luogo, modalita):
@@ -2878,39 +2954,23 @@ def _applica_poi_stabili(data):
     except (TypeError, ValueError):
         return
 
-    # Google tagga "transit_station" o "supermarket" anche luoghi che non lo sono
-    # davvero (test Lecce 6/10/2026: il Castello come "trasporto pubblico", una
-    # gastronomia come "supermercato"): si scartano per tipo e per nome.
-    _non_fermata = {"tourist_attraction", "museum", "church", "place_of_worship", "art_gallery",
-                    "park", "restaurant", "food", "cafe", "bar", "store", "lodging"}
     _tr_grezzi = _luoghi_vicini_google(lat, lon, "transit_station")
-    trasporto = [l for l in _tr_grezzi if not (set(l.get("types") or []) & _non_fermata)]
     _at_grezzi = _luoghi_vicini_google(lat, lon, "tourist_attraction")
-    attrazioni = [l for l in _at_grezzi if l["recensioni"] >= 500]
-    _non_super = re.compile(r"gastronom|macelleri|salumeri|rosticcer|panific|forno|pasticcer|enotec|bottega|"
-                            r"ortofrutt|frutta|pescheri|caff|bar|ristorant|pizzeri|tabacc|farmaci|paninoteca|"
-                            r"gelateri|kebab|sushi", re.IGNORECASE)
-    _su_grezzi = _luoghi_vicini_google(lat, lon, "supermarket")
-    super_ = [l for l in _su_grezzi
-              if not _non_super.search(l["nome"])
-              and not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar"})]
-    # Il nome di una fermata e' spesso solo la via o il quartiere ("Castello"):
-    # si esplicita il tipo di punto per non farlo sembrare un monumento.
-    if trasporto and not re.search(r"stazione|fermata|bus|metro|tram|autobus|capolinea|linea|treno|ferrovia|aeroporto",
-                                   trasporto[0]["nome"], re.IGNORECASE):
-        trasporto[0] = dict(trasporto[0], nome="Fermata " + trasporto[0]["nome"])
-    # Diagnostica (solo /debug-poi): primi candidati grezzi e scartati.
-    _ok = lambda L: [f"{l['nome']} [{round(l['_dist_km']*1000)}m, {l['recensioni']}rec, {','.join((l.get('types') or [])[:3])}]" for l in L[:4]]
+    _su_grezzi = _luoghi_vicini_google(lat, lon, "supermarket", parola_chiave="supermercato")
+    trasporto, attrazioni, super_ = _scegli_poi_candidati(_tr_grezzi, _at_grezzi, _su_grezzi)
+    # Diagnostica (solo /debug-poi): primi candidati grezzi e scelti.
+    _ok = lambda L: [f"{l['nome']} [{round(l['_dist_km']*1000)}m, {l['recensioni']}rec, {','.join((l.get('types') or [])[:3])}]" for l in L[:8]]
     data["_poi_diag"] = {"transit_grezzi": _ok(_tr_grezzi), "transit_ok": _ok(trasporto),
                          "attr_grezzi": _ok(_at_grezzi), "attr_ok": _ok(attrazioni),
                          "super_grezzi": _ok(_su_grezzi), "super_ok": _ok(super_)}
+    google_risponde = bool(_tr_grezzi or _at_grezzi or _su_grezzi)
+    if not google_risponde:
+        return   # nessun dato Google: non cambia niente
     nuovi = {
         0: _riga_poi_da_luogo(lat, lon, trasporto[0], "piedi") if trasporto else None,
         2: _riga_poi_da_luogo(lat, lon, attrazioni[0], "auto") if attrazioni else None,
         3: _riga_poi_da_luogo(lat, lon, super_[0], "piedi") if super_ else None,
     }
-    if not any(nuovi.values()):
-        return
     print(f"[POI-STABILI] trasporto={nuovi[0]} caratteristico={nuovi[2]} servizi={nuovi[3]}")
 
     righe = [list(r) for r in (data.get("poi") or []) if r]
@@ -2922,8 +2982,10 @@ def _applica_poi_stabili(data):
         righe.append(["—", "—", "—"])
     righe = righe[:5]
     for idx, riga in nuovi.items():
-        if riga:
-            righe[idx] = riga
+        # Google risponde ma nessun candidato supera i filtri: riga vuota (il
+        # PDF la omette) invece del valore scritto dall'AI/Make, che e' proprio
+        # quello che questo passaggio vuole sostituire.
+        righe[idx] = riga if riga else ["\u2014", "\u2014", "\u2014"]
     righe[4] = aeroporto_row(lat, lon)
     if str(data.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
         righe[1] = ["—", "—", "—"]
