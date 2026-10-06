@@ -579,6 +579,9 @@ def _calcola_scenari_durata_soggiorno(data):
     ]
 
 
+SAGGIO_CAPITALIZZAZIONE_PCT = 7.0
+
+
 def _calcola_valore_asset(data):
     """Solo Strategico (pag. 13). EBITDA e valore di mercato come asset B&B
     erano gli ultimi numeri economici ancora inventati dall'AI, mentre tutto
@@ -589,7 +592,11 @@ def _calcola_valore_asset(data):
     saggio. valore_immobile_stimato resta un dato che oggi non abbiamo
     (nessuna fonte OMI di compravendita in pipeline): se l'AI non lo fornisce
     resta 0 e la pagina lo dichiara n/d, senza inventarlo."""
-    saggio = data.get("saggio_capitalizzazione") or 7.0
+    # Saggio FISSO (regola 6/10/2026: l'IA non decide numeri). Prima arrivava
+    # dall'IA (6,5% a Matera, 7% altrove): stesso immobile, valore diverso a
+    # ogni generazione.
+    saggio = SAGGIO_CAPITALIZZAZIONE_PCT
+    data["saggio_capitalizzazione"] = saggio
     profitto = data.get("profitto_netto")
     if profitto is None:
         return
@@ -3923,12 +3930,16 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
             _ts["revpar_ttm"] = round(_ts["prezzo_ttm"] * _ts["occupazione_ttm"] / 100)
             data["trend_stagionale"] = _ts
     else:
-        _moltiplicatore = 1.05 if (_cat == "comune_minore" and _sub == "residenziale_minore") else 1.15
-        _p_new = round(_p * _moltiplicatore) if _p else _p
-        _occ_new = _occ_old
+        # Regola di Salvatore (6/10/2026): l'IA non interviene MAI nei numeri.
+        # Senza AirROI il prezzo non e' piu' quello scritto dall'IA ma la stessa
+        # stima deterministica del Quick (tabelle categoria x zona x capacita').
+        _base_cat = PREZZO_BASE_CATEGORIA.get(_cat, PREZZO_BASE_CATEGORIA["comune_minore"])
+        _mult_zona = MOLTIPLICATORE_SOTTOCATEGORIA.get(_sub, 1.0)
+        _p_new = round(_base_cat * _mult_zona * _moltiplicatore_capacita(data.get("posti_letto")))
+        _occ_new = OCCUPAZIONE_BASE_FALLBACK
         _tetto_occ = stagionalita_turistica.tetto_occupazione(_fonte_correttivo)
-        data["fonte_occupazione"] = "ai_stima"
-        data["fonte_prezzo"] = "ai_stima"
+        data["fonte_occupazione"] = "stima_deterministica"
+        data["fonte_prezzo"] = "stima_deterministica"
 
     # Incremento per dotazioni di valore (Sessione 66) — applicato UNA VOLTA
     # qui, prima che _p_new si propaghi su tabella mensile, ricavi e KPI, così
@@ -4368,83 +4379,74 @@ _CAMPI_ANALISI_STRATEGICO = ("descrizione", "analisi_posizione", "analisi_condiz
                              "analisi_potenzialita", "analisi_raccomandazione")
 
 
-def _scheda_numeri_definitivi(data):
-    """Blocco leggibile con i numeri FINALI del report, quelli che finiscono
-    stampati nelle pagine. Serve a _riscrivi_testi_con_numeri_reali."""
-    def eu(v):
-        try:
-            return "€ " + f"{round(float(v)):,}".replace(",", ".")
-        except (TypeError, ValueError):
-            return "n/d"
-
-    righe = [
-        f"Immobile: {data.get('tipologia', '')} a {data.get('comune', '')}"
-        f"{', zona ' + data['zona'] if data.get('zona') and data['zona'] != '—' else ''}",
-        f"Prezzo consigliato per notte: {eu(data.get('prezzo_notte_stimato'))}",
-        f"Occupazione stimata: {data.get('occupazione_percent')}%  ({data.get('notti_anno')} notti/anno)",
-        f"Ricavo lordo annuo: {eu(data.get('ricavo_lordo'))}",
-        f"Ricavi totali annui (con prenotazioni dirette): {eu(data.get('totale_ricavi'))}",
-        f"Costi di gestione annui: {eu(data.get('totale_costi'))}",
-        f"PROFITTO NETTO ANNUO: {eu(data.get('profitto_netto'))}"
-        f"  (margine {data.get('margine_percent')}%)",
-        f"Profitto netto mensile: {eu((data.get('profitto_netto') or 0) / 12)}",
-        f"ADR {eu(data.get('adr'))} · RevPAR {eu(data.get('revpar'))}",
-    ]
-    if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile"):
-        righe.append(f"Rata mutuo dichiarata: {eu(data['rata_mutuo_mensile'])}/mese "
-                     f"({eu(data['rata_mutuo_mensile'] * 12)}/anno), gia' dentro i costi sopra")
-    for chiave, nome in (("scenario_pess", "PESSIMISTICO"),
-                         ("scenario_real", "REALISTICO"),
-                         ("scenario_ott", "OTTIMISTICO")):
-        s = data.get(chiave) or {}
-        if s:
-            righe.append(
-                f"Scenario {nome}: occupazione {s.get('occupazione')}%, "
-                f"{eu(s.get('prezzo_medio'))}/notte, {s.get('notti')} notti, "
-                f"ricavi totali {eu(s.get('ricavi_lordi'))}, "
-                f"profitto netto {eu(s.get('profitto_netto'))}")
-    if data.get("affitto_profitto"):
-        righe.append(f"Affitto tradizionale, stessa unita' (valori centrali): ricavo LORDO annuo {eu(data.get('affitto_ricavo'))}, "
-                     f"profitto NETTO annuo {eu(data.get('affitto_profitto'))} "
-                     f"(netto = lordo meno costi di gestione {eu(data.get('affitto_costi'))}: non scambiare lordo e netto)")
-    # Fatti verificati che i testi non devono contraddire (zona, punti di
-    # interesse, vincoli di legge): senza questi l'AI scriveva quartieri
-    # diversi da quello del report ("San Giovanni" vs "San Niccolo'") e
-    # attribuiva a un punto di interesse un ruolo che non ha (un supermercato
-    # citato come farmacia).
-    if data.get("zona") and data["zona"] != "—":
+def _scheda_fatti_verificati(data):
+    """Solo fatti qualitativi per l'editor: zona, punti di interesse, avviso
+    normativo. NIENTE numeri di calcolo (regola 6/10/2026: l'IA non tocca la
+    matematica)."""
+    righe = [f"Immobile: {data.get('tipologia', '')} a {data.get('comune', '')}"]
+    if data.get("zona") and data["zona"] != "\u2014":
         righe.append(f"Zona/quartiere VERIFICATO (usa solo questo nome, non inventarne altri): {data['zona']}")
-    _poi_ok = [f"{r[1]} ({r[0]})" for r in (data.get("poi") or []) if r and len(r) >= 2 and r[1] != "—"]
+    _poi_ok = [f"{r[1]} ({r[0]})" for r in (data.get("poi") or []) if r and len(r) >= 2 and r[1] != "\u2014"]
     if _poi_ok:
         righe.append("Punti di interesse VERIFICATI e unici citabili con la loro distanza: " + "; ".join(_poi_ok))
     if data.get("avviso_normativo"):
         righe.append("AVVISO NORMATIVO LOCALE (sempre presente): " + data["avviso_normativo"])
-    if data.get("valore_mercato"):
-        righe.append(f"Valore come asset B&B: {eu(data.get('valore_mercato'))} "
-                     f"(EBITDA {eu(data.get('ebitda_stimato'))} capitalizzato al "
-                     f"{data.get('saggio_capitalizzazione', 7.0)}%)")
-    pricing = data.get("pricing_mensile") or []
-    if pricing:
-        alto = max(pricing, key=lambda r: r[2])
-        basso = min(pricing, key=lambda r: r[2])
-        righe.append(f"Pricing mensile consigliato: massimo {eu(alto[2])} a {alto[0]}, "
-                     f"minimo {eu(basso[2])} a {basso[0]}")
-        # Quote stagionali CALCOLATE: l'editor le citava inventate ("l'estate
-        # vale il 45-50% dei ricavi" quando il pricing dava il 34%).
-        try:
-            _tot = sum(float(r[4]) for r in pricing)
-            if _tot > 0 and len(pricing) == 12:
-                _est = sum(float(r[4]) for r in pricing[5:8])
-                _inv = sum(float(r[4]) for r in (pricing[0:2] + pricing[11:12]))
-                righe.append(f"Quota dei ricavi annui per stagione (CALCOLATA, unica citabile): estate giugno-agosto "
-                             f"{round(_est / _tot * 100)}%, inverno dicembre-febbraio {round(_inv / _tot * 100)}%")
-        except (TypeError, ValueError, IndexError):
-            pass
-    _comp = [r for r in (data.get("competitor") or []) if r and len(r) >= 2]
-    if _comp:
-        righe.append("Prezzi medi per tipologia nella zona (competitor): " +
-                     "; ".join(f"{r[0]} {r[1]}" for r in _comp))
     return "\n".join(righe)
+
+
+_RE_CIFRA_ECONOMICA = re.compile(
+    r"(?:€|\beur\b|\beuro\b)\s*\d|\d[\d.,]*\s*(?:€|\beur\b|\beuro\b)|\d[\d.,]*\s?%|\b\d{1,3}(?:\.\d{3})+\b",
+    re.IGNORECASE)
+# Cifre ammesse nei testi: non vengono dal nostro calcolo ma da leggi, tariffari
+# e prassi di mercato (commissioni, aliquote, sanzioni, compenso del property manager).
+_RE_CIFRA_AMMESSA = re.compile(
+    r"cedolare|\biva\b|commission|aliquot|sanzion|tassa di soggiorno|imposta|\bcin\b|property manager|compens|multa|"
+    r"\bbooking\b|\bairbnb\b", re.IGNORECASE)
+
+
+def _toglie_frasi_con_cifre(testo):
+    """Frasi con cifre economiche NON ammesse tolte dal testo. Ritorna (nuovo, n_tolte)."""
+    frasi = re.split(r"(?<=[.!?])\s+", str(testo or "").strip())
+    tenute = [f for f in frasi if not (_RE_CIFRA_ECONOMICA.search(f) and not _RE_CIFRA_AMMESSA.search(f))]
+    return " ".join(tenute), len(frasi) - len(tenute)
+
+
+def _rimuovi_cifre_economiche_dai_testi(data):
+    """Regola di Salvatore (6/10/2026): l'IA non interviene mai nella matematica.
+    I testi liberi devono essere qualitativi: ogni frase che contiene importi,
+    percentuali o prezzi (esclusi i dati di legge/tariffari) viene tolta. Si
+    applica dopo l'editor, quindi anche se l'editor sbaglia o non gira."""
+    tolte = 0
+    for campo in _CAMPI_ANALISI_STRATEGICO:
+        orig = str(data.get(campo) or "")
+        nuovo, n = _toglie_frasi_con_cifre(orig)
+        if n and len(nuovo) >= 40:
+            data[campo] = nuovo
+            tolte += n
+    for chiave in ("scenario_pess", "scenario_real", "scenario_ott"):
+        sc = data.get(chiave)
+        if isinstance(sc, dict):
+            for campo in ("subtitle", "note"):
+                nuovo, n = _toglie_frasi_con_cifre(sc.get(campo))
+                if n:
+                    sc[campo] = nuovo
+                    tolte += n
+    for blocco in (data.get("piano_90") or []):
+        if not isinstance(blocco, dict):
+            continue
+        azioni = []
+        for az in (blocco.get("azioni") or []):
+            az = str(az)
+            if _RE_CIFRA_ECONOMICA.search(az) and not _RE_CIFRA_AMMESSA.search(az):
+                senza = re.sub(r"\s*\([^)]*\d[^)]*\)", "", az)
+                if _RE_CIFRA_ECONOMICA.search(senza):
+                    tolte += 1
+                    continue
+                az, tolte = senza, tolte + 1
+            azioni.append(az)
+        if len(azioni) >= 3:
+            blocco["azioni"] = azioni
+    print(f"[CIFRE-NEI-TESTI] frasi/azioni con cifre economiche tolte: {tolte}")
 
 
 def _riscrivi_testi_con_numeri_reali(data, timeout=60):
@@ -4482,39 +4484,35 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
 
     system = (
         "Sei l'editor finale del Report Strategico di ReportUp. Ricevi dei testi di analisi gia' "
-        "scritti e la scheda dei NUMERI DEFINITIVI del report, quelli effettivamente stampati nelle "
-        "pagine. Il tuo unico compito e' restituire gli stessi testi con OGNI cifra economica allineata "
-        "a quella scheda. REGOLE: 1) Conserva ragionamento, struttura, lunghezza e tono di ogni testo: "
-        "non e' una riscrittura creativa, e' un allineamento dei numeri. 2) Ogni importo, prezzo per "
-        "notte, percentuale di occupazione, profitto o valore che compare nei testi deve corrispondere "
-        "esattamente a un valore della scheda; se un numero citato nell'originale non trova riscontro "
-        "nella scheda, sostituiscilo con quello giusto oppure togli la quantificazione e lascia la frase "
-        "qualitativa. 3) Non inventare cifre che non stanno nella scheda. 4) Restano ammessi e vanno "
-        "lasciati come sono gli importi che non dipendono dal calcolo economico: sanzioni di legge, "
-        "imposte e aliquote, tassa di soggiorno, percentuali di commissione delle piattaforme, compensi "
-        "di mercato del property manager, costi di servizi esterni. 5) Scrivi gli importi in euro nel "
-        "formato italiano con il punto per le migliaia. 6) Rispondi SOLO con un oggetto JSON valido, "
-        "nessun testo prima o dopo, nessun markdown, nessun backtick, con esattamente le stesse chiavi "
-        "che ricevi in input. 7) Coerenza dei fatti con la scheda: se un testo nomina un quartiere "
-        "diverso da quello VERIFICATO, sostituiscilo con quello verificato oppure scrivi solo il nome "
-        "della citta'; cita distanze e punti di interesse solo se presenti nell'elenco VERIFICATO e mai "
-        "con un ruolo diverso dal loro (un supermercato non e' una farmacia, un museo non e' una fermata "
-        "dei mezzi); non dare distanze o tempi di percorrenza che non siano nella scheda. 8) Non scambiare "
-        "lordo e netto dell'affitto tradizionale: usa le etichette della scheda. 9) La scheda contiene sempre un AVVISO NORMATIVO LOCALE: nel testo di raccomandazione non presentare "
-        "l'avvio dell'attivita' come scontato, e aggiungi una frase che dica di verificare PRIMA con gli uffici "
-        "del Comune che l'attivita' sia consentita per l'immobile. "
-        "10) La commissione delle piattaforme nel report e' 15,5%: se un testo cita un'altra percentuale di commissione Airbnb, usa 15,5%. "
-        "12) Anche le fasce di prezzo, le quote percentuali dei ricavi e ogni altro numero di mercato (es. 'bilocali "
-        "nella fascia 80-95 euro', 'l'estate vale il 45-50% dei ricavi') devono coincidere con la scheda: usa il "
-        "prezzo consigliato o i prezzi competitor della scheda, le quote stagionali CALCOLATE della scheda, oppure "
-        "riscrivi la frase in modo qualitativo senza cifra. "
-        "11) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
+        "scritti e una scheda di FATTI VERIFICATI (zona, punti di interesse, avviso normativo). "
+        "REGOLA FONDAMENTALE: nel report l'intelligenza artificiale non tocca MAI numeri e calcoli, che "
+        "sono scritti solo dal motore di calcolo nelle tabelle. I testi liberi devono quindi essere "
+        "QUALITATIVI. Il tuo compito e' restituire gli stessi testi senza alcuna cifra economica. "
+        "REGOLE: 1) Conserva ragionamento, struttura, lunghezza e tono: non e' una riscrittura creativa. "
+        "2) Togli OGNI importo, prezzo per notte, fascia di prezzo, percentuale di occupazione, quota "
+        "percentuale dei ricavi, ricavo, costo, profitto o valore dell'immobile e riformula la frase in "
+        "modo qualitativo ('lo scenario ottimistico', 'il prezzo consigliato', 'l'estate pesa di piu' sui "
+        "ricavi') o in modo relativo, senza numeri. Non inventare e non sostituire cifre: se hai un dubbio, "
+        "togli la cifra. 3) Restano ammessi e vanno lasciati come sono solo i dati che non dipendono dal "
+        "nostro calcolo: sanzioni di legge, imposte e aliquote (cedolare secca, IVA), tassa di soggiorno, "
+        "percentuali di commissione delle piattaforme, compensi di mercato del property manager, tempi "
+        "delle pratiche. 4) Rispondi SOLO con un oggetto JSON valido, nessun testo prima o dopo, nessun "
+        "markdown, nessun backtick, con esattamente le stesse chiavi che ricevi in input. "
+        "5) Coerenza dei fatti con la scheda: se un testo nomina un quartiere diverso da quello "
+        "VERIFICATO, sostituiscilo con quello verificato oppure scrivi solo il nome della citta'; cita "
+        "distanze e punti di interesse solo se presenti nell'elenco VERIFICATO e mai con un ruolo "
+        "diverso dal loro (un supermercato non e' una farmacia, un museo non e' una fermata dei mezzi); "
+        "non dare distanze o tempi di percorrenza che non siano nella scheda. "
+        "6) La scheda contiene sempre un AVVISO NORMATIVO LOCALE: nel testo di raccomandazione non "
+        "presentare l'avvio dell'attivita' come scontato, e aggiungi una frase che dica di verificare "
+        "PRIMA con gli uffici del Comune che l'attivita' sia consentita per l'immobile. "
+        "7) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
         "'prezzo troppo alto'), niente refusi."
     )
     user = (
-        "NUMERI DEFINITIVI DEL REPORT (fonte di verita', i testi devono allinearsi a questi):\n"
-        f"{_scheda_numeri_definitivi(data)}\n\n"
-        "TESTI DA ALLINEARE (restituisci la stessa struttura JSON):\n"
+        "FATTI VERIFICATI DEL REPORT (nessun numero di calcolo: i numeri stanno solo nelle tabelle):\n"
+        f"{_scheda_fatti_verificati(data)}\n\n"
+        "TESTI DA RIPULIRE DALLE CIFRE (restituisci la stessa struttura JSON):\n"
         f"{_json_std.dumps(payload_in, ensure_ascii=False, indent=1)}"
     )
 
@@ -4991,11 +4989,15 @@ def generate_strategico():
         # finale, non quello di partenza dell'AI.
         _calcola_valore_asset(data)
         _calcola_intervento_mensile(data)
+        data["pm_perc_bassa"], data["pm_perc_alta"] = 15, 20
 
         # ULTIMO PASSO PRIMA DEL PDF, e deve restare l'ultimo: riallinea i
         # testi liberi ai numeri appena calcolati. Spostarlo piu' su vorrebbe
         # dire allinearli a cifre che le funzioni qui sopra cambiano ancora.
         _riscrivi_testi_con_numeri_reali(data)
+        # Rete di sicurezza deterministica: qualunque cifra economica rimasta
+        # nei testi dell'IA viene tolta, anche se l'editor fallisce o non c'e'.
+        _rimuovi_cifre_economiche_dai_testi(data)
 
         # Mappa pag. 1 (roadmap, satellite bloccato da Google in EEA) —
         # stesse lat/long già usate per AirROI sopra, nessuna chiamata
