@@ -56,7 +56,12 @@ def _riga(D, label, esatto_bnb, chiave, chiave_min=None, chiave_max=None, reale=
 def tabella_confronto(D, larghezza):
     """Ritorna la Table già stilizzata, identica in Base e Strategico."""
     reale = D.get("fonte_affitto_tradizionale") == "mercato_reale"
-    r_ric, ok_ric = _riga(D, "Ricavo annuo lordo", D.get("ricavo_lordo", 0), "affitto_ricavo",
+    # Il ricavo B&B e' il TOTALE RICAVI dell'analisi economica (comprensivo del
+    # bonus prenotazioni dirette), non il solo ricavo lordo: con il lordo nudo
+    # la colonna non tornava (50.416 - 13.867 costi != 40.078 profitto) e il
+    # lettore che rifa' la sottrazione trovava 3.529 euro in piu'.
+    _ricavo_bnb = D.get("totale_ricavi") or D.get("ricavo_lordo", 0)
+    r_ric, ok_ric = _riga(D, "Ricavo annuo lordo*", _ricavo_bnb, "affitto_ricavo",
                           "affitto_ricavo_min", "affitto_ricavo_max", reale)
     r_cos, _ = _riga(D, "Costi di gestione", D.get("totale_costi", 0), "affitto_costi", reale=reale)
     r_pro, ok_pro = _riga(D, "Profitto netto", D.get("profitto_netto", 0), "affitto_profitto",
@@ -83,6 +88,16 @@ def tabella_confronto(D, larghezza):
         ("TEXTCOLOR", (3, 4), (3, 5), _TEAL), ("FONTNAME", (3, 4), (3, 5), "Helvetica-Bold"),
     ]))
     return tbl
+
+
+def nota_ricavi(D, html=False):
+    """Nota a pie' tabella: dice cosa c'e' dentro il ricavo B&B."""
+    bonus = D.get("bonus_dirette") or 0
+    if not bonus:
+        return None
+    return (f"* Ricavo B{'&amp;' if html else '&'}B = ricavo lordo da piattaforme + {_eur(bonus)} stimati da prenotazioni dirette "
+            "(totale ricavi dell'analisi economica). Profitto = ricavo - costi di gestione. "
+            "Valori al lordo delle imposte.")
 
 
 def disclaimer_mercato(D):

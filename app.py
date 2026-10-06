@@ -705,9 +705,16 @@ def _calcola_trimestre_affidabile(data):
             round(r[2] * _GIORNI_MESE.get(r[0], 30) * r[1] / 100) for r in righe
         )
 
+    # Medie PONDERATE sui giorni e sulle notti vendute, non medie semplici dei
+    # tre mesi: cosi' prezzo medio x occupazione media x giorni del trimestre
+    # restituisce il ricavo stampato nello stesso riquadro (con le medie
+    # semplici 183 euro x 72% x 92 giorni dava 12.177 contro 12.073 scritti).
+    _giorni = [_GIORNI_MESE.get(str(r[0]).strip()[:3].capitalize(), 30) for r in righe]
+    _notti_occ = sum(o / 100 * d for o, d in zip(occupazioni, _giorni))
     data["trimestre_mesi_label"] = " – ".join(r[0] for r in righe)
-    data["trimestre_prezzo_medio"] = round(sum(prezzi) / len(prezzi))
-    data["trimestre_occupazione_media"] = round(sum(occupazioni) / len(occupazioni))
+    data["trimestre_occupazione_media"] = round(_notti_occ / sum(_giorni) * 100)
+    data["trimestre_prezzo_medio"] = (round(ricavo_trimestre / _notti_occ) if _notti_occ
+                                      else round(sum(prezzi) / len(prezzi)))
     data["trimestre_ricavo_atteso"] = ricavo_trimestre
 
 
@@ -803,6 +810,48 @@ def _applica_stagionalita_airroi(occ, distribuzione_mensile, adr_annuale, occ_an
         # Picchi compressi invece che tagliati al tetto: vedi comprimi_picchi.
         for _r, _o in zip(nuova, stagionalita_turistica.comprimi_picchi(_occ_grezze, tetto_massimo)):
             _r[1] = _o
+    return nuova
+
+
+def _calibra_curva_mensile(occupazione, notti_anno, ricavo_lordo):
+    """Porta la curva mensile (occupazione + prezzo per mese) sugli stessi
+    totali annui stampati nell'analisi economica, cosi' che OGNI tabella del
+    report (grafico stagionale, piano di pricing, trimestre) parli della stessa
+    annata e i conti tornino riga per riga.
+
+    Problema reale (Firenze, 6/10/2026): la forma mensile veniva dal dato di
+    mercato, il livello annuo da un'altra media. Sommando prezzo x occupazione
+    x giorni dei 12 mesi usciva 53.000 euro contro i 50.416 dichiarati; il
+    piano di pricing risolveva riducendo solo l'occupazione, quindi mostrava
+    medie mensili al 71% mentre l'intestazione diceva 75% e 274 notti, e due
+    tabelle sugli stessi mesi riportavano occupazioni diverse (59% e 56%).
+
+    Due fattori, forma mensile invariata: (1) l'occupazione si scala fino a
+    ottenere esattamente le notti/anno dichiarate; (2) il prezzo si scala fino
+    a ottenere esattamente il ricavo lordo dichiarato, cioe' un ADR ponderato
+    uguale a ricavo/notti. Dopo di questo notti, ADR e ricavo mensili sono
+    coerenti con il livello annuo per costruzione."""
+    if not occupazione or len(occupazione) != 12 or not notti_anno or not ricavo_lordo:
+        return occupazione
+    giorni = [_GIORNI_MESE.get(str(r[0]).strip()[:3].capitalize(), 30) for r in occupazione]
+    occ = [float(r[1]) for r in occupazione]
+    for _ in range(4):  # il tetto al 100% puo' lasciare notti da ridistribuire
+        notti = sum(o / 100 * d for o, d in zip(occ, giorni))
+        if notti <= 0:
+            return occupazione
+        fattore = notti_anno / notti
+        occ = [min(100.0, o * fattore) for o in occ]
+    occ_int = [max(1, round(o)) for o in occ]
+    ricavo_raw = sum(r[2] * o / 100 * d for r, o, d in zip(occupazione, occ_int, giorni))
+    if ricavo_raw <= 0:
+        return occupazione
+    k = ricavo_lordo / ricavo_raw
+    nuova = []
+    for r, o in zip(occupazione, occ_int):
+        riga = list(r)
+        riga[1] = o
+        riga[2] = max(1, round(r[2] * k))
+        nuova.append(riga)
     return nuova
 
 
@@ -1445,13 +1494,11 @@ def page2(c, D):
     poi_data = [[Paragraph(h, style_header) for h in header_labels]]
     for label, row in zip(SLOT_LABELS, poi_rows_raw):
         mezzo_distanza, nome, impatto = (row + ["\u2014", "\u2014", "\u2014"])[:3]
-        # "Elemento caratteristico" a volte non ha proprio nulla da mostrare
-        # (comune senza un punto di interesse noto, es. Avigliano): una riga
-        # con tre trattini non informa nessuno, meglio ometterla che
-        # stamparla vuota. Le altre 4 categorie restano sempre visibili
-        # (compreso il "\u2014" forzato per capoluoghi sul Comune di riferimento,
-        # che l\u00ec comunica volutamente "non applicabile").
-        if label == "Elemento caratteristico" and mezzo_distanza == nome == impatto == "\u2014":
+        # Una riga con tre trattini non informa nessuno (capoluoghi sul
+        # "Comune di riferimento", comuni senza un elemento caratteristico,
+        # nessuna fermata trovata): meglio ometterla che stamparla vuota,
+        # il lettore la scambia per un dato mancante o un errore.
+        if mezzo_distanza == nome == impatto == "—":
             continue
         poi_data.append([
             Paragraph(label, style_cell_bold),
@@ -1537,7 +1584,7 @@ def page2(c, D):
     c.setStrokeColor(BORDER)
     c.setLineWidth(0.3)
     c.rect(gx, gy, graph_w, graph_h, fill=0, stroke=1)
-    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD), ("Dato reale attuale", HexColor("#2E9E4F"))]
+    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD), ("Mesi piu' affidabili", HexColor("#2E9E4F"))]
     lx = gx + 3 * mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -1613,9 +1660,10 @@ def page2(c, D):
         c.drawCentredString(px_dot, gy + 4 * mm, f"€ {row[2]}")
 
     disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
-        "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
-        "(tipicamente al rialzo) avvicinandosi al periodo di riferimento."
+        "I mesi in evidenza (i 3 piu' vicini alla data del report) sono quelli su cui la stima e' piu' affidabile; "
+        "i mesi piu' lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
+        "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
+        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
     )
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
@@ -1652,7 +1700,7 @@ def page3(c, D):
     p = D.get("prezzo_notte_stimato", 0)
     occ_pct = D.get("occupazione_percent", 0)
     notti = D.get("notti_anno", 0)
-    comm_pct = D.get("costi_commissioni_pct", 15)
+    comm_pct = _pct_it(D.get("costi_commissioni_pct", COMMISSIONE_PIATTAFORMA_PCT))
     pulizia_unit = D.get("costi_pulizie_unit", 35)
     _cambi = D.get("cambi_anno")
     _sm = D.get("soggiorno_medio_notti")
@@ -1725,9 +1773,9 @@ def page3(c, D):
         ["TOTALE RICAVI",
          f"€ {D.get('ricavo_lordo',0):,} + € {D.get('bonus_dirette',0):,} = € {D.get('totale_ricavi',0):,}".replace(",", "."),
          fmt_eur(D.get("totale_ricavi", 0))],
-        ["COSTI VARIABILI", _nota_costi_variabili, ""],
+        ["COSTI DI GESTIONE", _nota_costi_variabili, ""],
         ["Commissioni piattaforma Airbnb",
-         f"€ {D.get('ricavo_lordo',0):,} x {comm_pct}% = € {D.get('costi_commissioni',0):,}".replace(",", "."),
+         f"€ {D.get('ricavo_lordo',0):,} x {comm_pct.replace(',', '§')}% = € {D.get('costi_commissioni',0):,}".replace(",", ".").replace("§", ","),
          f"- {fmt_eur(D.get('costi_commissioni', 0))}"],
         ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
@@ -1747,7 +1795,7 @@ def page3(c, D):
         ["Rata mutuo (se presente)",
          "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"€ {rata_mutuo}/mese x 12 = € {mutuo_annuo:,}".replace(",", "."),
          "€ 0" if not D.get("mutuo_attivo") else f"- {fmt_eur(mutuo_annuo)}"],
-        ["Totale costi variabili", "", f"- {fmt_eur(D.get('totale_costi', 0))}"],
+        ["Totale costi di gestione", "", f"- {fmt_eur(D.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO", "", fmt_eur(D.get("profitto_netto", 0))],
         ["Margine netto su ricavi totali", "", f"{D.get('margine_percent', 0)}%"],
     ]
@@ -1790,7 +1838,7 @@ def page3(c, D):
     cards = [
         ("Margine netto", f"{D.get('margine_percent', 0)}%", WHITE, BLUE_NIGHT, small_w, small_h),
         ("Totale ricavi", fmt_eur(D.get("totale_ricavi", 0)), TEAL_LIGHT, TEAL, small_w, small_h),
-        ("Costi variabili totali", f"- {fmt_eur(D.get('totale_costi', 0))}", RED_LIGHT, RED, small_w, small_h),
+        ("Costi di gestione totali", f"- {fmt_eur(D.get('totale_costi', 0))}", RED_LIGHT, RED, small_w, small_h),
         ("Il tuo guadagno stimato", fmt_eur(D.get("profitto_netto", 0)), GOLD_LIGHT, GOLD, big_w, big_h),
     ]
     cx = 14 * mm
@@ -1815,20 +1863,26 @@ def page3(c, D):
     y -= big_h + 4 * mm
 
     nota = ("I valori sopra riportati sono orientativi e basati esclusivamente sulle informazioni fornite. "
-            "Non includono spese personali, fiscali o societarie.")
+            "Non includono spese personali, fiscali o societarie. "
+            "Commissione piattaforma 15,5% (Airbnb dal 13/10/2026; Booking in genere 12-18%): per gli host privati "
+            "può aggiungersi IVA 22% sulla commissione, non inclusa.")
     if D.get("cambi_anno") and D.get("soggiorno_medio_notti"):
         _sm_nota = f"{D.get('soggiorno_medio_notti'):g}".replace(".", ",")
         nota += (f" Ipotesi: soggiorno medio di {_sm_nota} notti per la zona. "
                  "Il Report Strategico differenzia l'analisi per soggiorni brevi, medi e lunghi.")
-    y = draw_wrapped_text(c, nota, 14 * mm, y - 2 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
-    y -= 4 * mm
+    y = draw_wrapped_text(c, nota, 14 * mm, y - 2 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 3.6 * mm, MUTED)
+    y -= 1 * mm
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Confronto con affitto tradizionale")
-    y -= 5 * mm
+    y -= 3 * mm
     tbl_conf = confronto_affitto.tabella_confronto(D, W - 28 * mm)
     tbl_conf.wrapOn(c, W - 28 * mm, 300)
     tbl_conf.drawOn(c, 14 * mm, y - tbl_conf._height)
     y -= tbl_conf._height + 3 * mm
+    _nota_ric = confronto_affitto.nota_ricavi(D)
+    if _nota_ric:
+        y = draw_wrapped_text(c, _nota_ric, 14 * mm, y, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
+        y -= 1 * mm
     _disc = confronto_affitto.disclaimer_mercato(D)
     if _disc:
         draw_wrapped_text(c, _disc, 14 * mm, y, W - 28 * mm, "Helvetica-Oblique", 6.5, 4 * mm, MUTED)
@@ -1842,15 +1896,15 @@ def page4(c, D):
     # competitor_zona arriva dall'AI e può mancare: il trattino va aggiunto
     # solo se c'è davvero qualcosa dopo, altrimenti il titolo finisce con un
     # "-" penzolante ("Analisi competitor -").
-    _zona_comp = str(D.get("competitor_zona") or D.get("zona") or "").strip()
+    _zona_comp = str(D.get("zona") or D.get("competitor_zona") or "").strip()
     _suffisso_comp = f" - {_zona_comp}" if _zona_comp and _zona_comp != "—" else ""
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm,
                             f"Analisi competitor{_suffisso_comp}")
     y -= 3 * mm
-    draw_section_subtitle(c, 14 * mm, y, "Confronto diretto con gli annunci attivi nella zona")
+    draw_section_subtitle(c, 14 * mm, y, "Stima per tipologia: rapporti medi di prezzo rispetto al tuo immobile (non sono singoli annunci)")
     y -= 6 * mm
-    comp_data = [[f"Tipologia annunci{_suffisso_comp}", "Prezzo med."]]
+    comp_data = [[f"Tipologia{_suffisso_comp}", "Prezzo med."]]
     for row in D.get("competitor", []):
         comp_data.append(list(row))
     # Sessione 70: tolte le colonne N./Occup./Rating — senza dati reali
@@ -1913,8 +1967,23 @@ def page4(c, D):
     c.setFont("Helvetica-Oblique", 6.5)
     c.setFillColor(MUTED)
     c.drawString(14 * mm, y,
-                 "Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona.")
-    y -= 9 * mm
+                 "Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
+                 "Il profitto netto è al lordo delle imposte (es. cedolare secca).")
+    y -= 7 * mm
+
+    _avviso = D.get("avviso_normativo")
+    if _avviso:
+        _av_h = 33 * mm
+        c.setFillColor(HexColor("#FDECEA"))
+        c.roundRect(14 * mm, y - _av_h, W - 28 * mm, _av_h, 3 * mm, fill=1, stroke=0)
+        c.setStrokeColor(HexColor("#C0392B"))
+        c.setLineWidth(1)
+        c.roundRect(14 * mm, y - _av_h, W - 28 * mm, _av_h, 3 * mm, fill=0, stroke=1)
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillColor(HexColor("#C0392B"))
+        c.drawString(18 * mm, y - 6 * mm, "ATTENZIONE: NORMATIVA LOCALE DA VERIFICARE")
+        draw_wrapped_text(c, _avviso, 18 * mm, y - 11 * mm, W - 36 * mm, "Helvetica", 7.5, 4.2 * mm, BLUE_NIGHT)
+        y -= _av_h + 6 * mm
 
     upsell_h = 32 * mm
     c.setFillColor(GOLD_LIGHT)
@@ -2099,6 +2168,23 @@ def page5(c, D):
 # ── Generatore PDF ────────────────────────────────────────────────────────────
 
 
+# Commissione piattaforma: Airbnb passa dal 13/10/2026 a una commissione unica del
+# 15,5% a carico dell'host (via la service fee dell'ospite); Booking resta in
+# media sul 15% (12-18%). Si usa il 15,5% ufficiale Airbnb e SEMPRE questo
+# valore: l'AI scriveva 15 nel suo JSON e quel numero sovrascriveva il default.
+# L'IVA 22% che puo' gravare sulle commissioni degli host privati NON e'
+# inclusa (nota in report).
+COMMISSIONE_PIATTAFORMA_PCT = 15.5
+
+
+def _pct_it(v):
+    return f"{v:g}".replace(".", ",")
+
+
+_PARTICELLE_MINUSCOLE = {"di", "de", "dei", "del", "della", "delle", "dello", "degli",
+                         "dell", "dal", "dalla", "dalle", "dai", "dagli"}
+
+
 def _title_preserva_romani(testo):
     """Come str.title() ma senza rompere i numeri romani gia' scritti in
     maiuscolo nel dato originale — Sessione 67. Caso reale: "Rione IX
@@ -2110,9 +2196,14 @@ def _title_preserva_romani(testo):
     _ROMANO = re.compile(r"^(X{0,3})(IX|IV|V?I{0,3})$")
     parole = str(testo or "").split(" ")
     out = []
-    for w in parole:
+    for i, w in enumerate(parole):
         if w.isupper() and len(w) >= 2 and _ROMANO.match(w) and any(ch in w for ch in "IVX"):
             out.append(w)
+        elif i > 0 and w.lower().rstrip("'2019") in _PARTICELLE_MINUSCOLE:
+            # "Via Dei Neri" -> "Via dei Neri", "Reggio Di Calabria" ->
+            # "Reggio di Calabria": le preposizioni articolate restano
+            # minuscole in mezzo al nome, come si scrive in italiano.
+            out.append(w.lower())
         else:
             out.append(w.title())
     return " ".join(out)
@@ -2293,8 +2384,16 @@ def _pulisci_wikitext(testo):
     testo = re.sub(r'<ref[^>]*>.*?</ref>', '', testo, flags=re.DOTALL)
     testo = re.sub(r'<[^>]+>', '', testo)
     testo = re.sub(r'={2,}.*?={2,}', '', testo)
+    # Il link immagine puo' contenere un link nella didascalia
+    # ("[[File:x.jpg|min|sinistra|Veduta dal [[Campanile di Giotto]]]]"): con il
+    # solo [^\[\]]* non veniva riconosciuto, il passo successivo toglieva le
+    # parentesi interne e la didascalia finiva nel testo ("min|sinistra|Veduta
+    # di Firenze..." visto in un report Base reale). Si ammette un livello di
+    # link annidato.
     for _ in range(5):
-        nuovo = re.sub(r'\[\[(?:File|Immagine|Image|Media):[^\[\]]*\]\]', '', testo, flags=re.IGNORECASE)
+        nuovo = re.sub(
+            r'\[\[(?:File|Immagine|Image|Media):(?:[^\[\]]|\[\[[^\[\]]*\]\])*\]\]',
+            '', testo, flags=re.IGNORECASE)
         if nuovo == testo:
             break
         testo = nuovo
@@ -2326,7 +2425,7 @@ def _pulisci_wikitext(testo):
     testo = ' '.join(righe)
     for _ in range(3):
         nuovo = re.sub(
-            r'\b(?:thumb|thumbnail|miniatura|riquadro|right|left|center|centro|'
+            r'\b(?:thumb|thumbnail|miniatura|min|riquadro|right|left|center|centro|sinistra|destra|'
             r'upright|border|verticale|senza_cornice|\d+\s*px)\b\s*\|',
             '', testo, flags=re.IGNORECASE)
         if nuovo == testo:
@@ -2550,6 +2649,27 @@ def _costi_per_tipologia(tipologia):
     return 30, 240, 650, 300
 
 
+# ── Avviso normativo UNICO per tutti i comuni ────────────────────────────────
+# Decisione di Salvatore (6/10/2026): niente eccezioni per singolo comune (il
+# caso Firenze: dal 31/5/2025 nuove attivita' bloccate nell'area UNESCO) ma un
+# avviso grande, uguale per ogni report. Le regole locali cambiano da comune a
+# comune e piu' spesso di quanto un report possa seguirle: il rimando agli
+# uffici competenti vale per tutti e non richiede di mantenere una tabella.
+AVVISO_NORMATIVO_GENERALE = (
+    "Questo report si basa su informazioni di carattere generale valide a livello nazionale (CIN, obblighi "
+    "di comunicazione, regime fiscale) e su dati di mercato. Le regole sugli affitti brevi cambiano da comune a comune "
+    "e possono prevedere limiti o divieti per le nuove attività (ad esempio nei centri storici o nelle aree "
+    "vincolate), limiti di giorni, requisiti minimi dell'immobile, tassa di soggiorno e registrazioni locali. "
+    "Prima di acquistare, ristrutturare o avviare l'attività, verifica sempre con gli uffici competenti del tuo "
+    "Comune (SUAP / Ufficio Turismo) che l'attività sia consentita per il tuo immobile: se non lo è, le stime "
+    "di questo report non sono realizzabili."
+)
+
+
+def _applica_avviso_normativo(data):
+    data["avviso_normativo"] = AVVISO_NORMATIVO_GENERALE
+
+
 def _calcola_costi_fissi_deterministici(data):
     pulizie, biancheria, utenze, manutenzione = _costi_per_tipologia(data.get("tipologia"))
     # Sessione 67: normalizzazione dei nomi PRIMA del check piscina/giardino.
@@ -2646,7 +2766,7 @@ def _impatto_deterministico(distanza_str, modalita="piedi"):
 
 _PAROLE_MINUSCOLE_NOMI_POI = {"di", "del", "della", "dei", "delle", "dello", "da", "dal", "dalla",
                                "de", "e", "ed", "la", "le", "lo", "il", "i", "gli", "a", "al",
-                               "alla", "in"}
+                               "alla", "in", "degli", "dei", "sul", "sulla", "sui"}
 
 
 def _titolo_nome_poi(nome):
@@ -2689,6 +2809,101 @@ def _correggi_poi_invertiti(poi):
             impatto = _impatto_calcolato
         corrette.append([distanza, nome, impatto])
     return corrette
+
+
+def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5):
+    """Nearby Search per TIPO (non per parola chiave), ordinato per distanza.
+    Ritorna [{nome, lat, lon, recensioni, _dist_km}] oppure []."""
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key or lat in (None, "") or lon in (None, ""):
+        return []
+    try:
+        resp = requests.get(
+            GOOGLE_PLACES_NEARBY_URL,
+            params={"location": f"{lat},{lon}", "rankby": "distance", "type": place_type,
+                    "language": "it", "key": api_key}, timeout=timeout)
+        if resp.status_code != 200:
+            return []
+        dati = resp.json()
+        if dati.get("status") not in ("OK", "ZERO_RESULTS"):
+            print(f"[POI-STABILI] Places status {dati.get('status')} per {place_type}")
+            return []
+        out = []
+        for r in dati.get("results", [])[:quanti]:
+            loc = r.get("geometry", {}).get("location", {})
+            if r.get("name") and loc.get("lat") is not None and loc.get("lng") is not None:
+                out.append({"nome": r["name"], "lat": loc["lat"], "lon": loc["lng"],
+                            "recensioni": r.get("user_ratings_total") or 0,
+                            "_dist_km": _haversine_km(float(lat), float(lon), loc["lat"], loc["lng"])})
+        out.sort(key=lambda x: x["_dist_km"])
+        return out
+    except Exception as e:
+        print(f"[POI-STABILI] eccezione {place_type}: {e}")
+        return []
+
+
+def _riga_poi_da_luogo(lat, lon, luogo, modalita):
+    """[distanza, nome, impatto] con distanza a piedi (<= 20 min) o in auto."""
+    minuti = territorio_gps.tempo_a_piedi(lat, lon, luogo["lat"], luogo["lon"])
+    if minuti is not None and minuti <= 20:
+        distanza = f"{minuti} min a piedi"
+    else:
+        auto = territorio_gps.distanza_e_tempo_auto(lat, lon, luogo["lat"], luogo["lon"])
+        if auto:
+            distanza = f"{auto[0]} km · {auto[1]} min in auto"
+        else:
+            distanza = f"{round(luogo['_dist_km'], 1)} km (linea d'aria)"
+    return [distanza, _titolo_nome_poi(luogo["nome"]), _impatto_deterministico(distanza, modalita) or "Medio"]
+
+
+def _applica_poi_stabili(data):
+    """Punti di interesse DETERMINISTICI da Google Places, identici in Base e
+    Strategico. Prima ogni prodotto aveva i suoi, scritti o scelti dall'AI
+    (stesso indirizzo: Base "Benci / Ponte Vecchio / Caffe' del Borgo",
+    Strategico "Uffizi come trasporto / Santa Croce / Conad"): due risposte
+    diverse alla stessa domanda, e a volte sbagliate (un museo nello slot dei
+    mezzi pubblici). Qui lo slot e' scelto dal TIPO del luogo e il luogo e'
+    il piu' vicino:
+      - trasporto pubblico: stazione/fermata piu' vicina (transit_station)
+      - elemento caratteristico: attrazione turistica piu' vicina con almeno
+        500 recensioni (le piccole statue non contano)
+      - servizi essenziali: supermercato piu' vicino
+    Il comune di riferimento e l'aeroporto restano com'erano (regole gia'
+    deterministiche). Slot senza risultato: si tiene il valore esistente. Se
+    Google non risponde per niente, non cambia nulla."""
+    lat, lon = data.get("lat"), data.get("long")
+    try:
+        float(lat), float(lon)
+    except (TypeError, ValueError):
+        return
+
+    trasporto = _luoghi_vicini_google(lat, lon, "transit_station")
+    attrazioni = [l for l in _luoghi_vicini_google(lat, lon, "tourist_attraction") if l["recensioni"] >= 500]
+    super_ = _luoghi_vicini_google(lat, lon, "supermarket")
+    nuovi = {
+        0: _riga_poi_da_luogo(lat, lon, trasporto[0], "piedi") if trasporto else None,
+        2: _riga_poi_da_luogo(lat, lon, attrazioni[0], "auto") if attrazioni else None,
+        3: _riga_poi_da_luogo(lat, lon, super_[0], "piedi") if super_ else None,
+    }
+    if not any(nuovi.values()):
+        return
+    print(f"[POI-STABILI] trasporto={nuovi[0]} caratteristico={nuovi[2]} servizi={nuovi[3]}")
+
+    righe = [list(r) for r in (data.get("poi") or []) if r]
+    if righe and any(len(r) > 3 for r in righe):   # schema Strategico a 4 campi
+        tmp = {"poi": righe, "lat": lat, "long": lon, "categoria": data.get("categoria")}
+        _poi_strategico_in_formato_base(tmp)
+        righe = [list(r) for r in tmp["poi"]]
+    while len(righe) < 5:
+        righe.append(["—", "—", "—"])
+    righe = righe[:5]
+    for idx, riga in nuovi.items():
+        if riga:
+            righe[idx] = riga
+    righe[4] = aeroporto_row(lat, lon)
+    if str(data.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
+        righe[1] = ["—", "—", "—"]
+    data["poi"] = righe
 
 
 def _poi_riga_frase(poi, idx):
@@ -3466,6 +3681,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
 
     _calcola_costi_fissi_deterministici(data)
+    _applica_avviso_normativo(data)
     # Sessione 69/70: il log diagnostico temporaneo che stava qui (dotazioni
     # grezze/normalizzate/piscina/giardino) è stato rimosso in Sessione 78
     # (audit 24/8) — il bug che doveva diagnosticare (normalizzazione dei
@@ -3634,7 +3850,8 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         data["bonus_dirette_pct"] = "5-10%"
         _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
 
-        _comm_pct = data.get("costi_commissioni_pct", 15)
+        _comm_pct = COMMISSIONE_PIATTAFORMA_PCT
+        data["costi_commissioni_pct"] = _comm_pct
         _pulizia_unit = data.get("costi_pulizie_unit", 35)
         _costi_commissioni_new = round(_ricavo_lordo_new * _comm_pct / 100)
         # Pulizie per CAMBIO ospite, non per notte — Sessione 67. Vedi
@@ -3725,6 +3942,11 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
                 print(f"[STAGIONALITA] curva '{_fonte_stagionalita}' applicata per comune={data.get('comune')!r}")
                 data["occupazione"] = stagionalita_turistica.applica_curva(_occ_new, _p_new, _curva, tetto_massimo=_tetto_occ)
 
+    # Curva mensile riallineata ai totali annui: vedi _calibra_curva_mensile.
+    if data.get("occupazione") and data.get("ricavo_lordo") and data.get("notti_anno"):
+        data["occupazione"] = _calibra_curva_mensile(
+            data["occupazione"], data["notti_anno"], data["ricavo_lordo"])
+
     data["mesi_affidabili_idx"] = _mesi_affidabili()
 
     # Confronto affitto tradizionale — Sessione 71: sistema MISTO.
@@ -3783,6 +4005,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # versione sistemata).
     if correggere_poi and "poi" in data:
         data["poi"] = _correggi_poi_invertiti(data["poi"])
+    _applica_poi_stabili(data)
 
     if generare_descrizione:
         data["descrizione"] = genera_descrizione_standard(data)
@@ -4011,7 +4234,7 @@ _REGOLA_NIENTE_CIFRE_NEI_TESTI = (
 )
 
 
-_CAMPI_ANALISI_STRATEGICO = ("analisi_posizione", "analisi_condizione",
+_CAMPI_ANALISI_STRATEGICO = ("descrizione", "analisi_posizione", "analisi_condizione",
                              "analisi_potenzialita", "analisi_raccomandazione")
 
 
@@ -4051,8 +4274,21 @@ def _scheda_numeri_definitivi(data):
                 f"ricavi totali {eu(s.get('ricavi_lordi'))}, "
                 f"profitto netto {eu(s.get('profitto_netto'))}")
     if data.get("affitto_profitto"):
-        righe.append(f"Affitto tradizionale, stessa unita': ricavo {eu(data.get('affitto_ricavo'))}, "
-                     f"profitto netto {eu(data.get('affitto_profitto'))}")
+        righe.append(f"Affitto tradizionale, stessa unita' (valori centrali): ricavo LORDO annuo {eu(data.get('affitto_ricavo'))}, "
+                     f"profitto NETTO annuo {eu(data.get('affitto_profitto'))} "
+                     f"(netto = lordo meno costi di gestione {eu(data.get('affitto_costi'))}: non scambiare lordo e netto)")
+    # Fatti verificati che i testi non devono contraddire (zona, punti di
+    # interesse, vincoli di legge): senza questi l'AI scriveva quartieri
+    # diversi da quello del report ("San Giovanni" vs "San Niccolo'") e
+    # attribuiva a un punto di interesse un ruolo che non ha (un supermercato
+    # citato come farmacia).
+    if data.get("zona") and data["zona"] != "—":
+        righe.append(f"Zona/quartiere VERIFICATO (usa solo questo nome, non inventarne altri): {data['zona']}")
+    _poi_ok = [f"{r[1]} ({r[0]})" for r in (data.get("poi") or []) if r and len(r) >= 2 and r[1] != "—"]
+    if _poi_ok:
+        righe.append("Punti di interesse VERIFICATI e unici citabili con la loro distanza: " + "; ".join(_poi_ok))
+    if data.get("avviso_normativo"):
+        righe.append("AVVISO NORMATIVO LOCALE (sempre presente): " + data["avviso_normativo"])
     if data.get("valore_mercato"):
         righe.append(f"Valore come asset B&B: {eu(data.get('valore_mercato'))} "
                      f"(EBITDA {eu(data.get('ebitda_stimato'))} capitalizzato al "
@@ -4114,7 +4350,17 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
         "di mercato del property manager, costi di servizi esterni. 5) Scrivi gli importi in euro nel "
         "formato italiano con il punto per le migliaia. 6) Rispondi SOLO con un oggetto JSON valido, "
         "nessun testo prima o dopo, nessun markdown, nessun backtick, con esattamente le stesse chiavi "
-        "che ricevi in input."
+        "che ricevi in input. 7) Coerenza dei fatti con la scheda: se un testo nomina un quartiere "
+        "diverso da quello VERIFICATO, sostituiscilo con quello verificato oppure scrivi solo il nome "
+        "della citta'; cita distanze e punti di interesse solo se presenti nell'elenco VERIFICATO e mai "
+        "con un ruolo diverso dal loro (un supermercato non e' una farmacia, un museo non e' una fermata "
+        "dei mezzi); non dare distanze o tempi di percorrenza che non siano nella scheda. 8) Non scambiare "
+        "lordo e netto dell'affitto tradizionale: usa le etichette della scheda. 9) La scheda contiene sempre un AVVISO NORMATIVO LOCALE: nel testo di raccomandazione non presentare "
+        "l'avvio dell'attivita' come scontato, e aggiungi una frase che dica di verificare PRIMA con gli uffici "
+        "del Comune che l'attivita' sia consentita per l'immobile. "
+        "10) La commissione delle piattaforme nel report e' 15,5%: se un testo cita un'altra percentuale di commissione Airbnb, usa 15,5%. "
+        "11) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
+        "'prezzo troppo alto'), niente refusi."
     )
     user = (
         "NUMERI DEFINITIVI DEL REPORT (fonte di verita', i testi devono allinearsi a questi):\n"
@@ -4267,14 +4513,13 @@ def _ricalcola_scenari_strategico(data):
     _mutuo_annuo_r = (data.get("rata_mutuo_mensile") or 0) * 12 if data.get("mutuo_attivo") else 0
     _costi_scalabili_r = max(0, _totale_costi_r - _mutuo_annuo_r)
     _costi_ratio = (_costi_scalabili_r / _totale_ricavi_r) if _totale_ricavi_r else 0
-    _bonus_ratio = ((_totale_ricavi_r - _ricavo_lordo_r) / _ricavo_lordo_r) if _ricavo_lordo_r else 0
 
-    def _scenario(occ_mult, prezzo_mult):
+    def _scenario(occ_mult, prezzo_mult, bonus_ratio):
         occ = min(90, round(_occ_r * occ_mult))
         prezzo = round(_prezzo_r * prezzo_mult)
         notti = round(365 * occ / 100)
         ricavo_lordo = round(prezzo * notti)
-        ricavi_totali = round(ricavo_lordo * (1 + _bonus_ratio))
+        ricavi_totali = round(ricavo_lordo * (1 + bonus_ratio))
         costi = round(ricavi_totali * _costi_ratio) + _mutuo_annuo_r
         return {
             "occupazione": occ, "notti": notti, "prezzo_medio": prezzo,
@@ -4282,12 +4527,32 @@ def _ricalcola_scenari_strategico(data):
             "profitto_netto": ricavi_totali - costi,
         }
 
-    data["scenario_pess"] = {**(data.get("scenario_pess") or {}), "label": "PESSIMISTICO", **_scenario(0.65, 0.80)}
+    # Il bonus prenotazioni dirette segue la narrativa di ogni scenario: il
+    # pessimistico e' scritto come "nessuna attivita' di direct booking", quindi
+    # niente bonus (prima ne riceveva comunque il 7% del realistico: ricavi
+    # 28.155 = 179 x 147 x 1,07, in contraddizione con il testo). Il realistico
+    # tiene il 7% del Base, l'ottimistico ("forte presenza su canali diretti")
+    # il 10%, estremo alto della forbice 5-10% dichiarata nella tabella.
+    data["scenario_pess"] = {**(data.get("scenario_pess") or {}), "label": "PESSIMISTICO", **_scenario(0.65, 0.80, 0.0)}
+    # Il testo dell'AI sul pessimistico a volte dice che "non raggiunge neppure
+    # il break-even" anche con profitto netto positivo (Firenze: 20.918 euro):
+    # una frase che il numero stampato accanto smentisce. Con profitto > 0 la
+    # frase viene sostituita con una formulazione vera.
+    _pess = data["scenario_pess"]
+    if _pess.get("profitto_netto", 0) > 0:
+        import re as _re_be
+        for _k in ("note", "nota", "descrizione", "dettaglio"):
+            _tx = _pess.get(_k)
+            if isinstance(_tx, str) and "break-even" in _tx.lower():
+                _pess[_k] = _re_be.sub(
+                    r"[^.]*break-even[^.]*\.",
+                    "In questo scenario il profitto resta positivo ma molto sotto le aspettative.",
+                    _tx, flags=_re_be.IGNORECASE)
     data["scenario_real"] = {**(data.get("scenario_real") or {}), "label": "REALISTICO",
         "occupazione": _occ_r, "notti": _notti_r, "prezzo_medio": _prezzo_r,
         "ricavi_lordi": _totale_ricavi_r, "costi_totali": _totale_costi_r,
         "profitto_netto": data.get("profitto_netto") or 0}
-    data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18)}
+    data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18, 0.10)}
 
 
 # Festività e ponti italiani per mese: sono fatti di calendario, non materia
@@ -4301,8 +4566,8 @@ _EVENTI_MESE = {
     "Apr": "Pasqua (date variabili) e ponte del 25 aprile",
     "Mag": "Ponte del 1° maggio, clima favorevole",
     "Giu": "Ponte del 2 giugno, inizio stagione estiva",
-    "Lug": "Alta stagione estiva, turismo internazionale",
-    "Ago": "Ferragosto (15 agosto), picco annuale",
+    "Lug": "Stagione estiva, turismo internazionale",
+    "Ago": "Ferragosto (15 agosto) e ferie estive",
     "Set": "Coda estiva e turismo culturale",
     "Ott": "City break, fiere e clima mite",
     "Nov": "Ponte di Ognissanti (1° novembre)",
@@ -4446,8 +4711,12 @@ def _poi_strategico_in_formato_base(data):
             avanzi.append(riga_base)
         else:
             slot[destinazione] = riga_base
+    # I punti non riconosciuti riempiono solo gli slot "Elemento caratteristico"
+    # e "Servizi essenziali": finire in "Trasporto pubblico" faceva comparire
+    # la Galleria degli Uffizi come fermata dei mezzi (Firenze, 6/10/2026).
+    # Se la fermata non e' nota la riga resta vuota e il PDF la omette.
     for riga_base in avanzi:
-        for idx in range(4):
+        for idx in (2, 3):
             if slot[idx] is None:
                 slot[idx] = riga_base
                 break

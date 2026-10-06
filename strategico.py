@@ -106,15 +106,15 @@ def draw_competitor(c, data, y):
     immobile. I dati arrivano dallo stesso campo `competitor`, calcolato in
     modo deterministico dal motore condiviso, quindi i due PDF mostrano gli
     stessi prezzi per le stesse tipologie."""
-    _zona_comp = str(data.get("competitor_zona") or data.get("zona") or "").strip()
+    _zona_comp = str(data.get("zona") or data.get("competitor_zona") or "").strip()
     _suffisso_comp = f" - {_zona_comp}" if _zona_comp and _zona_comp != "—" else ""
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, f"Analisi competitor{_suffisso_comp}")
     y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Confronto diretto con gli annunci attivi nella zona")
+    draw_section_subtitle(c, 14*mm, y, "Stima per tipologia: rapporti medi di prezzo rispetto al tuo immobile (non sono singoli annunci)")
     y -= 6*mm
 
-    comp_data = [[f"Tipologia annunci{_suffisso_comp}", "Prezzo med."]]
+    comp_data = [[f"Tipologia{_suffisso_comp}", "Prezzo med."]]
     for row in data.get("competitor", []):
         comp_data.append(list(row))
     comp_data.append(["IL TUO IMMOBILE (stima)", f"€ {data.get('kpi_prezzo', data.get('prezzo_notte_stimato', 0))}"])
@@ -568,9 +568,8 @@ def page2(c, data):
     poi_data = [[Paragraph(h, style_header) for h in header_labels]]
     for label, row in zip(SLOT_LABELS, poi_rows_raw):
         mezzo_distanza, nome, impatto = (row + ["—", "—", "—"])[:3]
-        # Stessa regola del Base: riga vuota (tre trattini) omessa invece di
-        # stampata, es. "Elemento caratteristico" quando il comune non ne ha uno.
-        if label == "Elemento caratteristico" and mezzo_distanza == nome == impatto == "—":
+        # Stessa regola del Base: qualsiasi riga vuota (tre trattini) omessa.
+        if mezzo_distanza == nome == impatto == "—":
             continue
         poi_data.append([
             Paragraph(label, style_cell_bold),
@@ -681,7 +680,7 @@ def page3(c, data):
     # attuale"), stessa scala 30-95 con clamp, stessi cerchi ingranditi con
     # anello e badge verde sui mesi affidabili, stesso disclaimer sotto.
     legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL),
-                    ("Peak", GOLD), ("Dato reale attuale", VERDE_DATO_REALE)]
+                    ("Peak", GOLD), ("Mesi piu' affidabili", VERDE_DATO_REALE)]
     lx = gx + 3*mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -761,9 +760,10 @@ def page3(c, data):
         c.drawCentredString(px_dot, gy + 4*mm, f"€ {row[2]}")
 
     disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 piu' vicini alla data del report) mostrano il prezzo attualmente piu' affidabile, "
-        "rilevato oggi sul mercato reale. Gli altri mesi sono affidabili alla data odierna, ma possono variare "
-        "(tipicamente al rialzo) avvicinandosi al periodo di riferimento."
+        "I mesi in evidenza (i 3 piu' vicini alla data del report) sono quelli su cui la stima e' piu' affidabile; "
+        "i mesi piu' lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
+        "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
+        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
     )
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
@@ -1134,7 +1134,7 @@ def page4b_moltiplicatori(c, data):
     tbl.drawOn(c, 14*mm, y - tbl._height)
     y -= tbl._height + 8*mm
 
-    disc_h = 16*mm
+    disc_h = 24*mm
     c.setFillColor(GOLD_LIGHT)
     c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
     c.setStrokeColor(GOLD)
@@ -1163,7 +1163,7 @@ def page4(c, data):
     p = data.get('prezzo_notte_stimato', 0)
     occ_pct = data.get('occupazione_percent', 0)
     notti = data.get('notti_anno', 0)
-    comm_pct = data.get('costi_commissioni_pct', 15)
+    comm_pct = f"{data.get('costi_commissioni_pct', 15.5):g}".replace('.', ',')
     pulizia_unit = data.get('costi_pulizie_unit', 0)
     rata_mutuo = data.get('rata_mutuo_mensile', 0)
     mutuo_annuo = rata_mutuo * 12
@@ -1262,7 +1262,7 @@ def page4(c, data):
          fmt_eu(data.get('totale_ricavi', 0))],
         ["COSTI DI GESTIONE", f"Media di mercato per tipologia: {data.get('scheda_tipologia') or data.get('tipologia', 'immobile')}", ""],
         ["Commissioni piattaforma Airbnb",
-         f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct}%  =  € {data.get('costi_commissioni', 0):,}".replace(",","."),
+         f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct.replace(',', '§')}%  =  € {data.get('costi_commissioni', 0):,}".replace(",",".").replace("§", ","),
          f"- {fmt_eu(data.get('costi_commissioni', 0))}"],
         ["Pulizie per cambio ospite", _formula_pulizie,
          f"- {fmt_eu(data.get('costi_pulizie', 0))}"],
@@ -1368,7 +1368,9 @@ def page4(c, data):
     # biancheria e la mandava fuori tabella (riga singola, ReportLab non
     # avvolge le celle stringa). Il dato resta ma come nota sotto la
     # tabella; la cella torna alla stessa lunghezza di Utenze/Manutenzione.
-    _nota_biancheria = "Biancheria e consumabili" + _sm_biancheria + "."
+    _nota_biancheria = ("Biancheria e consumabili" + _sm_biancheria + ". "
+                        "Commissione piattaforma " + comm_pct + "% (Airbnb dal 13/10/2026; Booking in genere 12-18%): "
+                        "per gli host privati può aggiungersi IVA 22% sulla commissione, non inclusa.")
     y = wrap_simple(c, _nota_biancheria, 14*mm, y, W - 28*mm,
                      "Helvetica-Oblique", 6.5, 3.2*mm, color=MUTED)
     y -= 3*mm
@@ -1427,6 +1429,14 @@ def page5(c, data):
     tbl_conf.wrapOn(c, W-28*mm, 300)
     tbl_conf.drawOn(c, 14*mm, y - tbl_conf._height)
     y -= tbl_conf._height + 3*mm
+    _nota_ric = confronto_affitto.nota_ricavi(data, html=True)
+    if _nota_ric:
+        _st_nota = ParagraphStyle("nota_ricavi", fontName="Helvetica-Oblique", fontSize=6.5,
+                                  leading=8.5, textColor=MUTED)
+        _p_nota = Paragraph(_nota_ric, _st_nota)
+        _, _h_nota = _p_nota.wrap(W - 28*mm, 100*mm)
+        _p_nota.drawOn(c, 14*mm, y - _h_nota)
+        y -= _h_nota + 1*mm
     _disc = confronto_affitto.disclaimer_mercato(data)
     if _disc:
         _st_disc = ParagraphStyle("disc_affitto", fontName="Helvetica-Oblique", fontSize=6.5,
@@ -1504,7 +1514,7 @@ def page5(c, data):
     adr = data.get('adr', 0)
     revpar = data.get('revpar', 0)
     nota_pr = (f"ADR (Average Daily Rate) ponderato annuo: \u20ac {adr}  \u00b7  RevPAR: \u20ac {revpar}  \u00b7  I prezzi si aggiornano automaticamente in base ai dati di mercato della zona al momento della generazione del report. "
-               "L'occupazione mese per mese qui sopra \u00e8 tarata sul ricavo lordo annuo del report (pu\u00f2 differire di qualche punto percentuale dalla curva reale di pag. 3): il totale annuo di questa tabella \u00e8 allineato al ricavo lordo (scarto di pochi euro possibile per l'arrotondamento mese per mese), non \u00e8 un dato di mercato indipendente.")
+               f"Prezzo e occupazione di ogni mese sono gli stessi della curva stagionale di pag. 3 e sono calibrati sui totali annui del report ({data.get('notti_anno', 0)} notti e prezzo medio ponderato): ricavo mese = prezzo x occupazione x giorni, e la somma dei 12 mesi è il ricavo lordo annuo (scarto di pochi euro per arrotondamento). Non è una rilevazione di mercato indipendente.")
     wrap_simple(c, nota_pr, 14*mm, y, W-28*mm, "Helvetica-Oblique", 7, 4.5*mm, MUTED)
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1516,10 +1526,9 @@ def page6(c, data):
     y = H - 22*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm,
-        f"Normativa affitti brevi — {data.get('comune_normativa', '')} / {data.get('regione_normativa', '')} "
-        f"\u00b7 {datetime.date.today().year}")
+        f"Normativa affitti brevi — quadro generale nazionale · {datetime.date.today().year}")
     y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Obblighi normativi vigenti alla data di generazione del report")
+    draw_section_subtitle(c, 14*mm, y, "Informazioni di carattere generale a livello nazionale · le regole del tuo Comune vanno verificate presso gli uffici competenti")
     y -= 6*mm
 
     # Celle come Paragraph: prima erano stringhe semplici, che in ReportLab non
@@ -1557,6 +1566,24 @@ def page6(c, data):
     tbl_norm.drawOn(c, 14*mm, y - tbl_norm._height)
     y -= tbl_norm._height + 10*mm
 
+    # Box avviso normativo: grande e rosso, uguale per ogni comune (decisione
+    # 6/10/2026, niente eccezioni per singolo comune).
+    _av = data.get("avviso_normativo") or ""
+    _st_av = ParagraphStyle("avvNorm", fontName="Helvetica", fontSize=8.5, leading=11.5, textColor=BLUE_NIGHT)
+    _p_av = Paragraph(_av, _st_av)
+    _, _h_av = _p_av.wrap(W - 40*mm, 120*mm)
+    disc_h = _h_av + 18*mm
+    c.setFillColor(HexColor("#FDECEA"))
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
+    c.setStrokeColor(HexColor("#C0392B"))
+    c.setLineWidth(1.2)
+    c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
+    c.setFont("Helvetica-Bold", 10)
+    c.setFillColor(HexColor("#C0392B"))
+    c.drawString(18*mm, y - 8*mm, "ATTENZIONE: NORMATIVA LOCALE DA VERIFICARE")
+    _p_av.drawOn(c, 18*mm, y - 12*mm - _h_av)
+    y -= disc_h + 6*mm
+
     # Box disclaimer normativa
     disc_h = 18*mm
     c.setFillColor(GOLD_LIGHT)
@@ -1570,8 +1597,8 @@ def page6(c, data):
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
     nota_norm = ("Le informazioni normative riportate sono aggiornate alla data di generazione del report e hanno carattere orientativo. "
-                 "La normativa sugli affitti brevi \u00e8 in continua evoluzione. Si raccomanda di verificare sempre con un professionista legale "
-                 "o fiscale prima di avviare l\u2019attivit\u00e0.")
+                 "La normativa sugli affitti brevi è in continua evoluzione. Si raccomanda di verificare sempre con un professionista legale "
+                 "o fiscale prima di avviare l’attività.")
     wrap_simple(c, nota_norm, 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1899,7 +1926,7 @@ def page8b_durata(c, data):
 
     y -= box_h + 8*mm
 
-    disc_h = 16*mm
+    disc_h = 24*mm
     c.setFillColor(GOLD_LIGHT)
     c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
     c.setStrokeColor(GOLD)
@@ -1910,7 +1937,7 @@ def page8b_durata(c, data):
     c.drawString(18*mm, y - 6*mm, "Come leggere questa pagina")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
-    wrap_simple(c, "Il ricavo lordo non cambia: occupazione e prezzo/notte sono un dato di mercato, non una scelta dell'host. A cambiare e' solo il numero di cambi ospite/anno (e quindi i costi di pulizia) in base al min-stay che imposti su Airbnb/Booking: piu' soggiorni brevi accetti, piu' pulizie paghi.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+    wrap_simple(c, "Per isolare l'effetto delle pulizie, qui il ricavo lordo e' tenuto uguale nei tre casi. Nella realta' non lo e': un min-stay piu' lungo di solito riduce le richieste e il prezzo/notte (i soggiorni di 7-14 notti si vendono in genere con sconti, e in una citta' d'arte i weekend brevi valgono di piu'), quindi i profitti delle colonne 'medi' e 'lunghi' sono un limite superiore, non una previsione. Il dato affidabile di questa pagina e' la riga 'Costi pulizia'.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 8C — Dati di mercato extra (B9)
@@ -2667,7 +2694,8 @@ def page_riepilogo(c, data):
     c.setFillColor(MUTED)
     c.drawString(14*mm, y,
                  "Valori orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
-                 "Dove il report presenta tre scenari, qui è riportato sempre quello realistico.")
+                 "Dove il report presenta tre scenari, qui è riportato sempre quello realistico. "
+                 "Profitto netto al lordo delle imposte (es. cedolare secca).")
 
 
 def build_strategico_pdf_bytes(data):

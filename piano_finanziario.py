@@ -95,7 +95,7 @@ LEGENDA_VOCI = [
     ("Occupazione media annua", "% di notti dell'anno effettivamente prenotate su quelle disponibili.",
      "64% = occupato 64 notti su 100."),
     ("Commissioni piattaforma", "Percentuale trattenuta da Airbnb/Booking ecc. su ogni prenotazione.",
-     "15% e' il valore tipico. L'importo annuo si ricalcola da solo sui ricavi."),
+     "15,5% e' il valore Airbnb dal 13/10/2026 (Booking 12-18%); IVA 22% sulle commissioni per host privati non inclusa. L'importo annuo si ricalcola da solo sui ricavi."),
     ("Costo pulizia a cambio", "Quanto paghi ogni volta che pulisci tra un ospite e l'altro.",
      "Il costo annuo si ricalcola da solo: piu' cambi = piu' pulizie."),
     ("Durata media soggiorno", "Quante notti si ferma in media un ospite.",
@@ -209,7 +209,7 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
     # durata media soggiorno): un importo fisso resterebbe fermo mentre il
     # cliente cambia prezzo e occupazione, e il foglio smetterebbe di tornare
     # con il PDF proprio nel momento in cui lo usa.
-    commissioni_percent = data.get("costi_commissioni_pct") or 15
+    commissioni_percent = data.get("costi_commissioni_pct") or 15.5
     pulizia_a_cambio = data.get("costi_pulizie_unit") or 35
     soggiorno_medio = data.get("soggiorno_medio_notti") or 2
     biancheria_annua = data.get("costi_biancheria") or 0

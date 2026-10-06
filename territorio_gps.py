@@ -240,6 +240,43 @@ def distanza_e_tempo_auto(lat1, lon1, lat2, lon2, timeout=4):
 SOGLIA_MONTANO_METRI = 600
 
 
+_PIEDI_CACHE = {}
+
+
+def tempo_a_piedi(lat1, lon1, lat2, lon2, timeout=4):
+    """Minuti a piedi tra due punti via Google Distance Matrix (mode=walking).
+    Se la chiave manca o l'API non risponde, stima da linea d'aria con un
+    fattore di percorso 1,3 e 80 m/min (stesso ordine di grandezza di Google
+    nei centri storici). Ritorna sempre un intero >= 1."""
+    try:
+        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+    except (TypeError, ValueError):
+        return None
+    chiave = f"{round(lat1,4)},{round(lon1,4)}|{round(lat2,4)},{round(lon2,4)}"
+    if chiave in _PIEDI_CACHE:
+        return _PIEDI_CACHE[chiave]
+    minuti = None
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if api_key:
+        try:
+            resp = requests.get(
+                "https://maps.googleapis.com/maps/api/distancematrix/json",
+                params={"origins": f"{lat1},{lon1}", "destinations": f"{lat2},{lon2}",
+                        "mode": "walking", "key": api_key}, timeout=timeout)
+            if resp.status_code == 200:
+                d = resp.json()
+                if d.get("status") == "OK":
+                    el = d["rows"][0]["elements"][0]
+                    if el.get("status") == "OK":
+                        minuti = max(1, round(el["duration"]["value"] / 60))
+        except Exception:
+            minuti = None
+    if minuti is None:
+        minuti = max(1, round(_haversine_km(lat1, lon1, lat2, lon2) * 1000 * 1.3 / 80))
+    _PIEDI_CACHE[chiave] = minuti
+    return minuti
+
+
 def classifica_sottocategoria(lat, lon):
     """
     Ritorna 'costiero' / 'lacuale' / 'montano' / None in base al punto GPS esatto

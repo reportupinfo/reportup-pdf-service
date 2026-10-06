@@ -113,9 +113,9 @@ def _carica():
 
 
 DISCLAIMER = (
-    "Il valore minimo e quello massimo ti sembrano troppo distanti? In alcuni comuni, come Positano, "
-    "i prezzi cambiano molto da una zona all'altra: la costa o il centro storico valgono molto più "
-    "dell'entroterra, e il canone medio per m² mescola zone molto diverse. Il valore è calcolato "
+    "Il valore minimo e quello massimo ti sembrano troppo distanti? Dentro uno stesso comune i canoni "
+    "cambiano molto da una zona all'altra (centro storico, zone turistiche, periferia, costa o "
+    "entroterra) e il canone medio per m² mescola zone molto diverse. Il valore è calcolato "
     "sui canoni al m² del comune per la superficie che hai indicato: se tra minimo e massimo c'è "
     "una grande differenza, conviene un doppio controllo sui portali di annunci per la tua zona precisa."
 )
