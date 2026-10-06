@@ -3217,7 +3217,10 @@ def build_pdf_bytes(data):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "ReportUp PDF Service"})
+    # commit e rotte nuove: serve a capire quale versione sta girando davvero
+    return jsonify({"status": "ok", "service": "ReportUp PDF Service",
+                    "commit": (os.environ.get("RENDER_GIT_COMMIT") or "")[:7],
+                    "report_input_base": any(r.rule == "/report-input-base" for r in app.url_map.iter_rules())})
 
 
 @app.route("/categoria-comune", methods=["GET"])
