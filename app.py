@@ -4395,6 +4395,10 @@ def _scheda_fatti_verificati(data):
         righe.append("Punti di interesse VERIFICATI e unici citabili con la loro distanza: " + "; ".join(_poi_ok))
     if data.get("avviso_normativo"):
         righe.append("AVVISO NORMATIVO LOCALE (sempre presente): " + data["avviso_normativo"])
+    _pres = [str(x) for x in (data.get("dotazioni_presenti") or [])]
+    _ass = [str(x) for x in (data.get("dotazioni_assenti") or [])]
+    righe.append("Dotazioni PRESENTI (le uniche che l'immobile ha): " + (", ".join(_pres) or "nessuna"))
+    righe.append("Dotazioni ASSENTI (l'immobile NON le ha): " + (", ".join(_ass) or "nessuna"))
     return "\n".join(righe)
 
 
@@ -4528,7 +4532,15 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
         "6) La scheda contiene sempre un AVVISO NORMATIVO LOCALE: nel testo di raccomandazione non "
         "presentare l'avvio dell'attivita' come scontato, e aggiungi una frase che dica di verificare "
         "PRIMA con gli uffici del Comune che l'attivita' sia consentita per l'immobile. "
-        "7) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
+        "7) DOTAZIONI: l'immobile ha SOLO le dotazioni PRESENTI della scheda e NON ha quelle ASSENTI: se un testo "
+        "dice che ha una dotazione assente, o ne descrive una versione intermedia (es. 'cucina semiattrezzata' "
+        "quando 'Cucina attrezzata' e' assente), riformula dicendo semplicemente che manca; non attribuire "
+        "mai una dotazione presente a un'altra e non lodare come punto di forza una dotazione assente. "
+        "8) LUOGHI E DISTANZE: puoi citare attrazioni o quartieri della citta' in generale, ma SENZA dire che "
+        "sono 'vicini', 'a piedi', 'a pochi minuti' o dare distanze, a meno che il luogo sia nell'elenco dei "
+        "punti di interesse VERIFICATI; nel dubbio togli la prossimita'. "
+        "9) Il report e' solo in italiano: niente riferimenti all'inglese. "
+        "10) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
         "'prezzo troppo alto'), niente refusi."
     )
     user = (
