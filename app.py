@@ -2895,17 +2895,30 @@ def _scegli_poi_candidati(trasporto_grezzi, attrazioni_grezze, supermercati_grez
             r"stazione|fermata|bus|metro|tram|autobus|capolinea|linea|treno|ferrovia|aeroporto|porto|molo|imbarco",
             trasporto[0]["nome"], re.IGNORECASE):
         trasporto[0] = dict(trasporto[0], nome="Fermata " + trasporto[0]["nome"])
-    attrazioni = [l for l in attrazioni_grezze
-                  if l["recensioni"] >= 500
-                  and not (set(l.get("types") or []) & _TIPI_NON_ATTRAZIONE)
-                  and not _RE_ATTIVITA_NON_ATTRAZIONE.search(l["nome"])
-                  and l["_dist_km"] <= _MAX_KM_ATTRAZIONE]
+    attrazioni_ok = [l for l in attrazioni_grezze
+                     if not (set(l.get("types") or []) & _TIPI_NON_ATTRAZIONE)
+                     and not _RE_ATTIVITA_NON_ATTRAZIONE.search(l["nome"])
+                     and l["_dist_km"] <= _MAX_KM_ATTRAZIONE]
+    # Soglia recensioni adattiva: nelle citta' grandi un'attrazione vera ha
+    # migliaia di recensioni (le statuine e i murales no), ma nei centri
+    # medio-piccoli (Ancona, Cortina) il monumento principale ne ha poche
+    # centinaia. Prima si cercano quelle con almeno 500; se non ce ne sono,
+    # almeno 100.
+    attrazioni = ([l for l in attrazioni_ok if l["recensioni"] >= 500]
+                  or [l for l in attrazioni_ok if l["recensioni"] >= 100])
     # Supermercato: prima i nomi riconoscibili (catene, "supermercato",
     # "alimentari", "minimarket"), scartando negozi specializzati e aziende;
     # se nessuno, un luogo tipizzato supermarket con almeno 150 recensioni.
+    # I tipi Google sono inaffidabili sui nomi gia' riconoscibili: CONAD CITY
+    # e Coop arrivano spesso tipizzati "bakery" o "bar". L'esclusione per tipo
+    # vale quindi solo per i nomi che NON sembrano un supermercato. Si scartano
+    # anche i nomi di aziende straniere (confini: Gorizia / Nova Gorica).
+    _RE_ESTERO = re.compile(r"d\.o\.o|\btrgovin|restavracij|gmbh|\bltd\b|\bs\u00e0rl\b|\bsarl\b|\bag\b", re.IGNORECASE)
     validi = [l for l in supermercati_grezzi
               if not _RE_NON_SUPERMERCATO.search(l["nome"])
-              and not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar", "bakery"})
+              and not _RE_ESTERO.search(l["nome"])
+              and (_RE_SUPERMERCATO.search(l["nome"])
+                   or not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar", "bakery"}))
               and l["_dist_km"] <= _MAX_KM_SERVIZI]
     nomi_ok = [l for l in validi if _RE_SUPERMERCATO.search(l["nome"])]
     catene = [l for l in nomi_ok if _RE_CATENA.search(l["nome"])]
