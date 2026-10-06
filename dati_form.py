@@ -87,12 +87,32 @@ def parse_prompt(user):
     for k in ("situazione_vuoto", "situazione_inquilini", "situazione_bnb", "situazione_mutuo", "mutuo_attivo",
               "property_manager", "di_proprieta"):
         d[k] = _letterale(coda, k)
-    d["rata_mutuo_mensile"] = _numero(_letterale(coda, "rata_mutuo_mensile"), 0)
+    _rata = _letterale(coda, "rata_mutuo_mensile")
+    d["rata_mutuo_mensile"] = _numero(_rata, 0)
     d["intervento_tipo"] = _letterale(coda, "intervento_tipo")
     d["intervento_importo"] = _numero(_letterale(coda, "intervento_importo"), 0)
     d["intervento_mesi"] = _numero(_letterale(coda, "intervento_mesi"), 0)
     d["mq_stimati"] = _letterale(coda, "mq_stimati")
+    # Se Make cambia un'etichetta o un letterale, il campo sparisce dal prompt:
+    # va distinto da "il cliente ha scritto 0", altrimenti un mutuo reale
+    # verrebbe azzerato in silenzio.
+    d["_rata_presente"] = _rata is not None
+    d["_marcatore_presente"] = i >= 0
     return d
+
+
+# Campi senza i quali un report non ha senso: se mancano, il parse e' rotto
+# (etichetta cambiata in Make) e va detto ad alta voce, non nascosto.
+_CAMPI_CRITICI = (("via", "Via e numero civico"), ("comune", "Comune"), ("tipologia", "Tipologia"),
+                  ("mq", "Superficie"), ("lat", "letterale lat"), ("long", "letterale long"))
+
+
+def campi_mancanti(d):
+    """Nomi leggibili dei campi critici che il parse non ha trovato."""
+    mancanti = [nome for k, nome in _CAMPI_CRITICI if d.get(k) in (None, "", 0)]
+    if not d.get("_marcatore_presente"):
+        mancanti.append(f'marcatore "{_MARCATORE_JSON}"')
+    return mancanti
 
 
 def via_civico_da_google(indirizzo_google, via_form=""):
@@ -128,7 +148,8 @@ def applica_dati_utente(data, d, solo_se_presenti=True):
               "property_manager", "di_proprieta"):
         if d.get(k) is not None:
             data[k] = d[k]
-    data["rata_mutuo_mensile"] = d.get("rata_mutuo_mensile", 0)
+    if d.get("_rata_presente", True):
+        data["rata_mutuo_mensile"] = d.get("rata_mutuo_mensile", 0)
     if d.get("intervento_tipo") is not None:
         data["intervento_tipo"] = d["intervento_tipo"]
         data["intervento_importo"] = d.get("intervento_importo", 0)

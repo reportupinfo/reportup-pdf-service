@@ -3162,8 +3162,8 @@ def genera_descrizione_standard(data):
         extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
         desc += (
             f"Ideale per {target} che vogliono vivere la città da dentro{extra_territorio}, con tutti i comfort di casa. "
-            "La metropoli offre un'offerta culturale, commerciale e di collegamenti tra le più ricche "
-            "del paese, accessibile a piedi o con i mezzi direttamente dall'immobile."
+            "La città offre un'ampia offerta culturale, commerciale e di collegamenti, "
+            "accessibile a piedi o con i mezzi direttamente dall'immobile."
         )
     elif categoria == "capoluogo":
         extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
@@ -4671,6 +4671,9 @@ def ai_generate():
     # vengono riletti dal prompt e SOVRASCRIVONO quanto l'IA ha trascritto nel JSON.
     try:
         _dati_cliente = dati_form.parse_prompt(user_prompt)
+        _mancanti = dati_form.campi_mancanti(_dati_cliente)
+        if _mancanti:
+            print(f"[AI-GENERATE] PARSE PROMPT ROTTO, etichette Make cambiate? mancano: {', '.join(_mancanti)}")
         _blocchi = _payload.get("content") if isinstance(_payload, dict) else None
         if resp.status_code == 200 and isinstance(_blocchi, list) and _blocchi:
             _testo_ai = "".join(b.get("text", "") for b in _blocchi if isinstance(b, dict))
@@ -4696,8 +4699,10 @@ def report_input_base():
     Google verificati nel prompt: zero IA, zero numeri inventati."""
     body = request.get_json(force=True, silent=True) or {}
     d = dati_form.parse_prompt(body.get("user", ""))
-    if not d.get("via") or not d.get("comune"):
-        return jsonify({"error": "prompt non riconosciuto"}), 422
+    _mancanti = dati_form.campi_mancanti(d)
+    if _mancanti:
+        print(f"[REPORT-INPUT-BASE] PARSE PROMPT ROTTO, etichette Make cambiate? mancano: {', '.join(_mancanti)}")
+        return jsonify({"error": "prompt non riconosciuto", "mancano": _mancanti}), 422
     data = dati_form.costruisci_json_base(d, _norm_dotazione, DOTAZIONI_AMMESSE)
     print(f"[REPORT-INPUT-BASE] costruito senza IA: {data.get('indirizzo')!r} tipologia={data.get('tipologia')!r} "
           f"mq={d.get('mq')} rata={data.get('rata_mutuo_mensile')}")
