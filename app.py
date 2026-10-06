@@ -28,6 +28,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
 import comuni_lookup
+import dati_form
 import territorio_gps
 import stagionalita_turistica
 import affitti_mercato
@@ -4621,7 +4622,43 @@ def ai_generate():
         else:
             print(f"[AI-GENERATE] stop_reason={_stop} output_tokens={_out_tok} tetto={max_tokens}")
 
+    # Regola 6/10/2026 (nulla di matematico passa per l'IA): i dati dichiarati
+    # dal cliente (rata mutuo, importo/mesi intervento, mq, situazione...)
+    # vengono riletti dal prompt e SOVRASCRIVONO quanto l'IA ha trascritto nel JSON.
+    try:
+        _dati_cliente = dati_form.parse_prompt(user_prompt)
+        _blocchi = _payload.get("content") if isinstance(_payload, dict) else None
+        if resp.status_code == 200 and isinstance(_blocchi, list) and _blocchi:
+            _testo_ai = "".join(b.get("text", "") for b in _blocchi if isinstance(b, dict))
+            _ai_json = _json_std.loads(_testo_ai[_testo_ai.find("{"): _testo_ai.rfind("}") + 1])
+            dati_form.applica_dati_utente(_ai_json, _dati_cliente)
+            _payload["content"] = [{"type": "text", "text": _json_std.dumps(_ai_json, ensure_ascii=False)}]
+            print(f"[AI-GENERATE] dati cliente riletti dal prompt: rata={_dati_cliente.get('rata_mutuo_mensile')} "
+                  f"intervento={_dati_cliente.get('intervento_importo')}/{_dati_cliente.get('intervento_mesi')}m "
+                  f"mq={_dati_cliente.get('mq')}")
+    except Exception as e:
+        print(f"[AI-GENERATE] override dati cliente saltato: {type(e).__name__}: {e}")
+
     return jsonify(_payload), resp.status_code
+
+
+@app.route("/report-input-base", methods=["POST"])
+@require_internal_secret
+def report_input_base():
+    """Sostituisce la chiamata IA del Report Base (modulo 2 dello scenario
+    Make 6015968, via reportup.it/api/ai-proxy). Stessa forma di risposta
+    della Messages API (content[0].text = JSON), cosi' i moduli a valle non
+    cambiano. Il JSON e' costruito SOLO dai dati del cliente e dai dati
+    Google verificati nel prompt: zero IA, zero numeri inventati."""
+    body = request.get_json(force=True, silent=True) or {}
+    d = dati_form.parse_prompt(body.get("user", ""))
+    if not d.get("via") or not d.get("comune"):
+        return jsonify({"error": "prompt non riconosciuto"}), 422
+    data = dati_form.costruisci_json_base(d, _norm_dotazione, DOTAZIONI_AMMESSE)
+    print(f"[REPORT-INPUT-BASE] costruito senza IA: {data.get('indirizzo')!r} tipologia={data.get('tipologia')!r} "
+          f"mq={d.get('mq')} rata={data.get('rata_mutuo_mensile')}")
+    return jsonify({"content": [{"type": "text", "text": _json_std.dumps(data, ensure_ascii=False)}],
+                    "stop_reason": "end_turn", "model": "deterministico"})
 
 
 # ── ROUTE STRATEGICO ──────────────────────────────────────────────────────────
