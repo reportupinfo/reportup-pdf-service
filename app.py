@@ -2932,6 +2932,28 @@ def _scegli_poi_candidati(trasporto_grezzi, attrazioni_grezze, supermercati_grez
     return trasporto, attrazioni, super_
 
 
+_SIGLE_MAIUSCOLE_OK = {"CRAI", "SAVT", "ATAC", "ATM", "GTT", "AMT", "ANM", "EAV", "TPER", "CTM", "AMAT", "ARST"}
+
+
+def _pulisci_nome_poi(nome):
+    """Ripulisce i nomi Google che arrivano da feed di trasporto o da schede
+    aziendali (collaudo 74 comuni, 6/10/2026): codici interni "# f3476",
+    separatori "|", nomi TUTTO MAIUSCOLO ("ASTI - Piazza Alfieri"), forme
+    legali ("MD S.p.A.", "... SRL"). Regole generali, nessuna eccezione per
+    comune."""
+    t = str(nome or "")
+    t = re.sub(r"\s*#\s*\w+\s*$", "", t)
+    t = re.sub(r"\s*\|\s*", " - ", t)
+    t = re.sub(r"\s*\b(?:s\.?\s?p\.?\s?a\.?|s\.?\s?r\.?\s?l\.?|s\.?\s?n\.?\s?c\.?|s\.?\s?a\.?\s?s\.?)(?=\s|/|$)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+/", " /", t).strip(" -/")
+    def _w(w):
+        if w.isalpha() and w.isupper() and len(w) >= 4 and w not in _SIGLE_MAIUSCOLE_OK:
+            return w.capitalize()
+        return w
+    t = " ".join(_w(w) for w in t.split())
+    return t or str(nome or "")
+
+
 def _riga_poi_da_luogo(lat, lon, luogo, modalita):
     """[distanza, nome, impatto] con distanza a piedi (<= 20 min) o in auto."""
     minuti = territorio_gps.tempo_a_piedi(lat, lon, luogo["lat"], luogo["lon"])
@@ -2943,7 +2965,7 @@ def _riga_poi_da_luogo(lat, lon, luogo, modalita):
             distanza = f"{auto[0]} km · {auto[1]} min in auto"
         else:
             distanza = f"{round(luogo['_dist_km'], 1)} km (linea d'aria)"
-    return [distanza, _titolo_nome_poi(luogo["nome"]), _impatto_deterministico(distanza, modalita) or "Medio"]
+    return [distanza, _titolo_nome_poi(_pulisci_nome_poi(luogo["nome"])), _impatto_deterministico(distanza, modalita) or "Medio"]
 
 
 def _applica_poi_stabili(data):
