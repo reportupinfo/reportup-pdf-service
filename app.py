@@ -2182,7 +2182,12 @@ def _pct_it(v):
 
 
 _PARTICELLE_MINUSCOLE = {"di", "de", "dei", "del", "della", "delle", "dello", "degli",
-                         "dell", "dal", "dalla", "dalle", "dai", "dagli"}
+                         "dell", "dal", "dalla", "dalle", "dai", "dagli",
+                         # comuni e vie: "Polignano a Mare", "Reggio nell'Emilia",
+                         # "Santa Maria a Vico", "Sesto Calende sul Lago"
+                         "a", "al", "alla", "alle", "allo", "ai", "agli", "all",
+                         "in", "su", "sul", "sulla", "sullo", "sull", "nel", "nella",
+                         "nello", "nell", "nei", "nelle", "da", "dall", "e", "con", "tra", "fra", "d"}
 
 
 def _title_preserva_romani(testo):
@@ -2199,6 +2204,10 @@ def _title_preserva_romani(testo):
     for i, w in enumerate(parole):
         if w.isupper() and len(w) >= 2 and _ROMANO.match(w) and any(ch in w for ch in "IVX"):
             out.append(w)
+        elif i > 0 and re.match(r"^[^'’]+['’].", w) and re.split(r"['’]", w, 1)[0].lower() in _PARTICELLE_MINUSCOLE:
+            # "Nell'emilia" -> "nell'Emilia" (articolo elisione + nome proprio)
+            _pre, _sep, _resto = re.split(r"(['’])", w, 1)
+            out.append(_pre.lower() + _sep + _resto.title())
         elif i > 0 and w.lower().rstrip("'2019") in _PARTICELLE_MINUSCOLE:
             # "Via Dei Neri" -> "Via dei Neri", "Reggio Di Calabria" ->
             # "Reggio di Calabria": le preposizioni articolate restano
