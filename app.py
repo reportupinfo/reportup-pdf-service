@@ -4415,12 +4415,27 @@ def _toglie_frasi_con_cifre(testo):
     return " ".join(tenute), len(frasi) - len(tenute)
 
 
+_RE_INGLESE = re.compile(r"\binglese\b|\binglesi\b|\benglish\b|\bbilingu\w*", re.IGNORECASE)
+
+
+def _solo_italiano(testo):
+    """Il report esiste solo in italiano: toglie dai testi i riferimenti
+    all'inglese ("in italiano e inglese" -> "in italiano")."""
+    t = str(testo or "")
+    t = re.sub(r"\bitaliano\s*(?:/|e|ed)\s*inglese\b", "italiano", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s*,?\s*(?:e|ed)\s+in\s+inglese\b", "", t, flags=re.IGNORECASE)
+    return t
+
+
 def _rimuovi_cifre_economiche_dai_testi(data):
     """Regola di Salvatore (6/10/2026): l'IA non interviene mai nella matematica.
     I testi liberi devono essere qualitativi: ogni frase che contiene importi,
     percentuali o prezzi (esclusi i dati di legge/tariffari) viene tolta. Si
     applica dopo l'editor, quindi anche se l'editor sbaglia o non gira."""
     tolte = 0
+    for campo in _CAMPI_ANALISI_STRATEGICO:
+        if data.get(campo):
+            data[campo] = _solo_italiano(data[campo])
     for campo in _CAMPI_ANALISI_STRATEGICO:
         orig = str(data.get(campo) or "")
         nuovo, n = _toglie_frasi_con_cifre(orig)
@@ -4440,7 +4455,10 @@ def _rimuovi_cifre_economiche_dai_testi(data):
             continue
         azioni = []
         for az in (blocco.get("azioni") or []):
-            az = str(az)
+            az = _solo_italiano(az)
+            if _RE_INGLESE.search(az):
+                tolte += 1
+                continue
             if _RE_CIFRA_ECONOMICA.search(az) and not _RE_CIFRA_AMMESSA.search(az):
                 senza = re.sub(r"\s*\([^)]*\d[^)]*\)", "", az)
                 if _RE_CIFRA_ECONOMICA.search(senza):
