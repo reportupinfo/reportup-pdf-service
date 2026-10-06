@@ -4429,6 +4429,21 @@ def _scheda_numeri_definitivi(data):
         basso = min(pricing, key=lambda r: r[2])
         righe.append(f"Pricing mensile consigliato: massimo {eu(alto[2])} a {alto[0]}, "
                      f"minimo {eu(basso[2])} a {basso[0]}")
+        # Quote stagionali CALCOLATE: l'editor le citava inventate ("l'estate
+        # vale il 45-50% dei ricavi" quando il pricing dava il 34%).
+        try:
+            _tot = sum(float(r[4]) for r in pricing)
+            if _tot > 0 and len(pricing) == 12:
+                _est = sum(float(r[4]) for r in pricing[5:8])
+                _inv = sum(float(r[4]) for r in (pricing[0:2] + pricing[11:12]))
+                righe.append(f"Quota dei ricavi annui per stagione (CALCOLATA, unica citabile): estate giugno-agosto "
+                             f"{round(_est / _tot * 100)}%, inverno dicembre-febbraio {round(_inv / _tot * 100)}%")
+        except (TypeError, ValueError, IndexError):
+            pass
+    _comp = [r for r in (data.get("competitor") or []) if r and len(r) >= 2]
+    if _comp:
+        righe.append("Prezzi medi per tipologia nella zona (competitor): " +
+                     "; ".join(f"{r[0]} {r[1]}" for r in _comp))
     return "\n".join(righe)
 
 
@@ -4489,6 +4504,10 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
         "l'avvio dell'attivita' come scontato, e aggiungi una frase che dica di verificare PRIMA con gli uffici "
         "del Comune che l'attivita' sia consentita per l'immobile. "
         "10) La commissione delle piattaforme nel report e' 15,5%: se un testo cita un'altra percentuale di commissione Airbnb, usa 15,5%. "
+        "12) Anche le fasce di prezzo, le quote percentuali dei ricavi e ogni altro numero di mercato (es. 'bilocali "
+        "nella fascia 80-95 euro', 'l'estate vale il 45-50% dei ricavi') devono coincidere con la scheda: usa il "
+        "prezzo consigliato o i prezzi competitor della scheda, le quote stagionali CALCOLATE della scheda, oppure "
+        "riscrivi la frase in modo qualitativo senza cifra. "
         "11) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
         "'prezzo troppo alto'), niente refusi."
     )
