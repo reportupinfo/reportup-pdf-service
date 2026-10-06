@@ -2834,6 +2834,7 @@ def _luoghi_vicini_google(lat, lon, place_type, quanti=20, timeout=5):
             if r.get("name") and loc.get("lat") is not None and loc.get("lng") is not None:
                 out.append({"nome": r["name"], "lat": loc["lat"], "lon": loc["lng"],
                             "recensioni": r.get("user_ratings_total") or 0,
+                            "types": r.get("types") or [],
                             "_dist_km": _haversine_km(float(lat), float(lon), loc["lat"], loc["lng"])})
         out.sort(key=lambda x: x["_dist_km"])
         return out
@@ -2877,9 +2878,25 @@ def _applica_poi_stabili(data):
     except (TypeError, ValueError):
         return
 
-    trasporto = _luoghi_vicini_google(lat, lon, "transit_station")
+    # Google tagga "transit_station" o "supermarket" anche luoghi che non lo sono
+    # davvero (test Lecce 6/10/2026: il Castello come "trasporto pubblico", una
+    # gastronomia come "supermercato"): si scartano per tipo e per nome.
+    _non_fermata = {"tourist_attraction", "museum", "church", "place_of_worship", "art_gallery",
+                    "park", "restaurant", "food", "cafe", "bar", "store", "lodging"}
+    trasporto = [l for l in _luoghi_vicini_google(lat, lon, "transit_station")
+                 if not (set(l.get("types") or []) & _non_fermata)]
     attrazioni = [l for l in _luoghi_vicini_google(lat, lon, "tourist_attraction") if l["recensioni"] >= 500]
-    super_ = _luoghi_vicini_google(lat, lon, "supermarket")
+    _non_super = re.compile(r"gastronom|macelleri|salumeri|rosticcer|panific|forno|pasticcer|enotec|bottega|"
+                            r"ortofrutt|frutta|pescheri|caff|bar|ristorant|pizzeri|tabacc|farmaci|paninoteca|"
+                            r"gelateri|kebab|sushi", re.IGNORECASE)
+    super_ = [l for l in _luoghi_vicini_google(lat, lon, "supermarket")
+              if not _non_super.search(l["nome"])
+              and not (set(l.get("types") or []) & {"restaurant", "meal_takeaway", "cafe", "bar"})]
+    # Il nome di una fermata e' spesso solo la via o il quartiere ("Castello"):
+    # si esplicita il tipo di punto per non farlo sembrare un monumento.
+    if trasporto and not re.search(r"stazione|fermata|bus|metro|tram|autobus|capolinea|linea|treno|ferrovia|aeroporto",
+                                   trasporto[0]["nome"], re.IGNORECASE):
+        trasporto[0] = dict(trasporto[0], nome="Fermata " + trasporto[0]["nome"])
     nuovi = {
         0: _riga_poi_da_luogo(lat, lon, trasporto[0], "piedi") if trasporto else None,
         2: _riga_poi_da_luogo(lat, lon, attrazioni[0], "auto") if attrazioni else None,
