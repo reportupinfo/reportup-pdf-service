@@ -4428,6 +4428,10 @@ def _solo_italiano(testo):
     t = str(testo or "")
     t = re.sub(r"\bitaliano\s*(?:/|e|ed)\s*inglese\b", "italiano", t, flags=re.IGNORECASE)
     t = re.sub(r"\s*,?\s*(?:e|ed)\s+in\s+inglese\b", "", t, flags=re.IGNORECASE)
+    # Clausole che parlano di inglese / comunicazione multilingue: tolte, la
+    # frase resta ("..., comunicazione multilingue almeno in inglese, e ..." -> "..., e ...").
+    t = re.sub(r",\s*[^,.;:]*\b(?:inglese|inglesi|english|multilingu\w*|bilingu\w*)\b[^,.;:]*(?=[,.;:])", "", t,
+               flags=re.IGNORECASE)
     # Clausole normative locali non verificate ("considerando che Verona applica
     # regolamenti specifici sui centri storici"): le toglie, resta l'invito a verificare.
     t = re.sub(r",?\s*considerando che [^:.;]*?\b(?:applica|prevede|impone|vieta|limita)\b[^:.;]*?(?=[:.;])", "", t,
