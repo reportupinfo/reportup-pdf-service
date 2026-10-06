@@ -4428,6 +4428,10 @@ def _solo_italiano(testo):
     t = str(testo or "")
     t = re.sub(r"\bitaliano\s*(?:/|e|ed)\s*inglese\b", "italiano", t, flags=re.IGNORECASE)
     t = re.sub(r"\s*,?\s*(?:e|ed)\s+in\s+inglese\b", "", t, flags=re.IGNORECASE)
+    # Clausole normative locali non verificate ("considerando che Verona applica
+    # regolamenti specifici sui centri storici"): le toglie, resta l'invito a verificare.
+    t = re.sub(r",?\s*considerando che [^:.;]*?\b(?:applica|prevede|impone|vieta|limita)\b[^:.;]*?(?=[:.;])", "", t,
+               flags=re.IGNORECASE)
     return t
 
 
@@ -4540,6 +4544,9 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
         "sono 'vicini', 'a piedi', 'a pochi minuti' o dare distanze, a meno che il luogo sia nell'elenco dei "
         "punti di interesse VERIFICATI; nel dubbio togli la prossimita'. "
         "9) Il report e' solo in italiano: niente riferimenti all'inglese. "
+        "9b) NORMATIVA LOCALE: non affermare MAI cosa prevede o non prevede il regolamento di un comune "
+        "(divieti, limiti, regolamenti specifici sui centri storici, numero chiuso): non lo sai e non e' "
+        "verificato. Scrivi soltanto di verificare con gli uffici del Comune. "
         "10) Italiano corretto: niente anglicismi usati a sproposito (es. 'sovrafatturazione' per "
         "'prezzo troppo alto'), niente refusi."
     )
