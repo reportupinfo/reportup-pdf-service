@@ -2085,15 +2085,19 @@ def page8c_mercato(c, data):
         tbl_t.drawOn(c, 14*mm, y - tbl_t._height)
         y -= tbl_t._height + 8*mm
 
-    disc_h = 14*mm
+    disc_h = 30*mm
     c.setFillColor(GOLD_LIGHT)
     c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=1, stroke=0)
     c.setStrokeColor(GOLD)
     c.setLineWidth(0.8)
     c.roundRect(14*mm, y - disc_h, W - 28*mm, disc_h, 2*mm, fill=0, stroke=1)
-    c.setFont("Helvetica", 7.5)
+    c.setFont("Helvetica-Bold", 7.5)
     c.setFillColor(BLUE_NIGHT)
-    wrap_simple(c, "Dati aggregati sui comparabili reali restituiti da AirROI per questa zona (stesso motore che calcola prezzo/occupazione del tuo immobile) — non stime AI.", 18*mm, y - 6*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+    c.drawString(18*mm, y - 5.5*mm, "Come leggere questi dati")
+    wrap_simple(c, "Le tabelle usano fonti AirROI diverse e non vanno sommate. I percentili descrivono la distribuzione di tutti gli annunci della zona: "
+                   "il tuo prezzo e la tua occupazione sono stimati sul tuo immobile (tipologia, dotazioni, stagione), per questo possono collocarsi sopra la mediana. "
+                   "Il campione di annunci serve solo a calcolare la quota di gestione professionale; il posizionamento stagionale confronta gli ultimi 90 giorni con la media annua. "
+                   "Dati reali AirROI, non stime AI.", 18*mm, y - 10.5*mm, W - 40*mm, "Helvetica", 7.5, 4.3*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════
