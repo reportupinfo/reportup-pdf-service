@@ -4679,6 +4679,7 @@ def ai_generate():
             _testo_ai = "".join(b.get("text", "") for b in _blocchi if isinstance(b, dict))
             _ai_json = _json_std.loads(_testo_ai[_testo_ai.find("{"): _testo_ai.rfind("}") + 1])
             dati_form.applica_dati_utente(_ai_json, _dati_cliente)
+            dati_form.applica_dotazioni_dichiarate(_ai_json, _dati_cliente, _norm_dotazione, DOTAZIONI_AMMESSE)
             _payload["content"] = [{"type": "text", "text": _json_std.dumps(_ai_json, ensure_ascii=False)}]
             print(f"[AI-GENERATE] dati cliente riletti dal prompt: rata={_dati_cliente.get('rata_mutuo_mensile')} "
                   f"intervento={_dati_cliente.get('intervento_importo')}/{_dati_cliente.get('intervento_mesi')}m "

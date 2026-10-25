@@ -35,4 +35,19 @@ assert "Superficie" in dati_form.campi_mancanti(d2)
 ai = {"rata_mutuo_mensile": 650}
 dati_form.applica_dati_utente(ai, d2)
 assert ai["rata_mutuo_mensile"] == 650, "rata azzerata in silenzio"
+# dotazioni dichiarate (piscina/giardino alimentano il sovrapprezzo manutenzione):
+# sovrascrivono quelle dell'IA, anche se l'IA le ha omesse o inventate
+AMMESSE = ["WiFi", "Parcheggio", "Aria condizionata", "Lavatrice", "Cucina attrezzata",
+           "Terrazzo", "Giardino", "Riscaldamento", "Ascensore", "Piscina"]
+SINONIMI = {"wi-fi": "WiFi", "wifi": "WiFi", "aria condizionata": "Aria condizionata",
+            "piscina": "Piscina", "giardino": "Giardino"}
+norm = lambda v: SINONIMI.get(str(v or "").strip().lower(), str(v or "").strip())
+d3 = dati_form.parse_prompt(PROMPT.replace("Wi-Fi, Aria condizionata", "wi-fi, piscina, Giardino"))
+ai3 = {"dotazioni_presenti": ["WiFi"], "dotazioni_assenti": ["Piscina", "Giardino"]}
+dati_form.applica_dotazioni_dichiarate(ai3, d3, norm, AMMESSE)
+assert ai3["dotazioni_presenti"] == ["WiFi", "Piscina", "Giardino"], ai3
+assert "Piscina" not in ai3["dotazioni_assenti"] and "Giardino" not in ai3["dotazioni_assenti"]
+ai4 = {"dotazioni_presenti": ["Piscina"]}
+dati_form.applica_dotazioni_dichiarate(ai4, dati_form.parse_prompt(PROMPT.replace("Dotazioni presenti:", "Altro:")), norm, AMMESSE)
+assert ai4["dotazioni_presenti"] == ["Piscina"], "riga assente: non deve cancellare"
 print("OK")

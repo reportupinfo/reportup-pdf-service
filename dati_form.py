@@ -178,6 +178,29 @@ _SEGNAPOSTO_NUMERICI_BASE = {
 }
 
 
+def dotazioni_dichiarate(d, norm_dotazione, dotazioni_ammesse):
+    """Dotazioni scelte dal cliente nel form, normalizzate. Lista vuota se il
+    cliente non ne ha scelte o se la riga non e' stata trovata nel prompt."""
+    presenti = []
+    for voce in re.split(r"[,;]", d.get("dotazioni") or ""):
+        n = norm_dotazione(voce)
+        if n in dotazioni_ammesse and n not in presenti:
+            presenti.append(n)
+    return presenti
+
+
+def applica_dotazioni_dichiarate(data, d, norm_dotazione, dotazioni_ammesse):
+    """Strategico: le dotazioni del cliente sovrascrivono quelle scritte
+    dall'IA. Alimentano il sovrapprezzo manutenzione (piscina +400, giardino
+    +150), il moltiplicatore prezzo e la scheda immobile: non devono dipendere
+    da come l'IA le ha trascritte. Se la riga manca dal prompt non tocca nulla."""
+    presenti = dotazioni_dichiarate(d, norm_dotazione, dotazioni_ammesse)
+    if presenti:
+        data["dotazioni_presenti"] = presenti
+        data["dotazioni_assenti"] = [x for x in dotazioni_ammesse if x not in presenti]
+    return data
+
+
 def costruisci_json_base(d, norm_dotazione, dotazioni_ammesse):
     """JSON d'ingresso del Base costruito SENZA IA dai dati del cliente e dai
     dati Google gia' verificati nel prompt. Tutti i numeri economici sono
@@ -186,11 +209,7 @@ def costruisci_json_base(d, norm_dotazione, dotazioni_ammesse):
     sigla = sigla_da_google(d.get("indirizzo_google"))
     comune = d.get("comune") or ""
     indirizzo = f"{via}, {d.get('cap', '')}, {comune}" + (f" ({sigla})" if sigla else "")
-    presenti = []
-    for voce in re.split(r"[,;]", d.get("dotazioni") or ""):
-        n = norm_dotazione(voce)
-        if n in dotazioni_ammesse and n not in presenti:
-            presenti.append(n)
+    presenti = dotazioni_dichiarate(d, norm_dotazione, dotazioni_ammesse)
     data = {
         "lat": d.get("lat"), "long": d.get("long"),
         "indirizzo": indirizzo,
