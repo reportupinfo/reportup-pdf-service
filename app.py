@@ -3666,12 +3666,34 @@ def verify_address():
 
     try:
         geo = _geocode_indirizzo(indirizzo)
+        # CAP dichiarato dal cliente vs CAP che Google associa al punto trovato
+        # (caso Maratea 26/10/2026: CAP "8546" al posto di 85046). Solo se la via
+        # e' stata davvero trovata: sul solo comune il CAP di Google e' generico.
+        cap_raw = str(body.get("cap") or "").strip()
+        cap_form = re.sub(r"\D", "", cap_raw)
+        cap_incoerente = False
+        if geo and geo.get("solo_comune") and len(cap_form) == 5:
+            # Un CAP sbagliato (anche a 5 cifre) fa ripiegare Google sul solo
+            # comune pur esistendo la via: si riprova senza CAP. Se cosi' la via
+            # viene trovata, il colpevole e' il CAP, non la via.
+            ind_senza_cap = re.sub(r"\s*,?\s*\b" + re.escape(cap_raw) + r"\b\s*,?", ", ", indirizzo, count=1)
+            geo_senza_cap = _geocode_indirizzo(ind_senza_cap.strip(" ,"))
+            if geo_senza_cap and not geo_senza_cap.get("solo_comune"):
+                geo = geo_senza_cap
+                cap_incoerente = True
+        cap_google = (geo or {}).get("cap") or ""
+        if not cap_google or not re.fullmatch(r"\d{5}", cap_google):
+            cap_google = ""
+        if geo and not geo.get("solo_comune") and len(cap_form) == 5 and cap_google and cap_form != cap_google:
+            cap_incoerente = True
         return _risposta({
             "valido": bool(geo),
             "precisione_incerta": bool(geo and geo.get("partial_match")),
             # True = Google ha trovato solo il centro del comune, non la via:
             # le distanze del report sarebbero misurate dal centro del paese.
             "solo_comune": bool(geo and geo.get("solo_comune")),
+            "cap_incoerente": cap_incoerente,
+            "cap_google": cap_google if cap_incoerente else "",
         })
     except Exception as e:
         print(f"[VERIFY-ADDRESS] eccezione: {e}")
