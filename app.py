@@ -3405,10 +3405,86 @@ def _moltiplicatore_capacita(posti_letto_raw):
     return round(1.0 + extra * 0.13, 3)
 
 
+GOOGLE_PLACES_TEXTSEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+_GEOCODE_CACHE = {}
+_GEOCODE_CACHE_TTL = 3600
+
+
+def _senza_accenti(t):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(t or "")) if unicodedata.category(c) != "Mn").lower()
+
+
+def _via_da_places(via_raw, lat_c, lon_c, comune, cap, provincia, api_key, timeout=5):
+    """Recupero quando Geocoding trova solo il comune: molte vie (soprattutto
+    nei paesi del Sud) non sono "strade" per Google ma esistono come indirizzo
+    di attivita' in Places ("Via Curzo, SNC, 85046 Maratea": caso 26/10/2026).
+    Text Search con bias sul comune; si accetta solo un risultato il cui indirizzo
+    contiene davvero il nome della via e il comune, entro 12 km dal centro.
+    Restituisce (lat, lon, indirizzo) oppure None."""
+    m = re.match(r"^\s*(.+?)(?:\s*,?\s*(\d+\s*[a-zA-Z]?(?:/\s*[a-zA-Z0-9]+)?))?\s*$", via_raw or "")
+    nome_via = (m.group(1) if m else via_raw or "").strip(" ,")
+    civico = _senza_accenti(m.group(2) if m and m.group(2) else "").replace(" ", "")
+    if len(nome_via) < 4 or not comune:
+        return None
+    try:
+        resp = requests.get(
+            GOOGLE_PLACES_TEXTSEARCH_URL,
+            params={"query": f"{nome_via}, {cap or ''} {comune} {provincia or ''}".replace("  ", " ").strip(),
+                    "location": f"{lat_c},{lon_c}", "radius": 10000,
+                    "language": "it", "region": "it", "key": api_key},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return None
+        risultati = resp.json().get("results") or []
+    except Exception as e:
+        print(f"[GEOCODE-PLACES] eccezione: {type(e).__name__}: {e}")
+        return None
+    via_n, comune_n = _senza_accenti(nome_via), _senza_accenti(comune)
+    candidati = []
+    for r in risultati:
+        ind = _senza_accenti(r.get("formatted_address"))
+        loc = (r.get("geometry") or {}).get("location") or {}
+        if via_n not in ind or comune_n not in ind or "lat" not in loc:
+            continue
+        if _haversine_km(lat_c, lon_c, loc["lat"], loc["lng"]) > 12:
+            continue
+        # la via deve essere l'inizio dell'indirizzo ("via curzo, 6/a, ..."), non un
+        # nome di attivita' che la cita in mezzo
+        if not ind.startswith(via_n):
+            continue
+        candidati.append((loc["lat"], loc["lng"], r.get("formatted_address"), ind))
+    if not candidati:
+        return None
+    if civico:
+        for c in candidati:
+            if c[3].startswith(f"{via_n}, {civico}"):
+                return c[:3]
+    # Senza civico non si sa dove sia l'immobile lungo la via: si prende il civico
+    # piu' vicino al centro del comune (scelta prudente e ripetibile). Il punto
+    # medio dei civici e' scartato: puo' cadere fuori strada e Distance Matrix lo
+    # aggancia alla carreggiata opposta (Maratea: 40 km al posto di 8).
+    return min(candidati, key=lambda c: _haversine_km(lat_c, lon_c, c[0], c[1]))[:3]
+
+
 def _geocode_indirizzo(indirizzo, timeout=5):
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not api_key or not indirizzo:
         return None
+    _chiave = (indirizzo or "").strip().lower()
+    _hit = _GEOCODE_CACHE.get(_chiave)
+    if _hit and time.time() - _hit[0] < _GEOCODE_CACHE_TTL:
+        return dict(_hit[1])
+    _esito = _geocode_indirizzo_nocache(indirizzo, api_key, timeout)
+    if _esito:
+        if len(_GEOCODE_CACHE) > 500:
+            _GEOCODE_CACHE.clear()
+        _GEOCODE_CACHE[_chiave] = (time.time(), dict(_esito))
+    return _esito
+
+
+def _geocode_indirizzo_nocache(indirizzo, api_key, timeout=5):
     try:
         resp = requests.get(
             GOOGLE_GEOCODE_URL,
@@ -3455,12 +3531,24 @@ def _geocode_indirizzo(indirizzo, timeout=5):
             if "postal_code" in tipi:
                 cap = comp.get("long_name")
 
+        fonte = "geocoding"
+        lat_out, lon_out, formattato = loc["lat"], loc["lng"], risultato.get("formatted_address")
+        if solo_comune and comune:
+            # Geocoding conosce solo il comune: si cerca la via tra gli indirizzi Places
+            _prima = indirizzo.split(",")[0]
+            _trovata = _via_da_places(_prima, loc["lat"], loc["lng"], comune, cap, provincia, api_key, timeout)
+            if _trovata:
+                lat_out, lon_out, formattato = _trovata
+                solo_comune, partial_match, fonte = False, False, "places"
+                print(f"[GEOCODE-PLACES] via recuperata da Places: {_prima!r} -> {formattato!r}")
+
         return {
-            "lat": loc["lat"], "lon": loc["lng"],
-            "formatted_address": risultato.get("formatted_address"),
+            "lat": lat_out, "lon": lon_out,
+            "formatted_address": formattato,
             "comune": comune, "provincia": provincia, "cap": cap,
             "partial_match": partial_match,
             "solo_comune": solo_comune,
+            "fonte": fonte,
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
@@ -3877,6 +3965,30 @@ def _elabora_dati_report_base(raw, lat=None, long=None):
     return _arricchisci_report_deterministico(data, lat=lat, long=long, generare_descrizione=True)
 
 
+def _correggi_coordinate_da_indirizzo(data):
+    """Make geocodifica "via, CAP comune" con il solo Geocoding: se la via e'
+    nota a Google solo come indirizzo di attivita' (Places) ricade sul centro del
+    comune e tutti i POI del report sono misurati da li' (caso Maratea 26/10/2026,
+    "via curzo"). Qui la stessa via viene ritrovata con _geocode_indirizzo e le
+    coordinate sono sostituite SOLO in quel caso (fonte "places"): quando Make ha
+    gia' trovato la via, nulla cambia."""
+    try:
+        if data.get("indirizzo_approssimato"):
+            return
+        via = str(data.get("indirizzo") or "").split(",")[0].strip()
+        comune = str(data.get("comune") or "").strip()
+        if not via or not comune:
+            return
+        geo = _geocode_indirizzo(f"{via}, {comune}")
+        if not geo or geo.get("fonte") != "places":
+            return
+        print(f"[COORD] coordinate di Make sostituite con la via trovata in Places: "
+              f"{data.get('lat')},{data.get('long')} -> {geo['lat']},{geo['lon']} ({via!r}, {comune!r})")
+        data["lat"], data["long"] = str(geo["lat"]), str(geo["lon"])
+    except Exception as e:
+        print(f"[COORD] correzione coordinate saltata: {type(e).__name__}: {e}")
+
+
 def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descrizione=True, correggere_poi=True):
     """Applica a un dict `data` già JSON-parsato (Base o Strategico) tutte le
     correzioni deterministiche + l'integrazione AirROI condivise dai due
@@ -3927,6 +4039,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     if lat and long:
         data["lat"] = lat
         data["long"] = long
+    _correggi_coordinate_da_indirizzo(data)
     for campo in ["camere", "bagni", "posti_letto", "superficie", "piano", "stato", "epoca", "tipologia", "comune", "zona", "indirizzo"]:
         if campo in data and not isinstance(data[campo], str):
             data[campo] = str(data[campo])
@@ -4895,13 +5008,19 @@ def ai_generate():
 
 def _solo_comune_da_geocode(d):
     """True se Google, rigeocodificando la stessa query dello scenario Make (via,
-    CAP comune), trova solo il centro del comune; False se trova una via; None
+    CAP comune), trova solo il centro del comune; False se trova una via; "places"
+    se la via e' nota solo come indirizzo di attivita' (posizione recuperata da
+    _geocode_indirizzo: indirizzo del cliente, nessuna nota); None
     se non determinabile (chiave assente, errore di rete): chi chiama ricade
     sull'euristica sul testo di Google (dati_form.google_solo_comune)."""
     try:
         query = f"{d.get('via', '')}, {d.get('cap', '')} {d.get('comune', '')}".strip(" ,")
         geo = _geocode_indirizzo(query)
-        return None if not geo else bool(geo.get("solo_comune"))
+        if not geo:
+            return None
+        if geo.get("fonte") == "places":
+            return "places"
+        return bool(geo.get("solo_comune"))
     except Exception as e:
         print(f"[GEOCODE-PRECISIONE] non determinabile: {type(e).__name__}: {e}")
         return None

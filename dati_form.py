@@ -164,7 +164,10 @@ def indirizzo_da_form(d, solo_comune=None):
     """(indirizzo, approssimato). Se Google ha trovato solo il centro del comune
     la via e' quella scritta dal cliente (Google non ha una via da offrire:
     prima finiva stampato "85046, Maratea, 8546, Maratea (PZ)"). `solo_comune`
-    arriva dal rigeocoding del backend; se None si usa l'euristica sul testo."""
+    arriva dal rigeocoding del backend; se None si usa l'euristica sul testo.
+    `solo_comune="places"`: la via esiste solo come indirizzo di attivita' su
+    Google Places (caso "via curzo", Maratea): si stampa la via del cliente ma
+    la posizione e' trovata, quindi niente nota di approssimazione."""
     comune = d.get("comune") or ""
     if solo_comune is None:
         solo_comune = google_solo_comune(d.get("indirizzo_google"), comune)
@@ -176,7 +179,7 @@ def indirizzo_da_form(d, solo_comune=None):
     sigla = sigla_da_google(d.get("indirizzo_google"))
     parti = [p for p in (via, cap, comune) if p]
     indirizzo = ", ".join(parti) + (f" ({sigla})" if sigla else "")
-    return indirizzo, bool(solo_comune)
+    return indirizzo, solo_comune is True
 
 
 def applica_indirizzo(data, d, solo_comune=None):
