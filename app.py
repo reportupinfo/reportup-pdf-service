@@ -2454,6 +2454,9 @@ _WIKI_SEZIONI_PER_CATEGORIA = {
 def _pulisci_wikitext(testo):
     for _ in range(5):
         testo = re.sub(r'\{\{[^{}]*\}\}', '', testo)
+    # Tabelle wiki "{| ... |}": prima restava la riga di apertura
+    # ("{|border="1" class="wikitable" ...") nel testo del report (Maratea, 26/10/2026).
+    testo = re.sub(r'\{\|.*?\|\}', '', testo, flags=re.DOTALL)
     testo = re.sub(r'<gallery[^>]*>.*?</gallery>', '', testo, flags=re.DOTALL)
     testo = re.sub(r'<ref[^>]*>.*?</ref>', '', testo, flags=re.DOTALL)
     testo = re.sub(r'<[^>]+>', '', testo)
@@ -2494,7 +2497,7 @@ def _pulisci_wikitext(testo):
     # Pietragalla" — frase incoerente, promette tre stazioni e ne descrive
     # una). Si scarta anche l'intro orfana.
     righe = [r.strip() for r in righe if len(r.strip()) > 30
-             and not r.strip().startswith(('*', '#', ':', ';', '|', '!'))
+             and not r.strip().startswith(('*', '#', ':', ';', '|', '!', '{'))
              and not r.strip().endswith(':')]
     testo = ' '.join(righe)
     for _ in range(3):
@@ -2618,7 +2621,8 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
 
 _RE_WIKI_NON_ACCETTABILE = re.compile(
     r"autostrad|strada statale|strade statali|\bSS\s?\d+|\bSP\s?\d+|\bA\d{1,2}\b|\d\s?°|\bkm\s?\d+\b|"
-    r"\bcoordinate\b|\bsuperficie di\b|\bpopolazione\b|\babitanti\b", re.IGNORECASE)
+    r"\bcoordinate\b|\bsuperficie di\b|\bpopolazione\b|\babitanti\b|"
+    r"\{\||\|\}|wikitable|class=|cellpadding|cellspacing|style=|\|", re.IGNORECASE)
 
 
 def _wiki_testo_accettabile(testo):
@@ -2676,6 +2680,8 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
     except Exception:
         risultato = None
 
+    if risultato:
+        risultato = re.sub(r"\.{2,}", ".", risultato).strip()   # "Mottarone.." -> "Mottarone."
     _WIKI_CACHE[cache_key] = risultato
     return risultato
 
