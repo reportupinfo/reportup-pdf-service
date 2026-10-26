@@ -30,6 +30,7 @@ from reportlab.lib.enums import TA_CENTER
 import comuni_lookup
 import dati_form
 import territorio_gps
+import territorio_poi
 import stagionalita_turistica
 import affitti_mercato
 import confronto_affitto
@@ -211,11 +212,13 @@ RATIO_PREZZO_TIPOLOGIA_COMPETITOR = {
 }
 
 _BUCKET_COMPETITOR_PER_TIPOLOGIA = [
-    # "stanza singola" resta come alias di compatibilita': il form ora manda
-    # "monolocale" (rinominato 25/9/2026, stessa logica di prima), ma finche'
-    # il deploy Netlify del form non e' allineato a quello di questo backend
-    # potrebbero arrivare ancora ordini col vecchio codice.
-    ("monolocale", "B&B e camere"), ("stanza singola", "B&B e camere"), ("stanza doppia", "B&B e camere"),
+    # "stanza singola" resta come alias di compatibilita' (vecchio codice del
+    # form, ancora possibile finche' il deploy Netlify non e' allineato).
+    # Il monolocale e' un appartamento intero: va nella riga "Monolocali", non
+    # in "B&B e camere". Prima la riga "Monolocali" (103) risultava piu' alta
+    # del "IL TUO IMMOBILE" (84) di un cliente che aveva dichiarato proprio un
+    # monolocale (Piacenza, 26/10/2026).
+    ("monolocale", "Monolocali"), ("stanza singola", "B&B e camere"), ("stanza doppia", "B&B e camere"),
     ("bilocale", "Bilocali"),
     ("trilocale", "Trilocali"),
     ("quadrilocale", "Trilocali"), ("4 locali", "Trilocali"), ("4+ locali", "Trilocali"), ("appartamento grande", "Trilocali"),
@@ -863,6 +866,33 @@ def _calibra_curva_mensile(occupazione, notti_anno, ricavo_lordo):
     return nuova
 
 
+_ORDINE_STAGE = {"Bassa": 0, "Media": 1, "Alta": 2, "Peak": 3}
+
+
+def _uniforma_stage_pari_merito(occupazione):
+    """Due mesi che in tabella mostrano la stessa occupazione e lo stesso prezzo
+    devono avere la stessa etichetta di stagione. L'etichetta nasce dal rango
+    della curva grezza, ma gli arrotondamenti e lo smorzamento dei mesi deboli
+    possono rendere identici i numeri di due mesi con rango diverso: Piacenza
+    26/10/2026, Mar "57% € 71 Bassa" e Nov "57% € 71 Media". A parita' di
+    numeri si tiene l'etichetta piu' alta."""
+    if not occupazione:
+        return occupazione
+    migliore = {}
+    for r in occupazione:
+        if len(r) > 3 and r[3] in _ORDINE_STAGE:
+            k = (r[1], r[2])
+            if k not in migliore or _ORDINE_STAGE[r[3]] > _ORDINE_STAGE[migliore[k]]:
+                migliore[k] = r[3]
+    nuova = []
+    for r in occupazione:
+        r = list(r)
+        if len(r) > 3 and (r[1], r[2]) in migliore:
+            r[3] = migliore[(r[1], r[2])]
+        nuova.append(r)
+    return nuova
+
+
 # ── Colori brand ──────────────────────────────────────────────────────────────
 BLUE_NIGHT   = HexColor("#0D1F2D")
 BLUE_PRIMARY = HexColor("#2196C4")
@@ -1375,7 +1405,7 @@ def page1(c, D):
                 ("Superficie", D.get("scheda_superficie") or D.get("superficie", "")),
                 ("Piano", D.get("scheda_piano") or D.get("piano", "")),
                 ("Stato", D.get("scheda_stato") or D.get("stato", "")),
-                ("Camere", D.get("scheda_camere") or _concorda_numero(D.get("camere", ""), "camera", "camere"))]
+                ("Camere", D.get("scheda_camere") or _frase_camere(D.get("camere", "")).capitalize())]
     fields_r = [("Comune", D.get("comune", "")), ("Zona", D.get("zona", "")),
                 ("Epoca", D.get("scheda_epoca") or D.get("epoca", "")),
                 ("Bagni", D.get("scheda_bagni") or _concorda_numero(D.get("bagni", ""), "bagno", "bagni")),
@@ -1443,7 +1473,7 @@ def page1(c, D):
     situazioni = [
         (f"Immobile vuoto: {'SI' if D.get('situazione_vuoto') else 'NO'}", D.get("situazione_vuoto")),
         (f"Inquilini attivi: {'SI' if D.get('situazione_inquilini') else 'NO'}", D.get("situazione_inquilini")),
-        (f"B&B gia' attivo: {'SI' if D.get('situazione_bnb') else 'NO'}", D.get("situazione_bnb")),
+        (f"B&B già attivo: {'SI' if D.get('situazione_bnb') else 'NO'}", D.get("situazione_bnb")),
         (f"Mutuo attivo: {'SI' if D.get('situazione_mutuo') else 'NO'}", D.get("situazione_mutuo")),
     ]
     px = 14 * mm
@@ -1514,6 +1544,15 @@ def page2(c, D):
             Paragraph(str(nome), style_cell_reg),
             Paragraph(str(impatto), style_cell_reg),
         ])
+    # Mare, lago, montagna (territorio_poi): righe extra sotto le cinque fisse.
+    for _r in (D.get("poi_extra") or []):
+        _et, _dist, _nome_e, _imp = (list(_r) + ["—"] * 4)[:4]
+        poi_data.append([
+            Paragraph(str(_et), style_cell_bold),
+            Paragraph(str(_dist), style_cell_reg),
+            Paragraph(str(_nome_e), style_cell_reg),
+            Paragraph(str(_imp), style_cell_reg),
+        ])
 
     col_w_poi = [(W - 28 * mm) * 0.20, (W - 28 * mm) * 0.22, (W - 28 * mm) * 0.42, (W - 28 * mm) * 0.16]
     tbl = Table(poi_data, colWidths=col_w_poi)
@@ -1528,6 +1567,13 @@ def page2(c, D):
     tbl.wrapOn(c, W - 28 * mm, 200)
     tbl.drawOn(c, 14 * mm, y - tbl._height)
     y -= tbl._height + 7 * mm
+    if D.get("indirizzo_approssimato"):
+        # Google ha trovato solo il centro del comune: onesta' sulla base delle distanze.
+        _nota_pos = (f"Nota: l'indirizzo indicato non è stato individuato con precisione da Google Maps; "
+                     f"le distanze di questa tabella sono calcolate dal centro di {D.get('comune') or 'questo comune'}, "
+                     "non dall'immobile. Per un risultato esatto genera un nuovo report con via e numero civico completi.")
+        y = draw_wrapped_text(c, _nota_pos, 14 * mm, y + 3 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 3.6 * mm, RED)
+        y -= 4 * mm
 
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm, "Occupazione stagionale")
     y -= 3 * mm
@@ -1537,7 +1583,7 @@ def page2(c, D):
     mesi_affidabili_idx = set(D.get("mesi_affidabili_idx", []))
     VERDE_AFFIDABILE = HexColor("#D4F1DE")
     VERDE_DATO_REALE = HexColor("#2E9E4F")
-    header_half = ["Mese", "Occup.", "€/notte", "Stage"]
+    header_half = ["Mese", "Occup.", "€/notte", "Stagione"]
     gap = 5 * mm
     half = (W - 28 * mm - gap) / 2
     col_w_half = [half * 0.20, half * 0.24, half * 0.32, half * 0.24]
@@ -1592,7 +1638,7 @@ def page2(c, D):
     c.setStrokeColor(BORDER)
     c.setLineWidth(0.3)
     c.rect(gx, gy, graph_w, graph_h, fill=0, stroke=1)
-    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD), ("Mesi piu' affidabili", HexColor("#2E9E4F"))]
+    legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL), ("Peak", GOLD), ("Mesi più affidabili", HexColor("#2E9E4F"))]
     lx = gx + 3 * mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -1668,8 +1714,8 @@ def page2(c, D):
         c.drawCentredString(px_dot, gy + 4 * mm, f"€ {row[2]}")
 
     disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 piu' vicini alla data del report) sono quelli su cui la stima e' piu' affidabile; "
-        "i mesi piu' lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
+        "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
+        "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
         "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
         "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
     )
@@ -2006,7 +2052,7 @@ def page4(c, D):
     # Il badge "IN ARRIVO" e la nota "in fase di sviluppo" che stavano qui sono
     # stati rimossi: lo Strategico è in lancio e acquistabile, tenerli avrebbe
     # scoraggiato l'upsell che questo riquadro esiste per fare.
-    upsell_text = ("Il Report Strategico (€ 199) include tutto il Base piu': pricing stagionale mese per mese, "
+    upsell_text = ("Il Report Strategico (€ 199) include tutto il Base e in più: pricing stagionale mese per mese, "
                    "3 scenari economici (pessimistico / realistico / ottimistico), piano d'azione 90 giorni, "
                    "cap rate e valore asset, normativa affitti brevi locale e l'analisi personale "
                    "dell'Arch. Salvatore Junior Sica.")
@@ -2025,11 +2071,11 @@ def page4(c, D):
     c.setFillColor(MUTED)
     c.drawString(14 * mm, y, "DISCLAIMER - LETTURA OBBLIGATORIA")
     y -= 5 * mm
-    disc = ("Il Report Base fornito da ReportUp e' uno strumento di analisi orientativa del mercato degli affitti brevi, "
+    disc = ("Il Report Base fornito da ReportUp è uno strumento di analisi orientativa del mercato degli affitti brevi, "
             "elaborato sulla base delle informazioni inserite dall'utente e dei dati di mercato disponibili alla data "
             "di generazione. Non costituisce in alcun modo una consulenza finanziaria, legale, fiscale o immobiliare "
             "professionale. I valori indicati sono proiezioni orientative basate su medie di mercato e non rappresentano "
-            "garanzie di risultato. ReportUp declina ogni responsabilita' per decisioni prese sulla base di questo documento.")
+            "garanzie di risultato. ReportUp declina ogni responsabilità per decisioni prese sulla base di questo documento.")
     draw_wrapped_text(c, disc, 14 * mm, y, W - 28 * mm, "Helvetica", 6.5, 4 * mm, MUTED)
 
 
@@ -2066,7 +2112,7 @@ def page5(c, D):
         ("Costi operativi stimati",
          "Medie di mercato per il settore della gestione immobiliare in affitto breve, elaborate su base regionale."),
         ("Punti di interesse e\ndistanze",
-         "Google Maps Platform - dati di percorrenza pedonale e su mezzo pubblico. I tempi indicati sono stime."),
+         "Google Maps Platform - distanze e tempi di percorrenza a piedi e in auto. I tempi indicati sono stime."),
     ]
 
     for fonte, desc in fonti:
@@ -2133,11 +2179,11 @@ def page5(c, D):
     iy -= 9 * mm
 
     paragrafi = [
-        ("Sono l'Arch. Salvatore Junior Sica, e questo report porta con se' oltre un decennio di esperienza "
-         "nel settore immobiliare italiano e piu' di 30.000 valutazioni effettuate sul territorio nazionale.", False),
+        ("Sono l'Arch. Salvatore Junior Sica, e questo report porta con sé oltre un decennio di esperienza "
+         "nel settore immobiliare italiano e più di 30.000 valutazioni effettuate sul territorio nazionale.", False),
         ("ReportUp nasce da un'idea semplice: rendere accessibile a chiunque l'analisi professionale che "
          "fino a ieri era riservata solo a chi poteva permettersi una consulenza privata.", False),
-        ("Ogni report che esce porta il nostro nome, e questo per noi non e' mai un dettaglio.", True),
+        ("Ogni report che esce porta il nostro nome, e questo per noi non è mai un dettaglio.", True),
         ("Spero che questa analisi ti sia utile e ti aiuti a prendere la decisione giusta per il tuo immobile.", False),
     ]
     max_w_testo = box_w - 20 * mm
@@ -2247,6 +2293,16 @@ def _join_lista_e(items):
     if len(items) == 1:
         return items[0]
     return ", ".join(items[:-1]) + " e " + items[-1]
+
+
+def _frase_camere(valore):
+    """"Vano unico" per monolocali e stanze (0 camere separate, valore che serve
+    ad AirROI ma che stampato era "0 camere", caso Piacenza 26/10/2026);
+    altrimenti "N camera/camere"."""
+    m = re.search(r"\d+", str(valore))
+    if m and int(m.group()) == 0:
+        return "vano unico"
+    return _concorda_numero(valore, "camera", "camere")
 
 
 def _concorda_numero(valore, singolare, plurale):
@@ -2374,11 +2430,12 @@ def _prepara_etichette_scheda(data):
     data["scheda_piano"]     = _etichetta_scheda(data.get("piano"), _LABEL_PIANO)
     data["scheda_stato"]     = _etichetta_scheda(data.get("stato"), _LABEL_STATO)
     data["scheda_epoca"]     = _etichetta_scheda(data.get("epoca"), _LABEL_EPOCA)
-    data["scheda_camere"]      = _concorda_numero(data.get("camere", ""), "camera", "camere")
+    data["scheda_camere"]      = _frase_camere(data.get("camere", "")).capitalize()
     data["scheda_bagni"]       = _concorda_numero(data.get("bagni", ""), "bagno", "bagni")
     data["scheda_posti_letto"] = _concorda_numero(data.get("posti_letto", ""), "posto letto", "posti letto")
     _sup = str(data.get("superficie") or "").strip()
-    data["scheda_superficie"] = f"{_sup} m2" if _sup and "m" not in _sup.lower() else _sup
+    _sup = _sup.replace("m2", "m²")
+    data["scheda_superficie"] = f"{_sup} m²" if _sup and "m" not in _sup.lower() else _sup
     return data
 
 
@@ -2559,6 +2616,18 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
         return None
 
 
+_RE_WIKI_NON_ACCETTABILE = re.compile(
+    r"autostrad|strada statale|strade statali|\bSS\s?\d+|\bSP\s?\d+|\bA\d{1,2}\b|\d\s?°|\bkm\s?\d+\b|"
+    r"\bcoordinate\b|\bsuperficie di\b|\bpopolazione\b|\babitanti\b", re.IGNORECASE)
+
+
+def _wiki_testo_accettabile(testo):
+    """Scarta i brani Wikipedia che non vendono un soggiorno: descrizioni di
+    strade e svincoli (Cortina: "...immissione nella SS 51 al km 84°"), gradi,
+    coordinate, dati demografici."""
+    return not _RE_WIKI_NON_ACCETTABILE.search(str(testo or ""))
+
+
 def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocategoria=None, timeout=3):
     if not wikipedia_url:
         return None
@@ -2582,7 +2651,7 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
 
         for nome_sezione in sezioni_da_cercare:
             testo = _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=timeout)
-            if testo:
+            if testo and _wiki_testo_accettabile(testo):
                 risultato = testo
                 break
 
@@ -2600,7 +2669,8 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
                     estratto = re.sub(r"\s+", " ", estratto).strip()
                     if estratto:
                         prima_frase = estratto.split(". ")[0].rstrip(". ").strip() + "."
-                        if 30 <= len(prima_frase) <= 220 and "comune italiano" not in prima_frase:
+                        if (30 <= len(prima_frase) <= 220 and "comune italiano" not in prima_frase
+                                and _wiki_testo_accettabile(prima_frase)):
                             risultato = prima_frase
 
     except Exception:
@@ -3044,6 +3114,36 @@ def _applica_poi_stabili(data):
     data["poi"] = righe
 
 
+def _applica_poi_territoriali(data):
+    """Righe extra sotto la tabella POI: spiaggia, lago, montagna (vedi
+    territorio_poi.py). Identiche in Base e Strategico. Qualunque errore o dato
+    mancante: nessuna riga, il report esce come prima."""
+    try:
+        righe, ctx = territorio_poi.poi_territoriali(data.get("lat"), data.get("long"))
+    except Exception as e:
+        print(f"[POI-TERRITORIO] saltato: {type(e).__name__}: {e}")
+        righe, ctx = [], {}
+    data["poi_extra"] = righe
+    data["_vicino_mare"] = bool(ctx.get("vicino_mare"))
+    data["_vicino_lago"] = bool(ctx.get("vicino_lago"))
+    if righe:
+        print(f"[POI-TERRITORIO] {[(r[0], r[1], r[2]) for r in righe]}")
+
+
+def _frase_poi_extra(riga):
+    """Frase di descrizione per una riga extra [etichetta, distanza, nome, impatto]."""
+    etichetta, distanza, nome = riga[0], str(_pulisci_distanza_per_frase(riga[1])).strip(), riga[2]
+    if etichetta.startswith("Spiaggia pi"):
+        return f"La spiaggia più vicina, {nome}, dista {distanza}."
+    if etichetta == "Spiaggia principale":
+        return f"Tra le spiagge più frequentate della zona, {nome}, a {distanza}."
+    if etichetta == "Lago":
+        return f"{nome} dista {distanza}."
+    if etichetta.startswith("Montagna"):
+        return f"Tra le cime più note dei dintorni, {nome}, a {distanza}."
+    return ""
+
+
 def _poi_riga_frase(poi, idx):
     try:
         distanza, nome, _impatto = (list(poi[idx]) + ["\u2014", "\u2014", "\u2014"])[:3]
@@ -3068,7 +3168,7 @@ def genera_descrizione_standard(data):
     indirizzo   = str(data.get("indirizzo", ""))
     comune      = str(data.get("comune", ""))
     zona        = str(data.get("zona", "") or "")
-    superficie  = str(data.get("superficie", ""))
+    superficie  = str(data.get("superficie", "")).replace("m2", "m²")
     camere      = str(data.get("camere", ""))
     bagni       = str(data.get("bagni", ""))
     posti_letto = str(data.get("posti_letto", ""))
@@ -3079,7 +3179,7 @@ def genera_descrizione_standard(data):
     genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
     situata = "situata" if genere_femminile else "situato"
 
-    camere_frase      = _concorda_numero(camere, "camera", "camere")
+    camere_frase      = _frase_camere(camere)
     bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
     posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
 
@@ -3143,10 +3243,25 @@ def genera_descrizione_standard(data):
             # vicinanze per le esigenze quotidiane."
             desc += f"{servizi_frase.rstrip('.')} per le esigenze quotidiane. "
 
+    # Mare, lago, montagna: fatti verificati da Google/Wikidata (territorio_poi),
+    # gli stessi stampati nella tabella dei punti di interesse.
+    for _riga_extra in (data.get("poi_extra") or []):
+        _f_extra = _frase_poi_extra(_riga_extra)
+        if _f_extra:
+            desc += _f_extra + " "
+
     if fatto_wiki:
         desc += fatto_wiki + " "
 
     target = _target_da_posti_letto(posti_letto)
+    # Un punto a pochi km dal mare o da un lago noto chiude come costiero o
+    # lacuale anche se non e' "sulla" costa (Maratea chiudeva con "lontano dal
+    # caos urbano" senza mai nominare il mare).
+    if categoria not in ("grande_citta", "capoluogo") and sottocateg == "residenziale_minore":
+        if data.get("_vicino_mare"):
+            sottocateg = "costiero"
+        elif data.get("_vicino_lago"):
+            sottocateg = "lacuale"
 
     _chiusura_territorio = {
         "costiero": "affacciata sul mare",
@@ -3167,11 +3282,13 @@ def genera_descrizione_standard(data):
         )
     elif categoria == "capoluogo":
         extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
-        desc += (
-            f"Ideale per {target} in cerca di una base comoda nel cuore del capoluogo{extra_territorio}. "
-            "La posizione garantisce accesso rapido ai principali punti di interesse della città, "
-            "mantenendo i vantaggi di una zona vivibile e ben servita."
-        )
+        # "nel cuore del capoluogo" non e' verificabile (Belvedere, Piacenza, e'
+        # un quartiere residenziale): si nomina la citta' e i servizi solo se
+        # verificati dai punti di interesse stampati sopra.
+        desc += f"Ideale per {target} in cerca di una base comoda a {comune}{extra_territorio}."
+        if trasporto_frase or servizi_frase:
+            desc += (" Distanze e tempi dei servizi e dei collegamenti principali sono riportati "
+                     "nella tabella dei punti di interesse.")
     elif sottocateg == "costiero":
         desc += (
             f"Ideale per {target} in cerca del fascino della costa. "
@@ -3311,6 +3428,17 @@ def _geocode_indirizzo(indirizzo, timeout=5):
         # legittimo. Il geocode resta comunque valido e utilizzabile.
         partial_match = bool(risultato.get("partial_match", False))
 
+        # Precisione: se Google restituisce solo il comune (o il CAP) e nessuna
+        # via, le coordinate sono il centro del paese e ogni distanza del report
+        # e' misurata da li' (caso Maratea 26/10/2026: "via curzo" non trovata).
+        _tipi_ris = set(risultato.get("types") or [])
+        _tipi_precisi = {"street_address", "route", "premise", "subpremise", "intersection",
+                         "neighborhood", "sublocality", "sublocality_level_1",
+                         "point_of_interest", "establishment"}
+        _tipi_generici = {"locality", "administrative_area_level_3", "administrative_area_level_2",
+                          "administrative_area_level_1", "postal_code", "country"}
+        solo_comune = bool(_tipi_ris & _tipi_generici) and not (_tipi_ris & _tipi_precisi)
+
         comune, provincia, cap = None, None, None
         for comp in risultato.get("address_components", []):
             tipi = comp.get("types", [])
@@ -3326,6 +3454,7 @@ def _geocode_indirizzo(indirizzo, timeout=5):
             "formatted_address": risultato.get("formatted_address"),
             "comune": comune, "provincia": provincia, "cap": cap,
             "partial_match": partial_match,
+            "solo_comune": solo_comune,
         }
     except Exception as e:
         print(f"[QUICK] geocode eccezione: {e}")
@@ -3534,6 +3663,9 @@ def verify_address():
         return _risposta({
             "valido": bool(geo),
             "precisione_incerta": bool(geo and geo.get("partial_match")),
+            # True = Google ha trovato solo il centro del comune, non la via:
+            # le distanze del report sarebbero misurate dal centro del paese.
+            "solo_comune": bool(geo and geo.get("solo_comune")),
         })
     except Exception as e:
         print(f"[VERIFY-ADDRESS] eccezione: {e}")
@@ -3799,10 +3931,24 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         data["comune"] = _record_comune["comune"]
     data["categoria"] = _record_comune["categoria"] if _record_comune else "comune_minore"
     data["sottocategoria"] = territorio_gps.classifica_sottocategoria(data.get("lat"), data.get("long"))
+    # Solo per la scelta del brano Wikipedia (e' cosmetica, non tocca prezzi o
+    # stagionalita'): un punto a meno di 5 km dal mare o 3 km da un lago noto
+    # cerca nelle sezioni "Spiagge/Turismo" invece di "Sagre/Tradizioni" (Maratea
+    # usciva con le feste religiose invece del mare).
+    _sub_wiki = data["sottocategoria"]
+    if not _sub_wiki:
+        try:
+            _dc = territorio_gps.distanza_costa_km(data.get("lat"), data.get("long"))
+            if _dc is not None and _dc <= 5:
+                _sub_wiki = "costiero"
+            elif territorio_poi.lago_piu_vicino(data.get("lat"), data.get("long"), 3.0)[0]:
+                _sub_wiki = "lacuale"
+        except Exception:
+            _sub_wiki = data["sottocategoria"]
     data["_wikipedia_estratto"] = _estratto_wikipedia(
         _record_comune.get("wikipedia") if _record_comune else None,
         categoria=data["categoria"],
-        sottocategoria=data["sottocategoria"],
+        sottocategoria=_sub_wiki,
     )
 
     if "indirizzo" in data:
@@ -3820,6 +3966,11 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
                 data["indirizzo"] = f"{data['indirizzo']} ({_sigla_corretta})"
         else:
             data["indirizzo"] = _re.sub(r'\(([A-Za-z]{2})\)', lambda m: f"({m.group(1).upper()})", data["indirizzo"])
+        # Ortografia ufficiale del comune anche dentro l'indirizzo: il title-case
+        # scriveva "Cortina D'Ampezzo" invece di "Cortina d'Ampezzo".
+        if _record_comune and _record_comune.get("comune"):
+            data["indirizzo"] = _re.sub(_re.escape(_record_comune["comune"]), _record_comune["comune"].replace("\\", "\\\\"),
+                                        data["indirizzo"], flags=_re.IGNORECASE)
 
     _calcola_costi_fissi_deterministici(data)
     _applica_avviso_normativo(data)
@@ -3992,7 +4143,9 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         # diversa a ogni generazione: sullo stesso immobile il Base mostrava
         # € 2.228 e lo Strategico € 2.235. Ora è lo stesso numero su entrambi.
         _bonus_new = round(_ricavo_lordo_new * 0.07)
-        data["bonus_dirette_pct"] = "5-10%"
+        # Si mostra la percentuale davvero applicata (7%) e non solo la forbice:
+        # chi rifa' il conto con "5-10%" non trovava mai il numero stampato.
+        data["bonus_dirette_pct"] = "7% (stima nel range 5-10%)"
         _totale_ricavi_new = _ricavo_lordo_new + _bonus_new
 
         _comm_pct = COMMISSIONE_PIATTAFORMA_PCT
@@ -4091,6 +4244,8 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     if data.get("occupazione") and data.get("ricavo_lordo") and data.get("notti_anno"):
         data["occupazione"] = _calibra_curva_mensile(
             data["occupazione"], data["notti_anno"], data["ricavo_lordo"])
+    if data.get("occupazione"):
+        data["occupazione"] = _uniforma_stage_pari_merito(data["occupazione"])
 
     data["mesi_affidabili_idx"] = _mesi_affidabili()
 
@@ -4141,6 +4296,19 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         )
         data["fonte_affitto_tradizionale"] = "stima_airroi"
 
+    # La rata del mutuo pesa sull'immobile qualunque sia l'uso: il profitto B&B
+    # la sottrae (riga "Rata mutuo"), quindi va sottratta anche dall'affitto
+    # tradizionale, altrimenti il confronto regala al B&B un vantaggio che non
+    # esiste (Piacenza, rata 420: confronto +927/+3.138 invece di +5.967/+8.178).
+    data["affitto_mutuo_annuo"] = 0
+    if data.get("mutuo_attivo") and data.get("rata_mutuo_mensile"):
+        _mutuo_trad = int(data["rata_mutuo_mensile"]) * 12
+        data["affitto_mutuo_annuo"] = _mutuo_trad
+        data["affitto_costi"] = (data.get("affitto_costi") or 0) + _mutuo_trad
+        for _k in ("affitto_profitto", "affitto_profitto_min", "affitto_profitto_max"):
+            if data.get(_k) is not None:
+                data[_k] = data[_k] - _mutuo_trad
+
     # Sessione 78 (audit 24/8): la correzione POI (swap colonne invertite,
     # impatto deterministico, casing nome) deve avvenire PRIMA della
     # descrizione narrativa, non dopo — genera_descrizione_standard legge
@@ -4151,6 +4319,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     if correggere_poi and "poi" in data:
         data["poi"] = _correggi_poi_invertiti(data["poi"])
     _applica_poi_stabili(data)
+    _applica_poi_territoriali(data)
 
     if generare_descrizione:
         data["descrizione"] = genera_descrizione_standard(data)
@@ -4391,6 +4560,11 @@ def _scheda_fatti_verificati(data):
     if data.get("zona") and data["zona"] != "\u2014":
         righe.append(f"Zona/quartiere VERIFICATO (usa solo questo nome, non inventarne altri): {data['zona']}")
     _poi_ok = [f"{r[1]} ({r[0]})" for r in (data.get("poi") or []) if r and len(r) >= 2 and r[1] != "\u2014"]
+    # Mare, lago, montagna (Google Places / Wikidata): stessi fatti stampati in tabella.
+    _poi_ok += [f"{r[0]}: {r[2]} ({r[1]})" for r in (data.get("poi_extra") or []) if r and len(r) >= 3]
+    if _frase_camere(data.get("camere", "")) == "vano unico":
+        righe.append("Camere da letto: l'immobile e' a VANO UNICO (nessuna camera separata): "
+                     "scrivi 'vano unico', MAI '0 camere'")
     if _poi_ok:
         righe.append("Punti di interesse VERIFICATI e unici citabili con la loro distanza: " + "; ".join(_poi_ok))
     if data.get("avviso_normativo"):
@@ -4680,6 +4854,7 @@ def ai_generate():
             _ai_json = _json_std.loads(_testo_ai[_testo_ai.find("{"): _testo_ai.rfind("}") + 1])
             dati_form.applica_dati_utente(_ai_json, _dati_cliente)
             dati_form.applica_dotazioni_dichiarate(_ai_json, _dati_cliente, _norm_dotazione, DOTAZIONI_AMMESSE)
+            dati_form.applica_indirizzo(_ai_json, _dati_cliente, solo_comune=_solo_comune_da_geocode(_dati_cliente))
             _payload["content"] = [{"type": "text", "text": _json_std.dumps(_ai_json, ensure_ascii=False)}]
             print(f"[AI-GENERATE] dati cliente riletti dal prompt: rata={_dati_cliente.get('rata_mutuo_mensile')} "
                   f"intervento={_dati_cliente.get('intervento_importo')}/{_dati_cliente.get('intervento_mesi')}m "
@@ -4688,6 +4863,20 @@ def ai_generate():
         print(f"[AI-GENERATE] override dati cliente saltato: {type(e).__name__}: {e}")
 
     return jsonify(_payload), resp.status_code
+
+
+def _solo_comune_da_geocode(d):
+    """True se Google, rigeocodificando la stessa query dello scenario Make (via,
+    CAP comune), trova solo il centro del comune; False se trova una via; None
+    se non determinabile (chiave assente, errore di rete): chi chiama ricade
+    sull'euristica sul testo di Google (dati_form.google_solo_comune)."""
+    try:
+        query = f"{d.get('via', '')}, {d.get('cap', '')} {d.get('comune', '')}".strip(" ,")
+        geo = _geocode_indirizzo(query)
+        return None if not geo else bool(geo.get("solo_comune"))
+    except Exception as e:
+        print(f"[GEOCODE-PRECISIONE] non determinabile: {type(e).__name__}: {e}")
+        return None
 
 
 @app.route("/report-input-base", methods=["POST"])
@@ -4704,9 +4893,10 @@ def report_input_base():
     if _mancanti:
         print(f"[REPORT-INPUT-BASE] PARSE PROMPT ROTTO, etichette Make cambiate? mancano: {', '.join(_mancanti)}")
         return jsonify({"error": "prompt non riconosciuto", "mancano": _mancanti}), 422
-    data = dati_form.costruisci_json_base(d, _norm_dotazione, DOTAZIONI_AMMESSE)
+    data = dati_form.costruisci_json_base(d, _norm_dotazione, DOTAZIONI_AMMESSE,
+                                          solo_comune=_solo_comune_da_geocode(d))
     print(f"[REPORT-INPUT-BASE] costruito senza IA: {data.get('indirizzo')!r} tipologia={data.get('tipologia')!r} "
-          f"mq={d.get('mq')} rata={data.get('rata_mutuo_mensile')}")
+          f"mq={d.get('mq')} rata={data.get('rata_mutuo_mensile')} approssimato={data.get('indirizzo_approssimato')}")
     return jsonify({"content": [{"type": "text", "text": _json_std.dumps(data, ensure_ascii=False)}],
                     "stop_reason": "end_turn", "model": "deterministico"})
 

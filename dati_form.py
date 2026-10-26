@@ -133,6 +133,60 @@ def sigla_da_google(indirizzo_google):
     return m.group(1) if m else ""
 
 
+def _norm_testo(t):
+    return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower()).strip()
+
+
+def google_solo_comune(indirizzo_google, comune=""):
+    """Euristica sul solo testo di Google, usata quando il backend non puo'
+    rigeocodificare: "85046 Maratea PZ, Italia" (o "Maratea, Italia") e' il
+    centro del comune, non un indirizzo. Un "Via Rossi, 37121 Verona VR" no."""
+    prima = str((str(indirizzo_google or "").split(",") or [""])[0]).strip()
+    if not prima:
+        return False
+    if re.match(r"^\d{5}\b", prima):
+        return True
+    return bool(comune) and _norm_testo(prima) == _norm_testo(comune)
+
+
+def cap_valido(cap_form, indirizzo_google=""):
+    """CAP a 5 cifre: quello del form se e' valido, altrimenti quello che Google
+    ha trovato, altrimenti nessuno. Un CAP a 4 cifre ("8546" per 85046, caso
+    Maratea 26/10/2026) non va mai stampato nel PDF."""
+    cap = re.sub(r"\D", "", str(cap_form or ""))
+    if len(cap) == 5:
+        return cap
+    m = re.search(r"\b(\d{5})\b", str(indirizzo_google or ""))
+    return m.group(1) if m else ""
+
+
+def indirizzo_da_form(d, solo_comune=None):
+    """(indirizzo, approssimato). Se Google ha trovato solo il centro del comune
+    la via e' quella scritta dal cliente (Google non ha una via da offrire:
+    prima finiva stampato "85046, Maratea, 8546, Maratea (PZ)"). `solo_comune`
+    arriva dal rigeocoding del backend; se None si usa l'euristica sul testo."""
+    comune = d.get("comune") or ""
+    if solo_comune is None:
+        solo_comune = google_solo_comune(d.get("indirizzo_google"), comune)
+    if solo_comune:
+        via = str(d.get("via") or "").strip()
+    else:
+        via = via_civico_da_google(d.get("indirizzo_google"), d.get("via"))
+    cap = cap_valido(d.get("cap"), d.get("indirizzo_google"))
+    sigla = sigla_da_google(d.get("indirizzo_google"))
+    parti = [p for p in (via, cap, comune) if p]
+    indirizzo = ", ".join(parti) + (f" ({sigla})" if sigla else "")
+    return indirizzo, bool(solo_comune)
+
+
+def applica_indirizzo(data, d, solo_comune=None):
+    """Strategico: l'indirizzo lo ricompone il backend dai dati del form, non
+    l'IA (che dal solo testo di Google poteva fondere CAP, comune e civico)."""
+    if d.get("via") and d.get("comune"):
+        data["indirizzo"], data["indirizzo_approssimato"] = indirizzo_da_form(d, solo_comune)
+    return data
+
+
 def applica_dati_utente(data, d, solo_se_presenti=True):
     """Sovrascrive in `data` i campi che il cliente ha dichiarato: l'IA non li
     tocca. Chiavi vuote/None nel prompt non cancellano il dato esistente."""
@@ -201,18 +255,18 @@ def applica_dotazioni_dichiarate(data, d, norm_dotazione, dotazioni_ammesse):
     return data
 
 
-def costruisci_json_base(d, norm_dotazione, dotazioni_ammesse):
+def costruisci_json_base(d, norm_dotazione, dotazioni_ammesse, solo_comune=None):
     """JSON d'ingresso del Base costruito SENZA IA dai dati del cliente e dai
     dati Google gia' verificati nel prompt. Tutti i numeri economici sono
-    segnaposto sovrascritti dal motore di calcolo."""
-    via = via_civico_da_google(d.get("indirizzo_google"), d.get("via"))
-    sigla = sigla_da_google(d.get("indirizzo_google"))
+    segnaposto sovrascritti dal motore di calcolo. `solo_comune`: esito del
+    rigeocoding (True = Google ha trovato solo il centro del comune)."""
     comune = d.get("comune") or ""
-    indirizzo = f"{via}, {d.get('cap', '')}, {comune}" + (f" ({sigla})" if sigla else "")
+    indirizzo, approssimato = indirizzo_da_form(d, solo_comune)
     presenti = dotazioni_dichiarate(d, norm_dotazione, dotazioni_ammesse)
     data = {
         "lat": d.get("lat"), "long": d.get("long"),
         "indirizzo": indirizzo,
+        "indirizzo_approssimato": approssimato,
         "tipologia": d.get("tipologia", ""),
         "superficie": f"{d.get('mq', 0)} m2",
         "piano": d.get("piano", ""), "stato": d.get("stato", ""),

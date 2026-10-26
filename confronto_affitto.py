@@ -25,15 +25,20 @@ def _eur_segno(v):
     return ("+" if v >= 0 else "-") + _eur(abs(v))
 
 
-def _estremi(D, chiave, chiave_min=None, chiave_max=None, reale=False):
+def _estremi(D, chiave, chiave_min=None, chiave_max=None, reale=False, segno_mutuo=0):
     """(basso, alto) dell'affitto tradizionale: range reale se il comune è
-    coperto da affitti_mercato, altrimenti il +-10% generico."""
+    coperto da affitti_mercato, altrimenti il +-10% generico.
+    segno_mutuo: +1 per i costi, -1 per il profitto, 0 per il ricavo. La rata
+    del mutuo e' gia' dentro il valore (app.py) ma e' un importo esatto: il
+    +-10% generico si applica solo alla parte restante."""
     v = D.get(chiave, 0) or 0
     if reale and chiave_min and D.get(chiave_min) is not None and D.get(chiave_max) is not None:
         return D[chiave_min], D[chiave_max]
     if reale:  # costi: un solo valore
         return v, v
-    return round(v * 0.9), round(v * 1.1)
+    mutuo = (D.get("affitto_mutuo_annuo") or 0) * segno_mutuo
+    base = v - mutuo
+    return round(base * 0.9) + mutuo, round(base * 1.1) + mutuo
 
 
 def _testo_range(basso, alto):
@@ -42,8 +47,8 @@ def _testo_range(basso, alto):
     return f"{_eur(basso)} - {_eur(alto)}"
 
 
-def _riga(D, label, esatto_bnb, chiave, chiave_min=None, chiave_max=None, reale=False):
-    basso, alto = _estremi(D, chiave, chiave_min, chiave_max, reale)
+def _riga(D, label, esatto_bnb, chiave, chiave_min=None, chiave_max=None, reale=False, segno_mutuo=0):
+    basso, alto = _estremi(D, chiave, chiave_min, chiave_max, reale, segno_mutuo)
     d_basso, d_alto = esatto_bnb - alto, esatto_bnb - basso   # differenza min / max
     if round(d_basso) == round(d_alto):
         diff = _eur_segno(d_basso)
@@ -63,9 +68,9 @@ def tabella_confronto(D, larghezza):
     _ricavo_bnb = D.get("totale_ricavi") or D.get("ricavo_lordo", 0)
     r_ric, ok_ric = _riga(D, "Ricavo annuo lordo*", _ricavo_bnb, "affitto_ricavo",
                           "affitto_ricavo_min", "affitto_ricavo_max", reale)
-    r_cos, _ = _riga(D, "Costi di gestione", D.get("totale_costi", 0), "affitto_costi", reale=reale)
+    r_cos, _ = _riga(D, "Costi di gestione", D.get("totale_costi", 0), "affitto_costi", reale=reale, segno_mutuo=1)
     r_pro, ok_pro = _riga(D, "Profitto netto", D.get("profitto_netto", 0), "affitto_profitto",
-                          "affitto_profitto_min", "affitto_profitto_max", reale)
+                          "affitto_profitto_min", "affitto_profitto_max", reale, segno_mutuo=-1)
     # Costi: la "differenza" non è un guadagno/perdita colorabile, resta neutra.
     rows = [
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
@@ -93,11 +98,19 @@ def tabella_confronto(D, larghezza):
 def nota_ricavi(D, html=False):
     """Nota a pie' tabella: dice cosa c'e' dentro il ricavo B&B."""
     bonus = D.get("bonus_dirette") or 0
-    if not bonus:
+    mutuo = D.get("affitto_mutuo_annuo") or 0
+    if not bonus and not mutuo:
         return None
-    return (f"* Ricavo B{'&amp;' if html else '&'}B = ricavo lordo da piattaforme + {_eur(bonus)} stimati da prenotazioni dirette "
-            "(totale ricavi dell'analisi economica). Profitto = ricavo - costi di gestione. "
-            "Valori al lordo delle imposte.")
+    amp = "&amp;" if html else "&"
+    testo = "* "
+    if bonus:
+        testo += (f"Ricavo B{amp}B = ricavo lordo da piattaforme + {_eur(bonus)} stimati da prenotazioni dirette "
+                  "(totale ricavi dell'analisi economica). ")
+    testo += "Profitto = ricavo - costi di gestione. "
+    if mutuo:
+        testo += (f"La rata del mutuo ({_eur(mutuo)} all'anno) è inclusa in entrambe le colonne: "
+                  "l'immobile ha lo stesso costo di acquisto qualunque sia l'uso. ")
+    return testo + "Valori al lordo delle imposte."
 
 
 def disclaimer_mercato(D):

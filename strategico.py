@@ -577,6 +577,15 @@ def page2(c, data):
             Paragraph(str(nome), style_cell_reg),
             Paragraph(str(impatto), style_cell_reg),
         ])
+    # Mare, lago, montagna (territorio_poi): righe extra, identiche al Base.
+    for _r in (data.get('poi_extra') or []):
+        _et, _dist, _nome_e, _imp = (list(_r) + ["—"] * 4)[:4]
+        poi_data.append([
+            Paragraph(str(_et), style_cell_bold),
+            Paragraph(str(_dist), style_cell_reg),
+            Paragraph(str(_nome_e), style_cell_reg),
+            Paragraph(str(_imp), style_cell_reg),
+        ])
 
     col_w_poi = [(W - 28*mm) * 0.20, (W - 28*mm) * 0.22, (W - 28*mm) * 0.42, (W - 28*mm) * 0.16]
     tbl_poi = Table(poi_data, colWidths=col_w_poi)
@@ -590,6 +599,12 @@ def page2(c, data):
     ]))
     tbl_poi.wrapOn(c, W-28*mm, 200)
     tbl_poi.drawOn(c, 14*mm, y - tbl_poi._height)
+    if data.get("indirizzo_approssimato"):
+        # Google ha trovato solo il centro del comune: onestà sulla base delle distanze.
+        _nota_pos = (f"Nota: l'indirizzo indicato non è stato individuato con precisione da Google Maps; "
+                     f"le distanze di questa tabella sono calcolate dal centro di {data.get('comune') or 'questo comune'}, "
+                     "non dall'immobile. Per un risultato esatto genera un nuovo report con via e numero civico completi.")
+        wrap_simple(c, _nota_pos, 14*mm, y - tbl_poi._height - 5*mm, W - 28*mm, "Helvetica-Oblique", 6.5, 3.6*mm, RED)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 3 — Occupazione stagionale
@@ -612,7 +627,7 @@ def page3(c, data):
     VERDE_AFFIDABILE = HexColor("#D4F1DE")
     VERDE_DATO_REALE = HexColor("#2E9E4F")
 
-    header_half = ["Mese", "Occup.", "€/notte", "Stage"]
+    header_half = ["Mese", "Occup.", "€/notte", "Stagione"]
     data_sx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[:6]]
     data_dx = [[o[0], f"{o[1]}%", f"€ {o[2]}", o[3]] for o in occ[6:]]
 
@@ -680,7 +695,7 @@ def page3(c, data):
     # attuale"), stessa scala 30-95 con clamp, stessi cerchi ingranditi con
     # anello e badge verde sui mesi affidabili, stesso disclaimer sotto.
     legend_items = [("Bassa", MUTED), ("Media", BLUE_PRIMARY), ("Alta stagione", TEAL),
-                    ("Peak", GOLD), ("Mesi piu' affidabili", VERDE_DATO_REALE)]
+                    ("Peak", GOLD), ("Mesi più affidabili", VERDE_DATO_REALE)]
     lx = gx + 3*mm
     for lbl, col in legend_items:
         c.setFillColor(col)
@@ -760,8 +775,8 @@ def page3(c, data):
         c.drawCentredString(px_dot, gy + 4*mm, f"€ {row[2]}")
 
     disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 piu' vicini alla data del report) sono quelli su cui la stima e' piu' affidabile; "
-        "i mesi piu' lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
+        "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
+        "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
         "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
         "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
     )
@@ -1088,7 +1103,7 @@ def page4b_moltiplicatori(c, data):
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Moltiplicatori di valore - dotazioni")
     y -= 3*mm
-    draw_section_subtitle(c, 14*mm, y, "Quanto guadagneresti aggiungendo le dotazioni che il mercato di zona premia di piu'")
+    draw_section_subtitle(c, 14*mm, y, "Quanto guadagneresti aggiungendo le dotazioni che il mercato di zona premia di più")
     y -= 7*mm
 
     righe = data.get('moltiplicatori_dotazioni') or []
@@ -1102,10 +1117,10 @@ def page4b_moltiplicatori(c, data):
         c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=0, stroke=1)
         c.setFont("Helvetica-Bold", 9)
         c.setFillColor(TEAL)
-        c.drawString(18*mm, y - 8*mm, "Il tuo immobile ha gia' le dotazioni che il mercato premia di piu'")
+        c.drawString(18*mm, y - 8*mm, "Il tuo immobile ha già le dotazioni che il mercato premia di più")
         c.setFont("Helvetica", 8)
         c.setFillColor(BLUE_NIGHT)
-        wrap_simple(c, "Nessun margine residuo su questo fronte: il prezzo/notte gia' mostrato nel report include per intero il bonus dotazioni calcolato per il tuo immobile.", 18*mm, y - 14*mm, W - 40*mm, "Helvetica", 8, 4.5*mm, BLUE_NIGHT)
+        wrap_simple(c, "Nessun margine residuo su questo fronte: il prezzo/notte già mostrato nel report include per intero il bonus dotazioni calcolato per il tuo immobile.", 18*mm, y - 14*mm, W - 40*mm, "Helvetica", 8, 4.5*mm, BLUE_NIGHT)
         return
 
     tbl_data = [["Dotazione da aggiungere", "Incremento stimato", "Impatto su prezzo/notte", "Impatto su ricavo annuo"]]
@@ -1145,7 +1160,7 @@ def page4b_moltiplicatori(c, data):
     c.drawString(18*mm, y - 6*mm, "Come leggere questa tabella")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
-    wrap_simple(c, "Impatti calcolati sullo stesso modello gia' usato per correggere il prezzo/notte reale del tuo immobile (non stime generiche): riflettono l'aumento medio di mercato osservato per ciascuna dotazione, cumulabile se ne aggiungi piu' di una.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+    wrap_simple(c, "Impatti calcolati sullo stesso modello già usato per correggere il prezzo/notte reale del tuo immobile (non stime generiche): riflettono l'aumento medio di mercato osservato per ciascuna dotazione, cumulabile se ne aggiungi più di una.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 4 — Analisi economica annuale
@@ -1937,7 +1952,7 @@ def page8b_durata(c, data):
     c.drawString(18*mm, y - 6*mm, "Come leggere questa pagina")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
-    wrap_simple(c, "Per isolare l'effetto delle pulizie, qui il ricavo lordo e' tenuto uguale nei tre casi. Nella realta' non lo e': un min-stay piu' lungo di solito riduce le richieste e il prezzo/notte (i soggiorni di 7-14 notti si vendono in genere con sconti, e in una citta' d'arte i weekend brevi valgono di piu'), quindi i profitti delle colonne 'medi' e 'lunghi' sono un limite superiore, non una previsione. Il dato affidabile di questa pagina e' la riga 'Costi pulizia'.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+    wrap_simple(c, "Per isolare l'effetto delle pulizie, qui il ricavo lordo è tenuto uguale nei tre casi. Nella realtà non lo è: un min-stay più lungo di solito riduce le richieste e il prezzo/notte (i soggiorni di 7-14 notti si vendono in genere con sconti, e in una città d'arte i weekend brevi valgono di più), quindi i profitti delle colonne 'medi' e 'lunghi' sono un limite superiore, non una previsione. Il dato affidabile di questa pagina è la riga 'Costi pulizia'.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 8C — Dati di mercato extra (B9)
@@ -2017,9 +2032,9 @@ def page8c_mercato(c, data):
 
         note_bits = []
         if perc_p and data.get('prezzo_notte_stimato'):
-            note_bits.append(f"Il tuo prezzo/notte (€ {data['prezzo_notte_stimato']}) e' {_posiziona_percentile(data['prezzo_notte_stimato'], perc_p)}.")
+            note_bits.append(f"Il tuo prezzo/notte (€ {data['prezzo_notte_stimato']}) è {_posiziona_percentile(data['prezzo_notte_stimato'], perc_p)}.")
         if perc_o and data.get('occupazione_percent') is not None:
-            note_bits.append(f"La tua occupazione ({data['occupazione_percent']}%) e' {_posiziona_percentile(data['occupazione_percent'], perc_o)}.")
+            note_bits.append(f"La tua occupazione ({data['occupazione_percent']}%) è {_posiziona_percentile(data['occupazione_percent'], perc_o)}.")
         if note_bits:
             c.setFont("Helvetica-Oblique", 7.5)
             c.setFillColor(MUTED)
@@ -2056,7 +2071,7 @@ def page8c_mercato(c, data):
     if trend:
         y = draw_section_header(c, 14*mm, y, W - 28*mm, "Posizionamento stagionale — ultimi 90 giorni vs media 12 mesi")
         y -= 3*mm
-        draw_section_subtitle(c, 14*mm, y, "Non e' un trend pluriennale: confronta la stagione corrente con la media dell'intero anno")
+        draw_section_subtitle(c, 14*mm, y, "Non è un trend pluriennale: confronta la stagione corrente con la media dell'intero anno")
         y -= 6*mm
 
         trend_data = [
