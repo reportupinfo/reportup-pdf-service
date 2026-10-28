@@ -150,7 +150,7 @@ if strategico:
             ok(f"durata {dur}: cambi", cb, int(m[1])); ok(f"durata {dur}: pulizia", pl, n(m[3])); ok(f"durata {dur}: costi", ct, n(m[4]))
             ok(f"durata {dur}: profitto", pf, n(m[5])); ok(f"durata {dur}: margine", round(pf / totale_ricavi * 100), int(m[6]))
     # asset
-    m = re.search(r"EBITDA / Saggio cap\. = € ([\d.]+) / ([\d.]+)% = € ([\d.]+)", flat)
+    m = re.search(r"EBITDA / Saggio cap\. = € ([\d.]+) / ([\d.]+)% =(?: Capitalizza.*?vendita\.)? € ([\d.]+)", flat)
     if m:
         eb = n(m[1]); sag = float(m[2]); val = n(m[3])
         ok("EBITDA = ricavi - costi senza mutuo", totale_ricavi - (tot_costi - mutuo), eb)

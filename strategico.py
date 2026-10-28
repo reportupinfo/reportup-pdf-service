@@ -1620,6 +1620,13 @@ def page7(c, data):
     _st_motivo = ParagraphStyle("saggio_motivo", fontName="Helvetica", fontSize=7,
                                 leading=9, textColor=BLUE_NIGHT)
     _motivo_saggio = data.get('saggio_capitalizzazione_motivo') or "Rendimento atteso per immobili ricettivi"
+    # Riga del valore asset: formula (oro, grassetto) + avvertenza fissa (28/10/2026): il valore capitalizza
+    # il reddito B&B prima di imposte/IMU/ammortamenti e puo' superare il prezzo di compravendita.
+    _st_val = ParagraphStyle("valore_asset", fontName="Helvetica-Bold", fontSize=7, leading=9, textColor=GOLD)
+    _st_val_nota = ParagraphStyle("valore_asset_nota", fontName="Helvetica", fontSize=6.5, leading=8.5,
+                                  textColor=BLUE_NIGHT, spaceBefore=1)
+    _nota_valore_asset = ("Capitalizza il reddito stimato prima di imposte, IMU e ammortamenti: pu\u00f2 superare il prezzo "
+                          "di compravendita dell\u2019immobile. Non \u00e8 una stima di vendita.")
     ebitda = data.get('ebitda_stimato', 0)
     valore = data.get('valore_mercato', 0)
     v_stimato = data.get('valore_immobile_stimato', 0)
@@ -1633,7 +1640,8 @@ def page7(c, data):
          Paragraph(_motivo_saggio, _st_motivo),
          f"{saggio:g}%".replace(".", ",")],
         ["VALORE DI MERCATO come asset B&B",
-         f"EBITDA  /  Saggio cap.  =  \u20ac {ebitda:,}  /  {saggio:g}%  =".replace(",","."),
+         [Paragraph(f"EBITDA  /  Saggio cap.  =  \u20ac {ebitda:,}  /  {saggio:g}%  =".replace(",","."), _st_val),
+          Paragraph(_nota_valore_asset, _st_val_nota)],
          fmt_eu(valore)],
         # A zero si scriveva "€ 0", che davanti a un cliente si legge come
         # "il tuo immobile non vale niente". Le due righe sotto già dicono n/d
