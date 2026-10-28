@@ -61,16 +61,33 @@ marg = int(cerca(r"Margine netto su ricavi totali (?:€ [\d.]+ / € [\d.]+ x 1
 ok("margine = round(profitto/ricavi)", round(profitto / totale_ricavi * 100), marg)
 
 # ── riepilogo / range ─────────────────────────────────────────────────────────
+# Dal 28/10/2026 le fasce sotto le card sono i percentili reali P25-P75 di AirROI
+# ("Range zona", gli stessi della pag. 10 dello Strategico); senza percentili
+# restano il +-20% del nostro valore, ma si chiamano "Intervallo stimato".
+_p25 = re.search(r"P25 \(fascia bassa\) € (\d+) (\d+)%", flat)
+_p75 = re.search(r"P75 \(fascia alta\) € (\d+) (\d+)%", flat)
 m = re.search(r"Range zona: € (\d+)-(\d+)", flat)
+mi = re.search(r"Intervallo stimato: € (\d+)-(\d+)", flat)
 if m:
-    ok("range prezzo -20%", max(1, round(prezzo * 0.8)), int(m[1])); ok("range prezzo +20%", round(prezzo * 1.2), int(m[2]))
+    if _p25 and _p75:
+        ok("range zona prezzo = P25 pag. 10", int(_p25[1]), int(m[1])); ok("range zona prezzo = P75 pag. 10", int(_p75[1]), int(m[2]))
+    else:
+        ok("range zona prezzo ordinato (P25 < P75)", 1, 1 if int(m[1]) < int(m[2]) else 0)
+elif mi:
+    ok("intervallo prezzo -20%", max(1, round(prezzo * 0.8)), int(mi[1])); ok("intervallo prezzo +20%", round(prezzo * 1.2), int(mi[2]))
 else:
-    esiti.append((False, "riepilogo: 'Range zona' non presente", "-", "-"))
-m = re.search(r"Media zona: (\d+)-(\d+)%", flat)
+    esiti.append((False, "riepilogo: 'Range zona' / 'Intervallo stimato' prezzo non presente", "-", "-"))
+m = re.search(r"Range zona: (\d+)-(\d+)%", flat)
+mi = re.search(r"Intervallo stimato: (\d+)-(\d+)%", flat)
 if m:
-    ok("range occ -20%", max(5, round(occ * 0.8)), int(m[1])); ok("range occ +20% (tetto)", round(occ * 1.2), int(m[2]), tol=0)
+    if _p25 and _p75:
+        ok("range zona occ = P25 pag. 10", int(_p25[2]), int(m[1])); ok("range zona occ = P75 pag. 10", int(_p75[2]), int(m[2]))
+    else:
+        ok("range zona occ ordinato (P25 < P75)", 1, 1 if int(m[1]) < int(m[2]) else 0)
+elif mi:
+    ok("intervallo occ -20%", max(5, round(occ * 0.8)), int(mi[1])); ok("intervallo occ +20% (tetto)", round(occ * 1.2), int(mi[2]), tol=0)
 else:
-    esiti.append((False, "riepilogo: 'Media zona' non presente", "-", "-"))
+    esiti.append((False, "riepilogo: 'Range zona' / 'Intervallo stimato' occupazione non presente", "-", "-"))
 _pm = re.search(r"POTENZIALE LORDO ANNUO € ([\d.]+) all'anno Con occupazione al (\d+)%", flat)
 if _pm:
     ok("potenziale lordo = ricavo lordo", ricavo, n(_pm.group(1)))

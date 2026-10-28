@@ -130,7 +130,7 @@ LEGENDA_VOCI = [
     ("", "", ""),
     ("BLOCCO INVESTIMENTO — cosa modifichi", "", ""),
     ("Saggio di capitalizzazione", "Rendimento annuo che un investitore si aspetta da un asset di questo tipo.",
-     "Più alto = più rischio percepito = valore stimato più basso. 7% è lo standard usato nel tuo report per B&B in Italia."),
+     "Più alto = più rischio percepito = valore stimato più basso. Il report applica un valore convenzionale per fascia di zona: 6% zone prime (centri storici), 7% zone intermedie, 8% zone periferiche o mercati meno liquidi."),
     ("", "", ""),
     ("BLOCCO INVESTIMENTO — risultati calcolati", "", ""),
     ("EBITDA stimato", "Profitto prima degli oneri finanziari (il mutuo viene riaggiunto al profitto netto).",

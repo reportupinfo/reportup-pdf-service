@@ -592,7 +592,17 @@ def _calcola_scenari_durata_soggiorno(data):
     ]
 
 
-SAGGIO_CAPITALIZZAZIONE_PCT = 7.0
+def _metri_dal_centro(data):
+    """Distanza dal centro del comune in metri, dalla riga "Centro del comune"
+    dei POI territoriali (stessa misura che il report mostra al cliente).
+    "In centro" = 0. None se la riga manca (indirizzo approssimato, Google
+    non risponde): il saggio resta in fascia intermedia."""
+    for r in (data.get("poi_extra") or []):
+        if r and len(r) >= 5 and r[0] == "Centro del comune" and isinstance(r[4], dict):
+            m = r[4].get("metri")
+            if isinstance(m, (int, float)):
+                return m
+    return None
 
 
 def _calcola_valore_asset(data):
@@ -608,8 +618,13 @@ def _calcola_valore_asset(data):
     # Saggio FISSO (regola 6/10/2026: l'IA non decide numeri). Prima arrivava
     # dall'IA (6,5% a Matera, 7% altrove): stesso immobile, valore diverso a
     # ogni generazione.
-    saggio = SAGGIO_CAPITALIZZAZIONE_PCT
+    # Dal 28/10/2026 il saggio dipende dalla zona (centro / intermedia /
+    # periferia), non e' piu' un 7% unico: vedi saggio_capitalizzazione_zona.
+    saggio, _motivo = stagionalita_turistica.saggio_capitalizzazione_zona(
+        data.get("sottocategoria"), data.get("categoria"), data.get("comune"),
+        _metri_dal_centro(data))
     data["saggio_capitalizzazione"] = saggio
+    data["saggio_capitalizzazione_motivo"] = _motivo
     profitto = data.get("profitto_netto")
     if profitto is None:
         return
@@ -4247,10 +4262,24 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         # poco credibile su un report a pagamento (es. "60-98%" di
         # occupazione). Resta comunque un range simmetrico attorno al valore
         # stimato, non un dato di mercato osservato riga per riga.
-        data["kpi_prezzo_range"] = f"Range zona: € {max(1, round(_p_new * 0.80))}-{round(_p_new * 1.20)}"
-        _occ_range_min = max(5, round(_occ_new * 0.80))
-        _occ_range_max = min(_tetto_occ, round(_occ_new * 1.20))
-        data["kpi_occ_range"] = f"Media zona: {_occ_range_min}-{_occ_range_max}%"
+        # 28/10/2026: quando AirROI da' i percentili reali della zona, la fascia
+        # sotto le card e' la loro (P25-P75, gli stessi della pag. 10 dello
+        # Strategico) e si chiama "zona". Il +-20% sul nostro valore non e' un
+        # dato di zona e restava stampato come tale, con numeri diversi dai
+        # percentili reali nello stesso PDF: ora, senza percentili, si
+        # chiama per quello che e' ("Intervallo stimato").
+        _pp = data.get("percentili_prezzo")
+        if isinstance(_pp, dict) and _pp.get("p25") and _pp.get("p75"):
+            data["kpi_prezzo_range"] = f"Range zona: € {round(_pp['p25'])}-{round(_pp['p75'])}"
+        else:
+            data["kpi_prezzo_range"] = f"Intervallo stimato: € {max(1, round(_p_new * 0.80))}-{round(_p_new * 1.20)}"
+        _po = data.get("percentili_occupazione")
+        if isinstance(_po, dict) and _po.get("p25") and _po.get("p75"):
+            data["kpi_occ_range"] = f"Range zona: {round(_po['p25'])}-{round(_po['p75'])}%"
+        else:
+            _occ_range_min = max(5, round(_occ_new * 0.80))
+            _occ_range_max = min(_tetto_occ, round(_occ_new * 1.20))
+            data["kpi_occ_range"] = f"Intervallo stimato: {_occ_range_min}-{_occ_range_max}%"
 
         try:
             _curva, _fonte_stagionalita = stagionalita_turistica.ottieni_curva_stagionale(

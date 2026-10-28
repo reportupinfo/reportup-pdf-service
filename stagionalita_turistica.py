@@ -478,3 +478,54 @@ def stima_affitto_tradizionale(prezzo_notte, fonte):
     affitto_costi = max(500, min(2000, round(affitto_ricavo * 0.10)))
     affitto_profitto = affitto_ricavo - affitto_costi
     return affitto_ricavo, affitto_costi, affitto_profitto, round(sconto * 100)
+
+
+# ── Saggio di capitalizzazione per zona (28/10/2026, deciso da Salvatore) ───
+# Prima era un 7% unico per tutti gli immobili, mentre il glossario dello
+# stesso PDF dice 5,5-6,5% per le zone prime (centri storici) e 7-9% per
+# periferie e mercati meno liquidi: tre numeri diversi nello stesso report.
+# Ora il saggio e' un valore CONVENZIONALE per fascia di zona, scelto nel
+# range di quel glossario (6 = centro del range prime, 8 = centro del range
+# periferico, 7 = zona intermedia, bordo basso del range periferico). Zona
+# nota dal report stesso: categoria del comune/vocazione (stessa
+# classificazione della curva stagionale) + distanza dal centro del comune
+# (riga "Centro del comune" dei POI). Zero IA: stesso immobile, stesso saggio.
+SAGGIO_ZONA_PRIMA = 6.0
+SAGGIO_ZONA_INTERMEDIA = 7.0
+SAGGIO_ZONA_PERIFERICA = 8.0
+# Entro questa distanza dal centro l'immobile e' "in centro" (circa 25 minuti a
+# piedi, la stessa soglia con cui il report sceglie "a piedi" invece di "in auto").
+CENTRO_MAX_METRI_ZONA_FORTE = 2000
+# Nei comuni senza vocazione turistica il mercato e' meno liquido gia' a poca
+# distanza dal centro: oltre 1 km si passa alla fascia periferica.
+CENTRO_MAX_METRI_ZONA_DEBOLE = 1000
+
+_FONTI_ZONA_FORTE = ("citta", "costiero", "lacuale", "montano_invernale")
+
+
+def saggio_capitalizzazione_zona(sottocategoria, categoria, comune, metri_centro=None):
+    """(saggio %, motivo). metri_centro: distanza dal centro del comune
+    (None = non nota: indirizzo approssimato o Google non risponde, e allora
+    fascia intermedia, mai un'ipotesi). Il motivo e' la frase che il PDF
+    mette accanto al valore applicato."""
+    _curva, fonte = ottieni_curva_stagionale(sottocategoria, categoria, comune)
+    forte = fonte in _FONTI_ZONA_FORTE
+    soglia = CENTRO_MAX_METRI_ZONA_FORTE if forte else CENTRO_MAX_METRI_ZONA_DEBOLE
+    if metri_centro is None:
+        noto = False
+        vicino = False
+    else:
+        noto = True
+        vicino = metri_centro <= soglia
+
+    if forte and noto and vicino:
+        return SAGGIO_ZONA_PRIMA, (
+            "Zona centrale di citt\u00e0 o localit\u00e0 turistica, mercato liquido: "
+            "range 5,5%-6,5%, applicato il 6% convenzionale")
+    if not forte and noto and not vicino:
+        return SAGGIO_ZONA_PERIFERICA, (
+            "Zona periferica o mercato meno liquido: "
+            "range 7%-9%, applicato l\u20198% convenzionale")
+    return SAGGIO_ZONA_INTERMEDIA, (
+        "Zona intermedia, tra centro e periferia: "
+        "tra le zone prime (5,5%-6,5%) e le periferiche (7%-9%), applicato il 7% convenzionale")

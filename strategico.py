@@ -1616,6 +1616,10 @@ def page7(c, data):
     y -= 7*mm
 
     saggio = data.get('saggio_capitalizzazione', 0)
+    # Motivo del saggio (fascia di zona): nello stile della cella, che deve andare a capo.
+    _st_motivo = ParagraphStyle("saggio_motivo", fontName="Helvetica", fontSize=7,
+                                leading=9, textColor=BLUE_NIGHT)
+    _motivo_saggio = data.get('saggio_capitalizzazione_motivo') or "Rendimento atteso per immobili ricettivi"
     ebitda = data.get('ebitda_stimato', 0)
     valore = data.get('valore_mercato', 0)
     v_stimato = data.get('valore_immobile_stimato', 0)
@@ -1626,10 +1630,10 @@ def page7(c, data):
          "Ricavi totali  -  Costi totali operativi",
          fmt_eu(ebitda)],
         ["Saggio di capitalizzazione",
-         f"Rendimento atteso per immobili ricettivi  |  Valore applicato: {saggio}%",
-         f"{saggio}%"],
+         Paragraph(_motivo_saggio, _st_motivo),
+         f"{saggio:g}%".replace(".", ",")],
         ["VALORE DI MERCATO come asset B&B",
-         f"EBITDA  /  Saggio cap.  =  \u20ac {ebitda:,}  /  {saggio}%  =".replace(",","."),
+         f"EBITDA  /  Saggio cap.  =  \u20ac {ebitda:,}  /  {saggio:g}%  =".replace(",","."),
          fmt_eu(valore)],
         # A zero si scriveva "€ 0", che davanti a un cliente si legge come
         # "il tuo immobile non vale niente". Le due righe sotto già dicono n/d
@@ -1698,9 +1702,10 @@ def page7(c, data):
 
     glossario = [
         ("* Saggio di capitalizzazione",
-         f"Tasso percentuale ({saggio}%) che esprime il rendimento atteso dal mercato per un immobile a destinazione ricettiva. "
+         f"Tasso percentuale ({f'{saggio:g}'.replace('.', ',')}%) che esprime il rendimento atteso dal mercato per un immobile a destinazione ricettiva. "
          "Varia in base al rischio della zona: pi\u00f9 centrale e liquido \u00e8 il mercato, pi\u00f9 basso \u00e8 il saggio. "
          "Range indicativo: 5,5%-6,5% zone prime (centri storici), 7%-9% zone periferiche o mercati meno liquidi. "
+         "Nel report si applica un valore convenzionale per fascia di zona: 6% zone prime, 7% zone intermedie, 8% zone periferiche. "
          "Pi\u00f9 basso \u00e8 il saggio, pi\u00f9 alto \u00e8 il valore dell\u2019immobile."),
         ("* Cap Rate (Capitalization Rate)",
          "Rapporto percentuale tra il reddito netto operativo annuo e il valore di mercato dell\u2019immobile. "
@@ -2375,7 +2380,7 @@ def page11(c, data):
         ("Valutazione asset immobiliare",
          "Modello professionale di valutazione bancaria alberghiera " + chr(0xb7) + " Arch. Salvatore Junior Sica " + chr(0xb7) + " 30.000+ perizie."),
         ("Saggio di capitalizzazione",
-         "Parametro derivato da modello bancario professionale " + chr(0xb7) + " Range mercato ricettivo italiano 5,5%-8%."),
+         "Parametro derivato da modello bancario professionale " + chr(0xb7) + " Range indicativo 5,5%-9% (zone prime 5,5%-6,5%, periferiche 7%-9%) " + chr(0xb7) + " Valore convenzionale per fascia di zona: 6%, 7% o 8%."),
     ]
 
     for fonte, desc in fonti:
@@ -2639,7 +2644,7 @@ def page_riepilogo(c, data):
          "Profitto netto / 12 mesi"),
         ("VALORE COME ASSET B&B",
          fmt_eur(_valore_asset) if _valore_asset else "n/d", "valore di mercato",
-         f"Saggio cap. {data.get('saggio_capitalizzazione', 7.0)}%"),
+         "Saggio cap. " + f"{data.get('saggio_capitalizzazione', 7.0):g}".replace(".", ",") + "%"),
         ("RevPAR", f"€ {data.get('revpar', 0)}", "per unità disponibile",
          "ADR x occupazione"),
         ("SCENARIO REALISTICO",

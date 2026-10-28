@@ -76,7 +76,7 @@ def tabella_confronto(D, larghezza):
         ["", "Affitto tradizionale", "B&B / Short rent", "Differenza"],
         r_ric, r_cos, r_pro,
         ["Flessibilità utilizzo", "Bassa", "Alta", "Molto alta"],
-        ["Rischio morosità", "Alto", "Nullo", "Eliminato"],
+        ["Rischio morosità", "Alto", "Nullo", "Azzerato"],
     ]
     tbl = Table(rows, colWidths=[larghezza * 0.28, larghezza * 0.22, larghezza * 0.22, larghezza * 0.28])
     tbl.setStyle(TableStyle([
