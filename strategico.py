@@ -779,7 +779,9 @@ def page3(c, data):
         "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
         "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
         "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
-        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
+        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica. "
+        "Il livello annuo di prezzo e occupazione deriva dai dati di mercato su annunci comparabili; "
+        "la distribuzione tra i mesi è una stima e può discostarsi nella tua zona."
     )
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,

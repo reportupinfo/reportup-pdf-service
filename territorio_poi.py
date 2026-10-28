@@ -177,12 +177,14 @@ def percorso(lat1, lon1, lat2, lon2, modo, timeout=4):
     return risultato
 
 
-def distanza_testo(lat, lon, dlat, dlon):
-    """(testo, impatto). A piedi se il percorso e' entro 25 minuti, altrimenti in
-    auto; se la Distance Matrix non risponde, linea d'aria dichiarata come tale.
+def distanza_info(lat, lon, dlat, dlon):
+    """(testo, impatto, info). A piedi se il percorso e' entro 25 minuti, altrimenti
+    in auto; se la Distance Matrix non risponde, linea d'aria dichiarata come tale.
     Un percorso a piedi molto piu' lungo di quello in auto (Maratea: 3,3 km a
     piedi contro 200 m in auto, il punto di partenza cade in un'area pedonale)
-    e' un'anomalia di Google: non si stampa."""
+    e' un'anomalia di Google: non si stampa.
+    info = {"modo": "piedi"|"auto"|"aria", "metri": int, "minuti": int|None}: le
+    stesse misure del testo, per scegliere le frasi standard della descrizione."""
     linea_km = _haversine_km(float(lat), float(lon), float(dlat), float(dlon))
     p = percorso(lat, lon, dlat, dlon, "walking")
     a = None
@@ -192,12 +194,21 @@ def distanza_testo(lat, lon, dlat, dlon):
             p = None
     if p and p[1] <= 25:
         impatto = "Alto" if p[1] <= 15 else "Medio"
-        return f"{fmt_metri(p[0])} · {p[1]} min a piedi", impatto
+        return (f"{fmt_metri(p[0])} · {p[1]} min a piedi", impatto,
+                {"modo": "piedi", "metri": int(p[0]), "minuti": int(p[1])})
     if a and a[0] > 1500:
         impatto = "Medio" if a[1] <= 10 else "Basso"
-        return f"{fmt_metri(a[0])} · {a[1]} min in auto", impatto
+        return (f"{fmt_metri(a[0])} · {a[1]} min in auto", impatto,
+                {"modo": "auto", "metri": int(a[0]), "minuti": int(a[1])})
     impatto = "Alto" if linea_km <= 1.2 else "Medio" if linea_km <= 4 else "Basso"
-    return f"{fmt_metri(linea_km * 1000)} (linea d'aria)", impatto
+    return (f"{fmt_metri(linea_km * 1000)} (linea d'aria)", impatto,
+            {"modo": "aria", "metri": int(linea_km * 1000), "minuti": None})
+
+
+def distanza_testo(lat, lon, dlat, dlon):
+    """(testo, impatto): come distanza_info senza le misure."""
+    testo, impatto, _info = distanza_info(lat, lon, dlat, dlon)
+    return testo, impatto
 
 
 # ── Mare ─────────────────────────────────────────────────────────────────────
@@ -265,8 +276,8 @@ def righe_spiaggia(lat, lon):
     for etichetta, luogo in (("Spiaggia più vicina", vicina), ("Spiaggia principale", principale)):
         if not luogo:
             continue
-        testo, impatto = distanza_testo(lat, lon, luogo["lat"], luogo["lon"])
-        righe.append([etichetta, testo, _titolo(luogo["nome"]), impatto])
+        testo, impatto, info = distanza_info(lat, lon, luogo["lat"], luogo["lon"])
+        righe.append([etichetta, testo, _titolo(luogo["nome"]), impatto, info])
     return righe
 
 
@@ -305,15 +316,16 @@ def righe_lago(lat, lon):
                     and l["_dist_km"] <= MAX_KM_ACCESSO_LAGO]
     if accessi:
         acc = min(accessi, key=lambda l: l["_dist_km"])
-        testo, impatto = distanza_testo(lat, lon, acc["lat"], acc["lon"])
+        testo, impatto, info = distanza_info(lat, lon, acc["lat"], acc["lon"])
         nome_acc = _titolo(acc["nome"])
         etichetta_nome = nome_lago if nome_lago.lower() in nome_acc.lower() else f"{nome_lago} ({nome_acc})"
-        return [["Lago", testo, etichetta_nome, impatto]]
+        return [["Lago", testo, etichetta_nome, impatto, info]]
     # Nessun punto di accesso: distanza dalla sponda della lista curata, dichiarata
     # come indicativa (arrotondata a 0,5 km), mai "al metro".
     km = max(0.5, round(dkm * 2) / 2.0)
     impatto = "Alto" if km <= 1.5 else "Medio" if km <= 5 else "Basso"
-    return [["Lago", f"circa {fmt_metri(km * 1000)} (linea d'aria)", nome_lago, impatto]]
+    return [["Lago", f"circa {fmt_metri(km * 1000)} (linea d'aria)", nome_lago, impatto,
+             {"modo": "aria", "metri": int(km * 1000), "minuti": None}]]
 
 
 # ── Montagna ─────────────────────────────────────────────────────────────────
@@ -372,7 +384,8 @@ def riga_montagna(lat, lon, quota):
     km = cima["_dist_km"]
     impatto = "Alto" if km <= 10 else "Medio" if km <= 25 else "Basso"
     return [["Montagna di riferimento", f"{fmt_metri(km * 1000)} (linea d'aria)",
-             f"{_titolo(nome)} ({quota_txt} m)", impatto]]
+             f"{_titolo(nome)} ({quota_txt} m)", impatto,
+             {"modo": "aria", "metri": int(km * 1000), "minuti": None}]]
 
 
 # ── Viabilita': centro, stazione ferroviaria, casello ────────────────────────
@@ -421,9 +434,9 @@ def riga_centro(lat, lon, comune, provincia=None):
     if not centro:
         return []
     if _haversine_km(float(lat), float(lon), centro[0], centro[1]) < 0.15:
-        return [["Centro del comune", "In centro", str(comune), "Alto"]]
-    testo, impatto = distanza_testo(lat, lon, centro[0], centro[1])
-    return [["Centro del comune", testo, str(comune), impatto]]
+        return [["Centro del comune", "In centro", str(comune), "Alto", {"modo": "centro", "metri": 0, "minuti": 0}]]
+    testo, impatto, info = distanza_info(lat, lon, centro[0], centro[1])
+    return [["Centro del comune", testo, str(comune), impatto, info]]
 
 
 _RE_NON_STAZIONE = re.compile(
@@ -432,8 +445,13 @@ _RE_NON_STAZIONE = re.compile(
 
 
 def _nome_stazione(nome):
+    # Google a volte scrive gia' "Dolce, Stazione di Dolce": si tiene solo il
+    # pezzo che comincia per "Stazione".
     n = _titolo(nome)
-    return n if re.match(r"^stazione\b", n, re.IGNORECASE) else f"Stazione di {n}"
+    if re.search(r"stazione", n, re.IGNORECASE):
+        pezzi = [p.strip() for p in n.split(",") if re.search(r"stazione", p, re.IGNORECASE)]
+        return pezzi[-1]
+    return f"Stazione di {n}"
 
 
 def _scegli_stazione(candidati, escludi_nomi=()):
@@ -460,14 +478,16 @@ def riga_stazione(lat, lon, escludi_nomi=()):
     st = _scegli_stazione(_luoghi(lat, lon, tipo="train_station"), escludi_nomi)
     if not st:
         return []
-    testo, impatto = distanza_testo(lat, lon, st["lat"], st["lon"])
-    return [["Stazione ferroviaria", testo, _nome_stazione(st["nome"]), impatto]]
+    testo, impatto, info = distanza_info(lat, lon, st["lat"], st["lon"])
+    return [["Stazione ferroviaria", testo, _nome_stazione(st["nome"]), impatto, info]]
 
 
 _RE_CASELLO = re.compile(r"\bcasello\b|uscita autostrad|svincolo autostrad", re.IGNORECASE)
 _RE_NON_CASELLO = re.compile(
     r"distributore|stazione di servizio|area di servizio|autogrill|ristorant|\bbar\b|hotel|motel|parcheggio|"
-    r"autoscuola|telepass|ufficio|\bsede\b|concession|officina|autolavaggio|noleggio|\bs\.?p\.?a\.?\b|\bsrl\b|societ", re.IGNORECASE)
+    r"autoscuola|telepass|ufficio|\bsede\b|concession|officina|autolavaggio|noleggio|\bs\.?p\.?a\.?\b|\bsrl\b|societ|"
+    # "casello" e' anche la casa del casellante ferroviario (Reparto Avieri Alta Velocita')
+    r"ferrovi|alta velocit|\btreno\b|\brfi\b|\bfs\b|passaggio a livello|avieri|binari", re.IGNORECASE)
 _TIPI_NON_CASELLO = {"locality", "political", "tourist_attraction", "gas_station", "lodging", "food",
                      "restaurant", "parking", "store", "car_repair", "car_rental", "car_wash"}
 
@@ -498,22 +518,26 @@ def riga_casello(lat, lon):
     if a:
         impatto = "Alto" if a[1] <= 10 else "Medio" if a[1] <= 20 else "Basso"
         testo = f"{fmt_metri(a[0])} · {a[1]} min in auto"
+        info = {"modo": "auto", "metri": int(a[0]), "minuti": int(a[1])}
     else:
         km = c["_dist_km"]
         impatto = "Alto" if km <= 8 else "Medio" if km <= 20 else "Basso"
         testo = f"{fmt_metri(km * 1000)} (linea d'aria)"
-    return [["Casello autostradale", testo, _titolo(c["nome"]), impatto]]
+        info = {"modo": "aria", "metri": int(km * 1000), "minuti": None}
+    return [["Casello autostradale", testo, _titolo(c["nome"]), impatto, info]]
 
 
 # ── Ingresso unico ───────────────────────────────────────────────────────────
 
 def poi_territoriali(lat, lon, comune=None, provincia=None, escludi_nomi=(), approssimato=False):
-    """Righe extra [[etichetta, distanza, nome, impatto], ...] + contesto
-    {"vicino_mare": bool, "vicino_lago": bool}. Qualunque errore: niente righe.
+    """Righe extra [[etichetta, distanza, nome, impatto, info], ...] (info = misure
+    numeriche della distanza, vedi distanza_info) + contesto {"vicino_mare": bool,
+    "vicino_lago": bool, "quota_m": int|None, "costa_km": float|None} (fatti per
+    la descrizione standard). Qualunque errore: niente righe.
     comune/provincia: servono per la riga "Centro del comune" (omessa se
     mancano o se le coordinate sono gia' il centro del comune: `approssimato`).
     escludi_nomi: nomi gia' mostrati nelle righe fisse, per non ripeterli."""
-    righe, ctx = [], {"vicino_mare": False, "vicino_lago": False}
+    righe, ctx = [], {"vicino_mare": False, "vicino_lago": False, "quota_m": None, "costa_km": None}
     try:
         if _num(lat) is None or _num(lon) is None:
             return righe, ctx
@@ -530,9 +554,11 @@ def poi_territoriali(lat, lon, comune=None, provincia=None, escludi_nomi=(), app
             except Exception as e:   # una riga che fallisce non toglie le altre
                 print(f"[POI-TERRITORIO] viabilita' saltata: {type(e).__name__}: {e}")
         righe = mare + lago + monte + viabilita
+        ctx["quota_m"] = int(round(quota)) if quota is not None else None
+        ctx["costa_km"] = territorio_gps.distanza_costa_km(lat, lon)
         ctx["vicino_mare"] = bool(mare) and (territorio_gps.distanza_costa_km(lat, lon) or 99) <= 3.0
         ctx["vicino_lago"] = bool(lago) and (lago_piu_vicino(lat, lon, 3.0)[0] is not None)
     except Exception as e:
         print(f"[POI-TERRITORIO] saltato: {type(e).__name__}: {e}")
-        return [], {"vicino_mare": False, "vicino_lago": False}
+        return [], {"vicino_mare": False, "vicino_lago": False, "quota_m": None, "costa_km": None}
     return righe, ctx

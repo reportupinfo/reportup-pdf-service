@@ -31,6 +31,7 @@ import comuni_lookup
 import dati_form
 import territorio_gps
 import territorio_poi
+import descrizione_segmenti
 import stagionalita_turistica
 import affitti_mercato
 import confronto_affitto
@@ -1717,7 +1718,9 @@ def page2(c, D):
         "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
         "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
         "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
-        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica."
+        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica. "
+        "Il livello annuo di prezzo e occupazione deriva dai dati di mercato su annunci comparabili; "
+        "la distribuzione tra i mesi è una stima e può discostarsi nella tua zona."
     )
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
@@ -2689,18 +2692,6 @@ def _estratto_wikipedia(wikipedia_url, categoria="residenziale_minore", sottocat
     return risultato
 
 
-def _target_da_posti_letto(posti_letto):
-    try:
-        n = int(str(posti_letto).rstrip("+").strip())
-    except (ValueError, TypeError):
-        n = 4
-    if n <= 2:
-        return "coppie"
-    if n <= 4:
-        return "famiglie e piccoli gruppi"
-    return "famiglie numerose e gruppi di amici"
-
-
 def _pulisci_distanza_per_frase(distanza):
     if not distanza or distanza in ("\u2014", "-"):
         return distanza
@@ -3139,55 +3130,50 @@ def _applica_poi_territoriali(data):
         print(f"[POI-TERRITORIO] saltato: {type(e).__name__}: {e}")
         righe, ctx = [], {}
     data["poi_extra"] = righe
+    data["_quota_m"] = ctx.get("quota_m")
+    data["_costa_km"] = ctx.get("costa_km")
     data["_vicino_mare"] = bool(ctx.get("vicino_mare"))
     data["_vicino_lago"] = bool(ctx.get("vicino_lago"))
     if righe:
         print(f"[POI-TERRITORIO] {[(r[0], r[1], r[2]) for r in righe]}")
 
 
-def _frase_poi_extra(riga):
-    """Frase di descrizione per una riga extra [etichetta, distanza, nome, impatto]."""
-    etichetta, distanza, nome = riga[0], str(_pulisci_distanza_per_frase(riga[1])).strip(), riga[2]
-    if etichetta.startswith("Spiaggia pi"):
-        return f"La spiaggia più vicina, {nome}, dista {distanza}."
-    if etichetta == "Spiaggia principale":
-        return f"Tra le spiagge più frequentate della zona, {nome}, a {distanza}."
-    if etichetta == "Lago":
-        return f"{nome} dista {distanza}."
-    if etichetta.startswith("Montagna"):
-        return f"Tra le cime più note dei dintorni, {nome}, a {distanza}."
-    if etichetta == "Centro del comune":
-        if distanza.lower() == "in centro":
-            return f"L'immobile si trova nel centro di {nome}."
-        return f"Il centro di {nome} dista {distanza}."
-    if etichetta == "Stazione ferroviaria":
-        _n_st = re.sub(r"^Stazione(\s+ferroviaria)?(\s+(di|del|della|dei))?\s+", "", nome, flags=re.IGNORECASE)
-        return f"La stazione ferroviaria più vicina, quella di {_n_st}, dista {distanza}."
-    if etichetta == "Casello autostradale":
-        return f"Il casello autostradale più vicino, {nome}, dista {distanza}."
-    return ""
-
-
-def _poi_riga_frase(poi, idx):
+def _frase_comune_riferimento(poi):
+    """Frase sul "Comune di riferimento" (slot 1 dei POI), solo per i comuni che
+    non sono capoluogo ne' grandi citta'."""
     try:
-        distanza, nome, _impatto = (list(poi[idx]) + ["\u2014", "\u2014", "\u2014"])[:3]
+        distanza, nome = (list(poi[1]) + ["—", "—", "—"])[:2]
     except (IndexError, TypeError):
         return ""
-    if nome in ("\u2014", "", None):
+    if nome in ("—", "", None):
         return ""
-    distanza_pulita = _pulisci_distanza_per_frase(distanza)
-    dp = str(distanza_pulita).strip()
-    if dp.lower().startswith("in loco"):
-        return f"{nome} si trova in loco."
-    if not _e_distanza_numerica(dp):
-        return f"{nome} \u2014 {dp}."
-    return f"{nome} si trova a {dp}."
+    d = str(_pulisci_distanza_per_frase(distanza)).strip()
+    if d.lower().startswith("in loco"):
+        return f"{nome} è in loco, punto di riferimento per servizi e collegamenti più ampi."
+    if not _e_distanza_numerica(d):
+        return f"{nome} — {d}, punto di riferimento per servizi e collegamenti più ampi."
+    return f"A {d} si trova {nome}, punto di riferimento per servizi e collegamenti più ampi."
+
+
+def _poi_fisso(poi, idx, etichetta):
+    """Frase standard per uno slot fisso dei POI ([distanza, nome, impatto])."""
+    try:
+        distanza, nome, _imp = (list(poi[idx]) + ["—", "—", "—"])[:3]
+    except (IndexError, TypeError):
+        return ""
+    if nome in ("—", "", None):
+        return ""
+    return descrizione_segmenti.frase_poi_fisso(etichetta, nome, _pulisci_distanza_per_frase(distanza))
 
 
 def genera_descrizione_standard(data):
+    """Descrizione dell'immobile, uguale in Base e Strategico: nessuna IA.
+    Dati dichiarati dal cliente, dati ISTAT del comune e distanze reali di
+    Google, legati da segmenti di frase fissi scelti da condizioni oggettive
+    (vedi descrizione_segmenti.py). Una condizione non verificata non produce
+    nessuna frase."""
+    ds = descrizione_segmenti
     categoria   = str(data.get("categoria") or "comune_minore").strip().lower()
-    sottocateg  = str(data.get("sottocategoria") or "residenziale_minore").strip().lower()
-
     tipologia   = str(data.get("tipologia", "Immobile"))
     indirizzo   = str(data.get("indirizzo", ""))
     comune      = str(data.get("comune", ""))
@@ -3198,14 +3184,13 @@ def genera_descrizione_standard(data):
     posti_letto = str(data.get("posti_letto", ""))
     dotazioni   = data.get("dotazioni_presenti", []) or []
     poi         = data.get("poi", []) or []
-    fatto_wiki  = data.get("_wikipedia_estratto")
+    # Schema POI a 4 campi dello Strategico non ancora convertito (Google non
+    # ha risposto): le righe fisse non sono affidabili, si omettono.
+    if any(isinstance(r, (list, tuple)) and len(r) > 3 for r in poi):
+        poi = []
 
     genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
     situata = "situata" if genere_femminile else "situato"
-
-    camere_frase      = _frase_camere(camere)
-    bagni_frase       = _concorda_numero(bagni, "bagno", "bagni")
-    posti_letto_frase = _concorda_numero(posti_letto, "posto letto", "posti letto")
 
     def _fmt_dotazione(d):
         canonico = _norm_dotazione(d)
@@ -3214,131 +3199,45 @@ def genera_descrizione_standard(data):
 
     zona_inserita = ""
     if categoria in ("capoluogo", "grande_citta") and zona and zona.lower() not in ("—", "", comune.lower()):
-        zona_inserita = f", zona {zona}"
+        zona_inserita = zona
 
-    trasporto_frase = _poi_riga_frase(poi, 0)
-    servizi_frase   = _poi_riga_frase(poi, 3)
-    elemento_frase  = _poi_riga_frase(poi, 2)
+    extra = {}
+    for r in (data.get("poi_extra") or []):
+        if r and len(r) >= 3:
+            extra[str(r[0])] = r
+    spiaggia = extra.get("Spiaggia più vicina")
 
-    comune_rif_nome, comune_rif_distanza = "", ""
-    try:
-        _r = list(poi[1]) + ["\u2014", "\u2014", "\u2014"]
-        comune_rif_distanza, comune_rif_nome = _r[0], _r[1]
-        if comune_rif_nome in ("\u2014", "", None):
-            comune_rif_nome = ""
-    except (IndexError, TypeError):
-        pass
-
-    desc = (
-        f"Accogliente {tipologia.lower()} di {superficie} {situata} in {indirizzo}{zona_inserita}, "
-        f"con {camere_frase}, {bagni_frase} e {posti_letto_frase}. "
-    )
-    if dotazioni_frase:
-        desc += f"L'immobile è dotato di {dotazioni_frase}: tutto il necessario per un soggiorno confortevole. "
-    else:
-        desc += "Un immobile pronto ad accogliere i tuoi ospiti. "
-
-    if categoria in ("grande_citta", "capoluogo"):
-        if trasporto_frase:
-            desc += f"{trasporto_frase.rstrip('.')}, per muoversi in città senza pensieri. "
-        if servizi_frase:
-            desc += f"{servizi_frase.rstrip('.')}, a portata di mano per ogni necessità quotidiana. "
-        if elemento_frase:
-            desc += f"{elemento_frase} "
-    else:
-        if comune_rif_nome:
-            _dist_comune_rif = str(_pulisci_distanza_per_frase(comune_rif_distanza)).strip()
-            if _dist_comune_rif.lower().startswith("in loco"):
-                desc += f"{comune_rif_nome} è in loco, punto di riferimento per servizi e collegamenti più ampi. "
-            elif not _e_distanza_numerica(_dist_comune_rif):
-                desc += (f"{comune_rif_nome} \u2014 {_dist_comune_rif}, "
-                         f"punto di riferimento per servizi e collegamenti più ampi. ")
-            else:
-                desc += (f"A {_dist_comune_rif} si trova {comune_rif_nome}, "
-                         f"punto di riferimento per servizi e collegamenti più ampi. ")
-        if trasporto_frase:
-            desc += f"{trasporto_frase} "
-        if elemento_frase:
-            desc += f"{elemento_frase} "
-        if servizi_frase:
-            # servizi_frase può già contenere "— Nelle vicinanze" quando la
-            # distanza non è numerica (vedi _poi_riga_frase): ripetere "nelle
-            # vicinanze" qui produceva il doppione "Nelle vicinanze nelle
-            # vicinanze per le esigenze quotidiane."
-            desc += f"{servizi_frase.rstrip('.')} per le esigenze quotidiane. "
-
-    # Mare, lago, montagna: fatti verificati da Google/Wikidata (territorio_poi),
-    # gli stessi stampati nella tabella dei punti di interesse.
-    for _riga_extra in (data.get("poi_extra") or []):
-        _f_extra = _frase_poi_extra(_riga_extra)
-        if _f_extra:
-            desc += _f_extra + " "
-
-    if fatto_wiki:
-        desc += fatto_wiki + " "
-
-    target = _target_da_posti_letto(posti_letto)
-    # Un punto a pochi km dal mare o da un lago noto chiude come costiero o
-    # lacuale anche se non e' "sulla" costa (Maratea chiudeva con "lontano dal
-    # caos urbano" senza mai nominare il mare).
-    if categoria not in ("grande_citta", "capoluogo") and sottocateg == "residenziale_minore":
-        if data.get("_vicino_mare"):
-            sottocateg = "costiero"
-        elif data.get("_vicino_lago"):
-            sottocateg = "lacuale"
-
-    _chiusura_territorio = {
-        "costiero": "affacciata sul mare",
-        "lacuale":  "affacciata sul lago",
-        "montano":  "immersa nella cornice delle montagne",
-    }
-
-    if categoria == "grande_citta":
-        # Sessione 78 (audit 24/8): extra_territorio prima chiudeva con virgola
-        # propria E precedeva "da dentro,", producendo 3 virgole di fila
-        # ("città, affacciata sul mare, da dentro, con tutti..."). Spostato
-        # dopo "da dentro" per una lettura più scorrevole.
-        extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
-        desc += (
-            f"Ideale per {target} che vogliono vivere la città da dentro{extra_territorio}, con tutti i comfort di casa. "
-            "La città offre un'ampia offerta culturale, commerciale e di collegamenti, "
-            "accessibile a piedi o con i mezzi direttamente dall'immobile."
-        )
-    elif categoria == "capoluogo":
-        extra_territorio = f", {_chiusura_territorio[sottocateg]}" if sottocateg in _chiusura_territorio else ""
-        # "nel cuore del capoluogo" non e' verificabile (Belvedere, Piacenza, e'
-        # un quartiere residenziale): si nomina la citta' e i servizi solo se
-        # verificati dai punti di interesse stampati sopra.
-        desc += f"Ideale per {target} in cerca di una base comoda a {comune}{extra_territorio}."
-        if trasporto_frase or servizi_frase:
-            desc += (" Distanze e tempi dei servizi e dei collegamenti principali sono riportati "
-                     "nella tabella dei punti di interesse.")
-    elif sottocateg == "costiero":
-        desc += (
-            f"Ideale per {target} in cerca del fascino della costa. "
-            "La zona unisce l'atmosfera marittima a un buon equilibrio tra tranquillità, "
-            "servizi e vita locale, lontano dai ritmi frenetici delle grandi città."
-        )
-    elif sottocateg == "lacuale":
-        desc += (
-            f"Ideale per {target} in cerca della quiete e della bellezza del lago. "
-            "La zona offre l'atmosfera rilassata delle località lacustri, con un equilibrio "
-            "tra natura, attività all'aperto e accesso ai servizi essenziali."
-        )
-    elif sottocateg == "montano":
-        desc += (
-            f"Ideale per {target} in cerca dell'aria di montagna e del silenzio che solo la quota sa dare. "
-            "La zona offre la tranquillità tipica delle località montane, con un equilibrio "
-            "tra natura, attività all'aperto e i comfort della vita moderna."
-        )
-    else:
-        desc += (
-            f"Ideale per {target} in cerca di tranquillità autentica, lontano dal caos urbano. "
-            "La zona offre un ritmo di vita più lento, a contatto con la cultura e le tradizioni locali, "
-            "con tutti i servizi essenziali a portata di mano."
-        )
-
-    return desc
+    segmenti = [
+        # 1. L'immobile, come dichiarato dal cliente
+        ds.frase_immobile(tipologia, superficie, indirizzo, zona_inserita, _frase_camere(camere),
+                          _concorda_numero(bagni, "bagno", "bagni"),
+                          _concorda_numero(posti_letto, "posto letto", "posti letto"), situata),
+        ds.frase_dotazioni(dotazioni_frase),
+        # 2. Il comune (ISTAT)
+        ds.frase_comune(comuni_lookup.trova_comune(comune, data.get("provincia")), categoria),
+        # 3. Posizione: centro, acqua, quota
+        ds.frase_centro(extra.get("Centro del comune")),
+        ds.frase_mare(spiaggia) if spiaggia else ds.frase_costa(data.get("_costa_km")),
+        ds.frase_spiaggia_principale(extra.get("Spiaggia principale")),
+        ds.frase_lago(extra.get("Lago")),
+        ds.frase_quota(data.get("_quota_m")),
+        ds.frase_montagna(extra.get("Montagna di riferimento")),
+        # 4. Collegamenti e servizi
+        _poi_fisso(poi, 0, "Trasporto pubblico"),
+        ds.frase_stazione(extra.get("Stazione ferroviaria")),
+        ds.frase_casello(extra.get("Casello autostradale")),
+        "" if categoria in ("capoluogo", "grande_citta") else _frase_comune_riferimento(poi),
+        _poi_fisso(poi, 3, "Servizi essenziali"),
+        _poi_fisso(poi, 2, "Elemento caratteristico"),
+        # 5. Fatto enciclopedico sul comune (Wikipedia, CC BY-SA)
+        str(data.get("_wikipedia_estratto") or ""),
+        # 6. Capienza
+        ds.frase_capienza(_concorda_numero(posti_letto, "posto letto", "posti letto"),
+                          ds.target_capienza(posti_letto)),
+    ]
+    if poi or extra:
+        segmenti.append("Distanze e tempi dei servizi e dei collegamenti sono riportati nella tabella dei punti di interesse.")
+    return " ".join(x.strip() for x in segmenti if x and x.strip())
 
 
 def build_pdf_bytes(data):
@@ -4074,9 +3973,9 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     esclusivi (scenari, piano 90gg, normativa, pricing mensile, ecc.),
     non li ricalcola da zero né lascia che l'AI inventi numeri che il Base
     calcola in modo deterministico.
-    generare_descrizione=False per lo Strategico: usa una descrizione AI
-    dedicata (prompt Strategico, più lunga e contestualizzata), non quella
-    del Base.
+    generare_descrizione: dal 28/10/2026 e' True anche per il report Strategico
+    (/generate-strategico): la descrizione e' la stessa del Base, senza AI.
+    Resta False solo dove non si genera nessun PDF (pillole email, Excel).
     correggere_poi=False per lo Strategico: _correggi_poi_invertiti è
     costruita per lo schema POI del Base (4 slot FISSI — trasporto pubblico/
     comune di riferimento/elemento caratteristico/servizi essenziali — righe
@@ -5425,16 +5324,17 @@ def generate_strategico():
         # lo Strategico da €149 lasciava inventare questi numeri all'AI mentre
         # il Base da €39 li calcolava in modo deterministico — stesso identico
         # immobile poteva avere due prezzi/notte diversi tra i due prodotti.
-        # generare_descrizione=False: lo Strategico tiene la sua descrizione
-        # AI dedicata (più lunga, vedi PROMPT_AI_REPORT_STRATEGICO.md), non
-        # quella breve del Base. correggere_poi=False: lo schema POI dello
+        # generare_descrizione=True (28/10/2026): la descrizione e' la stessa del
+        # Base, costruita dal codice con dati verificati e segmenti di frase
+        # standard (descrizione_segmenti.py), non piu' scritta dall'AI.
+        # correggere_poi=False: lo schema POI dello
         # Strategico (N punti liberi, 4 campi ciascuno) non è quello a 4 slot
         # fissi del Base — vedi nota in _arricchisci_report_deterministico.
         data = _arricchisci_report_deterministico(
             data,
             lat=request.args.get("lat"),
             long=request.args.get("long"),
-            generare_descrizione=False,
+            generare_descrizione=True,
             correggere_poi=False,
         )
 

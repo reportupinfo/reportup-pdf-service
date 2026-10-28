@@ -66,11 +66,13 @@ assert tp._scegli_stazione([L("Scalea", 1.1, types=T)], escludi_nomi=["Stazione 
 assert tp._scegli_stazione([L("Scalea", 1.1, types=T)], escludi_nomi=["Fermata Via Roma"])["nome"] == "Scalea"
 assert tp._scegli_stazione([L("Scalea", 1.1, types=T)], escludi_nomi=["Fermata Scalea Ss 18 - Baiatour"])["nome"] == "Scalea"   # fermata bus != stazione
 assert tp._nome_stazione("Scalea") == "Stazione di Scalea"
+assert tp._nome_stazione("Dolcè, Stazione di Dolcè") == "Stazione di Dolcè"   # Google scrive gia' il prefisso
+assert tp._scegli_casello([L("Casello Reparto Avieri Alta Velocità", 2.0), L("Casello di Affi", 15.0)])["nome"] == "Casello di Affi"   # casa del casellante ferroviario
 assert tp._nome_stazione("Stazione Ancona Stadio") == "Stazione Ancona Stadio"
 
 # senza chiave Google nessuna riga e nessuna eccezione
 os.environ.pop("GOOGLE_MAPS_API_KEY", None)
 assert tp.righe_spiaggia(39.99, 15.71) == []   # costa vicina ma niente chiave: nessuna riga, nessuna eccezione
 righe, ctx = tp.poi_territoriali(None, None)
-assert righe == [] and ctx == {"vicino_mare": False, "vicino_lago": False}
+assert righe == [] and ctx["vicino_mare"] is False and ctx["vicino_lago"] is False
 print("OK")
