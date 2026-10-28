@@ -33,6 +33,7 @@ import territorio_gps
 import territorio_poi
 import descrizione_segmenti
 import qualita_immobile
+import testi_report
 import stagionalita_turistica
 import affitti_mercato
 import confronto_affitto
@@ -1758,44 +1759,10 @@ def page3(c, D):
     p = D.get("prezzo_notte_stimato", 0)
     occ_pct = D.get("occupazione_percent", 0)
     notti = D.get("notti_anno", 0)
-    comm_pct = _pct_it(D.get("costi_commissioni_pct", COMMISSIONE_PIATTAFORMA_PCT))
-    pulizia_unit = D.get("costi_pulizie_unit", 35)
-    _cambi = D.get("cambi_anno")
-    _sm = D.get("soggiorno_medio_notti")
-    _pulizie_tot = f"{D.get('costi_pulizie', 0):,}".replace(",", ".")
-    if _cambi and _sm:
-        _sm_txt = f"{_sm:g}".replace(".", ",")
-        _formula_pulizie = (f"€ {pulizia_unit}/cambio x {_cambi} cambi "
-                            f"(soggiorno medio {_sm_txt} notti) = € {_pulizie_tot}")
-    else:
-        _formula_pulizie = f"€ {pulizia_unit}/cambio x {notti} notti = € {_pulizie_tot}"
-    # Etichetta leggibile, non il codice del form: qui usciva "bilocale"
-    # minuscolo mentre lo Strategico scriveva "Bilocale" nella stessa riga.
-    _tipologia_costi = D.get("scheda_tipologia") or D.get("tipologia", "immobile")
-    _nota_costi_variabili = f"Media di mercato per tipologia: {_tipologia_costi}"
-    # Sessione 68: nota breve sul soggiorno medio anche per la biancheria,
-    # solo descrittiva — il valore resta fisso/anno per tipologia, NON
-    # scala con i cambi reali (a differenza delle pulizie): su immobili
-    # cittadini ad alta occupazione farlo scalare gonfierebbe il costo
-    # invece di ridurlo, l'opposto di quanto richiesto.
-    _sm_biancheria = (
-        (f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else "")
-        + ", stima in scenario di gestione mista (propria/appalto a terzi)"
-    )
     rata_mutuo = D.get("rata_mutuo_mensile", 0)
     mutuo_annuo = rata_mutuo * 12
 
-    if D.get("situazione_vuoto"):
-        sit_label = "Immobile vuoto"
-    elif D.get("situazione_bnb"):
-        sit_label = "B&B attivo"
-    elif D.get("situazione_inquilini"):
-        sit_label = "Con inquilini"
-    else:
-        # Nessun flag vero = il cliente non ha dichiarato la situazione: etichetta
-        # neutra, non "Disponibile" (era comunque un'affermazione, in contrasto
-        # con "Immobile vuoto: NO" stampato in scheda). Allineata allo Strategico.
-        sit_label = "Non dichiarata"
+    sit_label = testi_report.etichetta_situazione(D)
     sit_cards = [
         ("Situazione", sit_label, BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}", TEAL, TEAL_LIGHT),
@@ -1823,36 +1790,32 @@ def page3(c, D):
         ["Voce", "Come viene calcolato", "Valore"],
         ["RICAVI", "", ""],
         ["Ricavo lordo annuo stimato",
-         f"€ {p}/notte x {occ_pct}% occ. x 365gg = {notti} notti x € {p} = {fmt_eur(D.get('ricavo_lordo', 0))}",
+         testi_report.ricavo_lordo(D),
          fmt_eur(D.get("ricavo_lordo", 0))],
         ["Bonus prenotazioni dirette",
-         f"€ {D.get('ricavo_lordo',0):,} x {D.get('bonus_dirette_pct','5-10%')} = € {D.get('bonus_dirette',0):,}".replace(",", "."),
+         testi_report.bonus_dirette(D),
          fmt_eur(D.get("bonus_dirette", 0))],
         ["TOTALE RICAVI",
-         f"€ {D.get('ricavo_lordo',0):,} + € {D.get('bonus_dirette',0):,} = € {D.get('totale_ricavi',0):,}".replace(",", "."),
+         testi_report.totale_ricavi(D),
          fmt_eur(D.get("totale_ricavi", 0))],
-        ["COSTI DI GESTIONE", _nota_costi_variabili, ""],
+        ["COSTI DI GESTIONE", testi_report.costi_intestazione(D), ""],
         ["Commissioni piattaforma Airbnb",
-         f"€ {D.get('ricavo_lordo',0):,} x {comm_pct.replace(',', '§')}% = € {D.get('costi_commissioni',0):,}".replace(",", ".").replace("§", ","),
+         testi_report.commissioni(D),
          f"- {fmt_eur(D.get('costi_commissioni', 0))}"],
-        ["Pulizie per cambio ospite", _formula_pulizie,
+        ["Pulizie per cambio ospite", testi_report.pulizie(D),
          f"- {fmt_eur(D.get('costi_pulizie', 0))}"],
         ["Biancheria e consumabili",
-         _cella_media_mercato(D.get('costi_biancheria', 0), extra=_sm_biancheria),
+         _cella_media_mercato(D.get('costi_biancheria', 0), extra=testi_report.nota_biancheria(D)),
          f"- {fmt_eur(D.get('costi_biancheria', 0))}"],
         ["Utenze aggiuntive stimate",
          _cella_media_mercato(D.get('costi_utenze', 0)),
          f"- {fmt_eur(D.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         _cella_media_mercato(D.get('costi_manutenzione', 0), extra=(
-             ", include piscina e giardino" if D.get("_costi_ha_piscina") and D.get("_costi_ha_giardino")
-             else ", include piscina" if D.get("_costi_ha_piscina")
-             else ", include giardino" if D.get("_costi_ha_giardino")
-             else "")),
+         _cella_media_mercato(D.get('costi_manutenzione', 0), extra=testi_report.nota_manutenzione(D)),
          f"- {fmt_eur(D.get('costi_manutenzione', 0))}"],
         ["Rata mutuo (se presente)",
-         "Nessun mutuo dichiarato" if not D.get("mutuo_attivo") else f"€ {rata_mutuo}/mese x 12 = € {mutuo_annuo:,}".replace(",", "."),
-         "€ 0" if not D.get("mutuo_attivo") else f"- {fmt_eur(mutuo_annuo)}"],
+         testi_report.mutuo(D)[0],
+         testi_report.mutuo(D)[1]],
         ["Totale costi di gestione", "", f"- {fmt_eur(D.get('totale_costi', 0))}"],
         ["PROFITTO NETTO STIMATO", "", fmt_eur(D.get("profitto_netto", 0))],
         ["Margine netto su ricavi totali", "", f"{D.get('margine_percent', 0)}%"],
@@ -1924,13 +1887,7 @@ def page3(c, D):
         cx += cw + 2 * mm
     y -= big_h + 4 * mm
 
-    nota = ("I valori sopra riportati sono orientativi e basati esclusivamente sulle informazioni fornite. "
-            "Commissione piattaforma 15,5% (Airbnb dal 13/10/2026; Booking in genere 12-18%): per gli host privati "
-            "può aggiungersi IVA 22% sulla commissione, non inclusa.")
-    if D.get("cambi_anno") and D.get("soggiorno_medio_notti"):
-        _sm_nota = f"{D.get('soggiorno_medio_notti'):g}".replace(".", ",")
-        nota += (f" Ipotesi: soggiorno medio di {_sm_nota} notti per la zona. "
-                 "Il Report Strategico differenzia l'analisi per soggiorni brevi, medi e lunghi.")
+    nota = testi_report.nota_economia(D, "base")
     y = draw_wrapped_text(c, nota, 14 * mm, y - 2 * mm, W - 28 * mm, "Helvetica-Oblique", 6.5, 3.6 * mm, MUTED)
     y -= 1 * mm
 
@@ -2076,13 +2033,9 @@ def page4(c, D):
 
     c.setFont("Helvetica-Bold", 7)
     c.setFillColor(MUTED)
-    c.drawString(14 * mm, y, "DISCLAIMER - LETTURA OBBLIGATORIA")
+    c.drawString(14 * mm, y, testi_report.DISCLAIMER_TITOLO)
     y -= 5 * mm
-    disc = ("Il Report Base fornito da ReportUp è uno strumento di analisi orientativa del mercato degli affitti brevi, "
-            "elaborato sulla base delle informazioni inserite dall'utente e dei dati di mercato disponibili alla data "
-            "di generazione. Non costituisce in alcun modo una consulenza finanziaria, legale, fiscale o immobiliare "
-            "professionale. I valori indicati sono proiezioni orientative basate su medie di mercato e non rappresentano "
-            "garanzie di risultato. ReportUp declina ogni responsabilità per decisioni prese sulla base di questo documento.")
+    disc = testi_report.disclaimer("Report Base")
     draw_wrapped_text(c, disc, 14 * mm, y, W - 28 * mm, "Helvetica", 6.5, 4 * mm, MUTED)
 
 
@@ -2096,38 +2049,24 @@ def page5(c, D):
     draw_section_subtitle(c, 14 * mm, y, "Dati e metodologia alla base di questa analisi")
     y -= 6 * mm
 
-    _fonte_affitto = D.get("fonte_affitto_tradizionale", "stima_airroi")
-    if _fonte_affitto == "mercato_reale":
-        _desc_affitto = affitti_mercato.fonte_descrizione()
-    else:
-        _sconto_affitto = D.get("sconto_affitto_tradizionale_pct", 40)
-        _desc_affitto = (f"Stima comparativa di mercato: prezzo/notte medio (fonte AirROI) x 30 giorni, "
-                          f"scontato del {_sconto_affitto}% per riflettere il differenziale tipico tra canone "
-                          f"di locazione tradizionale e tariffa di affitto breve sulla stessa unità nella stessa zona. "
-                          f"Valore orientativo, non tratto da atti o contratti registrati.")
-
-    fonti = [
-        ("Prezzi per notte e\ntasso di occupazione",
-         "Elaborazione su dati aggregati delle principali piattaforme di short rental (Airbnb, Booking.com, VRBO). "
-         "I valori rappresentano medie di mercato per tipologia di immobile e zona al momento della generazione."),
-        ("Canoni di affitto\ntradizionale", _desc_affitto),
-        ("Dati demografici e\nflussi turistici",
-         "ISTAT - Istituto Nazionale di Statistica. Movimento turistico in Italia, rilevazione annuale su arrivi "
-         "e presenze per comune e tipologia di struttura."),
-        ("Commissioni piattaforme",
-         "Tariffari ufficiali pubblicati da Airbnb.com, Booking.com e VRBO alla data di generazione del report."),
-        ("Costi operativi stimati",
-         "Medie di mercato per il settore della gestione immobiliare in affitto breve, elaborate su base regionale."),
-        ("Punti di interesse e\ndistanze",
-         "Google Maps Platform - distanze e tempi di percorrenza a piedi e in auto. I tempi indicati sono stime."),
-    ]
+    fonti = testi_report.fonti_comuni(D, affitti_mercato.fonte_descrizione())
 
     for fonte, desc in fonti:
         c.setFont("Helvetica-Bold", 7.5)
         c.setFillColor(BLUE_NIGHT)
         fy = y
-        for fl in fonte.split("\n"):
-            c.drawString(14 * mm, fy, fl)
+        # titolo a capo dentro la colonna di sinistra (35% della larghezza)
+        _riga_t = ""
+        for _w in fonte.split():
+            _prova = (_riga_t + " " + _w).strip()
+            if c.stringWidth(_prova, "Helvetica-Bold", 7.5) > (W - 28 * mm) * 0.33 and _riga_t:
+                c.drawString(14 * mm, fy, _riga_t)
+                fy -= 4.5 * mm
+                _riga_t = _w
+            else:
+                _riga_t = _prova
+        if _riga_t:
+            c.drawString(14 * mm, fy, _riga_t)
             fy -= 4.5 * mm
         dy = y
         words = desc.split()

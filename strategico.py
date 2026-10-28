@@ -16,6 +16,7 @@ import datetime
 import affitti_mercato
 import confronto_affitto
 import dati_form
+import testi_report
 import io
 import math
 
@@ -1196,25 +1197,6 @@ def page4(c, data):
     # leggerla solo da `mutuo_attivo` faceva sparire la rata dalla tabella.
     mutuo_attivo = bool(data.get('mutuo_attivo', data.get('situazione_mutuo', False))) and rata_mutuo > 0
 
-    # Sessione 68: la formula pulizie qui era rimasta "x notti", mai
-    # allineata al fix Sessione 67 (pulizie per CAMBIO, non per notte) gia'
-    # attivo nel Base — i valori in data.get('costi_pulizie', 0) erano gia' corretti
-    # (calcolati a monte in app.py), ma il testo mostrato al cliente era
-    # sbagliato/non coerente col totale. Stesso schema del Base.
-    _cambi = data.get("cambi_anno")
-    _sm = data.get("soggiorno_medio_notti")
-    _pulizie_tot = f"{data.get('costi_pulizie', 0):,}".replace(",", ".")
-    if _cambi and _sm:
-        _sm_txt = f"{_sm:g}".replace(".", ",")
-        _formula_pulizie = (f"€ {pulizia_unit}/cambio  x  {_cambi} cambi "
-                            f"(soggiorno medio {_sm_txt} notti)  =  € {_pulizie_tot}")
-    else:
-        _formula_pulizie = f"€ {pulizia_unit}/cambio  x  {notti} notti  =  € {_pulizie_tot}"
-    _sm_biancheria = (
-        (f", soggiorno medio {_sm:g} notti".replace(".", ",") if _sm else "")
-        + ", stima in scenario di gestione mista (propria/appalto a terzi)"
-    )
-
     # 4 card dati principali situazione dichiarata
     # `situazione_inquilini` va letto esplicitamente: usarlo come ramo di default
     # faceva stampare "Con inquilini" anche con tutti e tre i flag a False (caso
@@ -1222,14 +1204,7 @@ def page4(c, data):
     # vicenda), in contraddizione con la riga "Situazione attuale dichiarata" di
     # pagina 1 che nello stesso report diceva NO a tutti e tre. Stessa cascata e
     # stessa etichetta neutra del Base (vedi app.py).
-    if data.get('situazione_vuoto', False):
-        sit_label = "Immobile vuoto"
-    elif data.get('situazione_bnb', False):
-        sit_label = "B&B attivo"
-    elif data.get('situazione_inquilini', False):
-        sit_label = "Con inquilini"
-    else:
-        sit_label = "Non dichiarata"
+    sit_label = testi_report.etichetta_situazione(data)
     sit_cards = [
         ("Situazione",           sit_label,  BLUE_PRIMARY, HexColor("#E3F2FA")),
         ("Prezzo stimato/notte", f"\u20ac {p}",  TEAL,         TEAL_LIGHT),
@@ -1266,35 +1241,42 @@ def page4(c, data):
     if mutuo_attivo:
         _addendi_costi.append(fmt_eu(mutuo_annuo))
 
+    style_media_mercato = ParagraphStyle(
+        "mediaMercato", fontName="Helvetica", fontSize=7.5, textColor=BLUE_NIGHT, leading=9,
+    )
+
+    def _cella_media_mercato(valore_annuo, extra=""):
+        # Identica a quella del Base (app.py): importo + nota piccola grigia.
+        nota = f' <font size="6" color="#7A8A96">(media di mercato per la tipologia{extra})</font>'
+        return Paragraph(f"€ {fmt_num(valore_annuo)}/anno{nota}", style_media_mercato)
+
     eco_data = [
         ["Voce", "Come viene calcolato", "Valore"],
         ["RICAVI", "", ""],
         ["Ricavo lordo annuo stimato",
-         f"€ {p}/notte  x  {occ_pct}% occ.  x  365gg  =  € {p}  x  {notti} notti",
+         testi_report.ricavo_lordo(data),
          fmt_eu(data.get('ricavo_lordo', 0))],
         ["Bonus prenotazioni dirette",
-         f"€ {data.get('ricavo_lordo', 0):,}  x  {data.get('bonus_dirette_pct') or '5-10%'}  =  € {data.get('bonus_dirette', 0):,}".replace(",","."),
+         testi_report.bonus_dirette(data),
          fmt_eu(data.get('bonus_dirette', 0))],
         ["TOTALE RICAVI",
-         f"{fmt_eu(data.get('ricavo_lordo', 0))}  +  {fmt_eu(data.get('bonus_dirette', 0))}",
+         testi_report.totale_ricavi(data),
          fmt_eu(data.get('totale_ricavi', 0))],
-        ["COSTI DI GESTIONE", f"Media di mercato per tipologia: {data.get('scheda_tipologia') or data.get('tipologia', 'immobile')}", ""],
+        ["COSTI DI GESTIONE", testi_report.costi_intestazione(data), ""],
         ["Commissioni piattaforma Airbnb",
-         f"€ {data.get('ricavo_lordo', 0):,}  x  {comm_pct.replace(',', '§')}%  =  € {data.get('costi_commissioni', 0):,}".replace(",",".").replace("§", ","),
+         testi_report.commissioni(data),
          f"- {fmt_eu(data.get('costi_commissioni', 0))}"],
-        ["Pulizie per cambio ospite", _formula_pulizie,
+        ["Pulizie per cambio ospite", testi_report.pulizie(data),
          f"- {fmt_eu(data.get('costi_pulizie', 0))}"],
+        # Stesse celle del Base (importo + nota piccola): il testo e' unico.
         ["Biancheria e consumabili",
-         f"€ {fmt_num(data.get('costi_biancheria', 0))}/anno (media di mercato per la tipologia)",
+         _cella_media_mercato(data.get('costi_biancheria', 0), testi_report.nota_biancheria(data)),
          f"- {fmt_eu(data.get('costi_biancheria', 0))}"],
-        # Stessa formulazione del Base: le "convenzioni adottate" e i range
-        # sono stati tolti da entrambi i prodotti, resta la voce come media di
-        # mercato per la tipologia.
         ["Utenze aggiuntive stimate",
-         f"€ {data.get('costi_utenze', 0):,}/anno (media di mercato per la tipologia)".replace(",","."),
+         _cella_media_mercato(data.get('costi_utenze', 0)),
          f"- {fmt_eu(data.get('costi_utenze', 0))}"],
         ["Manutenzione ordinaria",
-         f"€ {data.get('costi_manutenzione', 0):,}/anno (media di mercato per la tipologia)".replace(",","."),
+         _cella_media_mercato(data.get('costi_manutenzione', 0), testi_report.nota_manutenzione(data)),
          f"- {fmt_eu(data.get('costi_manutenzione', 0))}"],
         # Accantonamento consigliato, non sottratto dal totale sotto: il
         # segno "-" faceva sembrare che fosse già conteggiato.
@@ -1302,8 +1284,8 @@ def page4(c, data):
          f"€ {fmt_num(ffe)}/anno per arredi e dotazioni (non incluso nel totale)",
          fmt_eu(ffe)],
         ["Rata mutuo (se presente)",
-         "Nessun mutuo dichiarato" if not mutuo_attivo else f"€ {rata_mutuo}/mese  x  12 mesi",
-         "€ 0" if not mutuo_attivo else f"- {fmt_eu(mutuo_annuo)}"],
+         testi_report.mutuo(data)[0],
+         testi_report.mutuo(data)[1]],
         # La formula elencava anche l'FF&E e ometteva il mutuo, mentre il
         # totale calcolato dal backend fa l'opposto: sommando le voci a video
         # non tornava il numero stampato di fianco. Ora la stringa elenca
@@ -1382,14 +1364,8 @@ def page4(c, data):
     tbl_eco.drawOn(c, 14*mm, y - tbl_eco._height)
     y -= tbl_eco._height + 5*mm
 
-    # Il dettaglio "soggiorno medio + gestione mista" era dentro la cella
-    # biancheria e la mandava fuori tabella (riga singola, ReportLab non
-    # avvolge le celle stringa). Il dato resta ma come nota sotto la
-    # tabella; la cella torna alla stessa lunghezza di Utenze/Manutenzione.
-    _nota_biancheria = ("Biancheria e consumabili" + _sm_biancheria + ". "
-                        "Commissione piattaforma " + comm_pct + "% (Airbnb dal 13/10/2026; Booking in genere 12-18%): "
-                        "per gli host privati può aggiungersi IVA 22% sulla commissione, non inclusa.")
-    y = wrap_simple(c, _nota_biancheria, 14*mm, y, W - 28*mm,
+    _nota_economia = testi_report.nota_economia(data, "strategico")
+    y = wrap_simple(c, _nota_economia, 14*mm, y, W - 28*mm,
                      "Helvetica-Oblique", 6.5, 3.2*mm, color=MUTED)
     y -= 1.5*mm
     # Stesso avviso del Base: voci che il report non puo' stimare in modo affidabile.
@@ -2388,25 +2364,15 @@ def page11(c, data):
     draw_section_subtitle(c, 14*mm, y, "Dati e metodologia alla base di questa analisi")
     y -= 6*mm
 
-    fonti = [
-        ("Prezzi e tasso occupazione",
-         "Elaborazione su dati aggregati Airbnb, Booking.com, VRBO. Medie di mercato per tipologia e zona alla data di generazione."),
-        ("Canoni affitto tradizionale",
-         affitti_mercato.fonte_descrizione()
-         if data.get("fonte_affitto_tradizionale") == "mercato_reale" else
-         f"Stima comparativa: prezzo/notte medio (fonte AirROI) x 30 giorni, scontato del "
-         f"{data.get('sconto_affitto_tradizionale_pct', 40)}% per riflettere il differenziale tipico "
-         f"tra locazione tradizionale e affitto breve sulla stessa unità e zona."),
-        ("Dati demografici e turistici",
-         "ISTAT — Istituto Nazionale di Statistica. Movimento turistico, arrivi e presenze per comune."),
+    # Le fonti in comune col Base sono le STESSE (testi_report.fonti_comuni);
+    # lo Strategico aggiunge solo le sue (normativa, valutazione asset, saggio).
+    fonti = testi_report.fonti_comuni(data, affitti_mercato.fonte_descrizione()) + [
         ("Normativa affitti brevi",
-         f"Regione {data.get('regione_normativa', '')} \u00b7 Comune di {data.get('comune_normativa', '')} \u00b7 Ministero del Turismo \u00b7 Fonti ufficiali aggiornate 2025."),
+         f"Regione {data.get('regione_normativa', '')} " + chr(0xb7) + f" Comune di {data.get('comune_normativa', '')} " + chr(0xb7) + " Ministero del Turismo " + chr(0xb7) + " Fonti ufficiali aggiornate 2025."),
         ("Valutazione asset immobiliare",
-         "Modello professionale di valutazione bancaria alberghiera \u00b7 Arch. Salvatore Junior Sica \u00b7 30.000+ perizie."),
+         "Modello professionale di valutazione bancaria alberghiera " + chr(0xb7) + " Arch. Salvatore Junior Sica " + chr(0xb7) + " 30.000+ perizie."),
         ("Saggio di capitalizzazione",
-         "Parametro derivato da modello bancario professionale \u00b7 Range mercato ricettivo italiano 5,5%-8%."),
-        ("Punti di interesse e distanze",
-         "Google Maps Platform \u00b7 percorrenza pedonale e trasporto pubblico \u00b7 stime indicative."),
+         "Parametro derivato da modello bancario professionale " + chr(0xb7) + " Range mercato ricettivo italiano 5,5%-8%."),
     ]
 
     for fonte, desc in fonti:
@@ -2716,12 +2682,20 @@ def page_riepilogo(c, data):
          "Rispetto all'affitto tradizionale"),
     ], y)
 
-    c.setFont("Helvetica-Oblique", 6.5)
+    # La nota era una riga sola e usciva dal margine destro della pagina: ora va a capo.
+    y = wrap_simple(c, "Valori orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
+                       "Dove il report presenta tre scenari, qui è riportato sempre quello realistico. "
+                       "Profitto netto al lordo delle imposte (es. cedolare secca).",
+                    14*mm, y, W - 28*mm, "Helvetica-Oblique", 6.5, 3.6*mm, color=MUTED)
+    y -= 8*mm
+
+    # Disclaimer legale: lo stesso testo del Base (testi_report.disclaimer).
+    c.setFont("Helvetica-Bold", 7)
     c.setFillColor(MUTED)
-    c.drawString(14*mm, y,
-                 "Valori orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
-                 "Dove il report presenta tre scenari, qui è riportato sempre quello realistico. "
-                 "Profitto netto al lordo delle imposte (es. cedolare secca).")
+    c.drawString(14*mm, y, testi_report.DISCLAIMER_TITOLO)
+    y -= 5*mm
+    wrap_simple(c, testi_report.disclaimer("Report Strategico"), 14*mm, y, W - 28*mm,
+                "Helvetica", 6.5, 4*mm, color=MUTED)
 
 
 def build_strategico_pdf_bytes(data):
