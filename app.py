@@ -1883,7 +1883,11 @@ def page3(c, D):
     tbl_eco.setStyle(TableStyle(style_eco))
     tbl_eco.wrapOn(c, W - 28 * mm, 500)
     tbl_eco.drawOn(c, 14 * mm, y - tbl_eco._height)
-    y -= tbl_eco._height + 5 * mm
+    y -= tbl_eco._height + 3 * mm
+    # Voci che il report non puo' stimare in modo affidabile: dichiarate in
+    # grassetto sotto la tabella, il cliente le somma da se (28/10/2026).
+    y = draw_wrapped_text(c, dati_form.TESTO_COSTI_NON_INCLUSI, 14 * mm, y, W - 28 * mm, "Helvetica-Bold", 6.5, 3.6 * mm, BLUE_NIGHT)
+    y -= 2 * mm
 
     total_w = W - 28 * mm
     big_w = total_w * 0.30
@@ -1917,7 +1921,6 @@ def page3(c, D):
     y -= big_h + 4 * mm
 
     nota = ("I valori sopra riportati sono orientativi e basati esclusivamente sulle informazioni fornite. "
-            "Non includono spese personali, fiscali o societarie. "
             "Commissione piattaforma 15,5% (Airbnb dal 13/10/2026; Booking in genere 12-18%): per gli host privati "
             "può aggiungersi IVA 22% sulla commissione, non inclusa.")
     if D.get("cambi_anno") and D.get("soggiorno_medio_notti"):
@@ -3125,7 +3128,13 @@ def _applica_poi_territoriali(data):
     territorio_poi.py). Identiche in Base e Strategico. Qualunque errore o dato
     mancante: nessuna riga, il report esce come prima."""
     try:
-        righe, ctx = territorio_poi.poi_territoriali(data.get("lat"), data.get("long"))
+        _rec = comuni_lookup.trova_comune(data.get("comune", ""), data.get("provincia"))
+        righe, ctx = territorio_poi.poi_territoriali(
+            data.get("lat"), data.get("long"),
+            comune=(_rec or {}).get("comune") or data.get("comune"),
+            provincia=(_rec or {}).get("sigla_provincia") or None,
+            escludi_nomi=[r[1] for r in (data.get("poi") or []) if r and len(r) > 1],
+            approssimato=bool(data.get("indirizzo_approssimato")))
     except Exception as e:
         print(f"[POI-TERRITORIO] saltato: {type(e).__name__}: {e}")
         righe, ctx = [], {}
@@ -3147,6 +3156,15 @@ def _frase_poi_extra(riga):
         return f"{nome} dista {distanza}."
     if etichetta.startswith("Montagna"):
         return f"Tra le cime più note dei dintorni, {nome}, a {distanza}."
+    if etichetta == "Centro del comune":
+        if distanza.lower() == "in centro":
+            return f"L'immobile si trova nel centro di {nome}."
+        return f"Il centro di {nome} dista {distanza}."
+    if etichetta == "Stazione ferroviaria":
+        _n_st = re.sub(r"^Stazione(\s+ferroviaria)?(\s+(di|del|della|dei))?\s+", "", nome, flags=re.IGNORECASE)
+        return f"La stazione ferroviaria più vicina, quella di {_n_st}, dista {distanza}."
+    if etichetta == "Casello autostradale":
+        return f"Il casello autostradale più vicino, {nome}, dista {distanza}."
     return ""
 
 
@@ -3521,7 +3539,7 @@ def _geocode_indirizzo_nocache(indirizzo, api_key, timeout=5):
                           "administrative_area_level_1", "postal_code", "country"}
         solo_comune = bool(_tipi_ris & _tipi_generici) and not (_tipi_ris & _tipi_precisi)
 
-        comune, provincia, cap = None, None, None
+        comune, provincia, cap, via_google = None, None, None, None
         for comp in risultato.get("address_components", []):
             tipi = comp.get("types", [])
             if "administrative_area_level_3" in tipi or "locality" in tipi:
@@ -3530,6 +3548,8 @@ def _geocode_indirizzo_nocache(indirizzo, api_key, timeout=5):
                 provincia = comp.get("short_name") or comp.get("long_name")
             if "postal_code" in tipi:
                 cap = comp.get("long_name")
+            if "route" in tipi:
+                via_google = via_google or comp.get("long_name")
 
         fonte = "geocoding"
         lat_out, lon_out, formattato = loc["lat"], loc["lng"], risultato.get("formatted_address")
@@ -3546,6 +3566,7 @@ def _geocode_indirizzo_nocache(indirizzo, api_key, timeout=5):
             "lat": lat_out, "lon": lon_out,
             "formatted_address": formattato,
             "comune": comune, "provincia": provincia, "cap": cap,
+            "via_google": via_google,
             "partial_match": partial_match,
             "solo_comune": solo_comune,
             "fonte": fonte,
@@ -3720,6 +3741,28 @@ def _punti_interesse_quick(lat, lon, sottocategoria):
     return punti[:2]
 
 
+def _dove_esiste_via(via_scritta, comune_scritto):
+    """Dove esiste davvero la via scritta dal cliente: cerca solo il nome (senza
+    civico, comune ne' CAP) e ritorna {"comune", "provincia", "cap"} se Google
+    la trova esatta (non partial_match) in un comune diverso da quello scritto.
+    Solo per nomi di almeno due parole significative ("Valeriano de Bonis"):
+    "Via Roma" da sola esiste in mille posti e la risposta sarebbe un caso."""
+    try:
+        nome = re.sub(r"\s+\d+\s*[A-Za-z]?(?:/\w+)?\s*$", "", str(via_scritta or "")).strip()
+        if len(dati_form._token_via(nome)) < 2:
+            return None
+        geo2 = _geocode_indirizzo(nome)
+        if (not geo2 or geo2.get("partial_match") or geo2.get("solo_comune") or not geo2.get("via_google")
+                or not dati_form.via_coerente(nome, geo2["via_google"]) or not geo2.get("comune")):
+            return None
+        if _senza_accenti(geo2["comune"]).lower() == _senza_accenti(comune_scritto or "").lower():
+            return None
+        return {"comune": geo2["comune"], "provincia": geo2.get("provincia") or "", "cap": geo2.get("cap") or ""}
+    except Exception as e:
+        print(f"[VERIFY-ADDRESS] dove esiste la via: {type(e).__name__}: {e}")
+        return None
+
+
 @app.route("/verify-address", methods=["POST", "OPTIONS"])
 @require_origin_reportup
 def verify_address():
@@ -3774,6 +3817,31 @@ def verify_address():
             cap_google = ""
         if geo and not geo.get("solo_comune") and len(cap_form) == 5 and cap_google and cap_form != cap_google:
             cap_incoerente = True
+
+        # Via scritta dal cliente contro via trovata da Google (caso Dapoto
+        # 28/10/2026: "Via Valeriano de Bonis" a Potenza non esiste, Google
+        # rispondeva con "Via Sabbioneta" e il form lasciava passare con un
+        # OK/Annulla). Se Google ha dovuto indovinare e il nome e' molto diverso
+        # il cliente viene fermato, e se la via esiste altrove gli si dice dove.
+        via_scritta = str(body.get("via") or "").strip() or indirizzo.split(",")[0].strip()
+        via_diversa, via_google, via_esiste_a = False, "", None
+        if (geo and geo.get("partial_match") and not geo.get("solo_comune") and geo.get("via_google")
+                and dati_form.via_e_stradale(via_scritta)
+                and not dati_form.via_coerente(via_scritta, geo["via_google"])):
+            via_diversa, via_google = True, geo["via_google"]
+            via_esiste_a = _dove_esiste_via(via_scritta, geo.get("comune"))
+
+        # Provincia: la sigla a 2 lettere e' il formato valido; se Google
+        # indica un'altra provincia per lo stesso comune e' un avviso morbido.
+        prov_scritta = str(body.get("provincia") or "").strip()
+        if not prov_scritta:
+            _ultimo = indirizzo.split(",")[-1].strip() if indirizzo.count(",") >= 3 else ""
+            prov_scritta = _ultimo
+        provincia_non_valida = bool(prov_scritta) and not re.fullmatch(r"[A-Za-z]{2}", prov_scritta)
+        prov_google = str((geo or {}).get("provincia") or "").strip().upper()
+        provincia_incoerente = bool(
+            geo and not geo.get("solo_comune") and not provincia_non_valida and prov_scritta
+            and re.fullmatch(r"[A-Z]{2}", prov_google) and prov_scritta.upper() != prov_google)
         return _risposta({
             "valido": bool(geo),
             "precisione_incerta": bool(geo and geo.get("partial_match")),
@@ -3782,6 +3850,12 @@ def verify_address():
             "solo_comune": bool(geo and geo.get("solo_comune")),
             "cap_incoerente": cap_incoerente,
             "cap_google": cap_google if cap_incoerente else "",
+            "via_diversa": via_diversa,
+            "via_google": via_google,
+            "via_esiste_a": via_esiste_a,
+            "provincia_non_valida": provincia_non_valida,
+            "provincia_incoerente": provincia_incoerente,
+            "provincia_google": prov_google if provincia_incoerente else "",
         })
     except Exception as e:
         print(f"[VERIFY-ADDRESS] eccezione: {e}")

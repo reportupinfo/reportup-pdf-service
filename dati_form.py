@@ -10,10 +10,22 @@ trascrivere male (rata mutuo, importo e mesi dell'intervento, mq...).
 
 Modulo puro: nessuna dipendenza da Flask o da app.py.
 """
+import difflib
 import json
 import re
+import unicodedata
 
 _MARCATORE_JSON = "Restituisci ESATTAMENTE questo oggetto JSON"
+
+# Voci di costo che nessun report puo' stimare in modo affidabile per ogni
+# immobile (decisione di Salvatore, 28/10/2026, dopo il feedback "nei costi non
+# tieni conto di condominio, riscaldamento e tasse"): si dichiara in grassetto
+# sotto la tabella dei costi, uguale in Base e Strategico, e si lascia al cliente
+# di sommarle. Nessuna cifra inventata.
+TESTO_COSTI_NON_INCLUSI = (
+    "Non inclusi: spese condominiali, riscaldamento, imposte e tasse (IMU, TARI, redditi): "
+    "non stimabili in modo affidabile per ogni immobile, vanno sommati a parte."
+)
 
 
 def _linea(testo, etichetta_re):
@@ -287,3 +299,49 @@ def costruisci_json_base(d, norm_dotazione, dotazioni_ammesse, solo_comune=None)
     data["rata_mutuo_mensile"] = d.get("rata_mutuo_mensile", 0)
     data.update(json.loads(json.dumps(_SEGNAPOSTO_NUMERICI_BASE)))
     return data
+
+
+# ── Via scritta dal cliente contro via trovata da Google ─────────────────────
+# Caso Dapoto (28/10/2026): "Via Valeriano de Bonis, 85100, Potenza" non esiste a
+# Potenza, Google risponde con "Via Sabbioneta" (partial_match) e il report
+# usciva su un'altra via. Qui si confrontano i NOMI delle due vie, senza
+# prefisso (via/viale/piazza), civico, articoli e accenti: il refuso lieve
+# passa, la via diversa no.
+
+_PAROLE_VUOTE_VIA = {
+    "via", "viale", "vicolo", "vico", "piazza", "piazzale", "piazzetta", "corso", "largo", "strada", "stradale",
+    "salita", "lungomare", "traversa", "calata", "circonvallazione", "borgo", "contrada", "localita", "frazione",
+    "di", "del", "della", "dei", "delle", "degli", "dello", "de", "d", "da", "dal", "dalla", "la", "le", "lo", "il",
+    "i", "gli", "l", "e", "san", "santa", "santo", "sant", "s",
+}
+# Il blocco duro vale solo per le vie vere: contrade, localita' e frazioni sono
+# scritte in tanti modi e Google le abbina male, li' resta l'avviso morbido.
+_TIPI_VIA_STRADALI = ("via", "viale", "vicolo", "vico", "piazza", "piazzale", "piazzetta", "corso", "largo",
+                      "strada", "salita", "lungomare", "traversa", "calata", "circonvallazione")
+
+
+def _token_via(testo):
+    t = unicodedata.normalize("NFKD", str(testo or "")).encode("ascii", "ignore").decode("ascii").lower()
+    t = re.sub(r"[^a-z0-9 ]+", " ", t)
+    return [x for x in t.split() if x not in _PAROLE_VUOTE_VIA and not re.fullmatch(r"\d+[a-z]?|snc", x)]
+
+
+def via_e_stradale(scritta):
+    """True se la via scritta inizia con via/viale/piazza/corso...: solo in
+    quel caso un nome molto diverso da quello di Google blocca il cliente."""
+    primo = re.sub(r"[^a-z ]+", " ", unicodedata.normalize("NFKD", str(scritta or "")).encode("ascii", "ignore")
+                   .decode("ascii").lower()).split()
+    return bool(primo) and primo[0] in _TIPI_VIA_STRADALI
+
+
+def via_coerente(scritta, trovata):
+    """True se il nome della via scritta dal cliente e' lo stesso (o un refuso
+    lieve) di quello trovato da Google. Nomi non confrontabili (vuoti): True,
+    nel dubbio non si blocca. Falso solo se meno della meta' delle parole della
+    via piu' breve trova una parola simile (rapporto >= 0,8) nell'altra."""
+    a, b = _token_via(scritta), _token_via(trovata)
+    if not a or not b:
+        return True
+    simile = lambda x, y: x == y or difflib.SequenceMatcher(None, x, y).ratio() >= 0.8
+    corrispondenze = sum(1 for x in a if any(simile(x, y) for y in b))
+    return corrispondenze / min(len(a), len(b)) >= 0.5

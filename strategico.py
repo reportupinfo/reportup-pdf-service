@@ -15,6 +15,7 @@ from reportlab.lib.utils import ImageReader
 import datetime
 import affitti_mercato
 import confronto_affitto
+import dati_form
 import io
 import math
 
@@ -1388,7 +1389,11 @@ def page4(c, data):
                         "per gli host privati può aggiungersi IVA 22% sulla commissione, non inclusa.")
     y = wrap_simple(c, _nota_biancheria, 14*mm, y, W - 28*mm,
                      "Helvetica-Oblique", 6.5, 3.2*mm, color=MUTED)
-    y -= 3*mm
+    y -= 1.5*mm
+    # Stesso avviso del Base: voci che il report non puo' stimare in modo affidabile.
+    y = wrap_simple(c, dati_form.TESTO_COSTI_NON_INCLUSI, 14*mm, y, W - 28*mm,
+                     "Helvetica-Bold", 6.5, 3.6*mm, color=BLUE_NIGHT)
+    y -= 2*mm
 
     # 4 card: margine grigio, ricavo verde, costi rosso, guadagno gold (più grande)
     total_w = W - 28*mm

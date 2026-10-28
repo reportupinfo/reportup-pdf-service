@@ -15,6 +15,15 @@
 #   - montagna: solo sopra i 500 m di quota; la cima piu' nota nel raggio, da
 #     Wikidata (numero di voci Wikipedia = notorieta'), distanza in linea d'aria.
 #
+# Viabilita' (28/10/2026, feedback Carnimeo: "troppo generico" per una periferia
+# di passaggio vicino a SS16 e A14). Tre righe oggettive, valide per ogni zona e
+# tutte da luoghi reali di Google, mai scritte a mano ne' dall'IA:
+#   - centro del comune: distanza dal centro (geocoding del comune), dice subito
+#     se l'immobile e' in centro o in periferia;
+#   - stazione ferroviaria piu' vicina (tipo train_station, entro 15 km);
+#   - casello autostradale piu' vicino (nome "Casello/Uscita autostrada", entro
+#     40 km), con tempo in auto reale.
+#
 # Regola del progetto: nessun dato inventato. Se Google/Wikidata non rispondono
 # o non c'e' un candidato credibile, la riga non compare. Le distanze sono
 # arrotondate ai 10 m e dichiarano da dove vengono (a piedi, in auto, linea d'aria).
@@ -22,6 +31,7 @@
 import math
 import os
 import re
+import unicodedata
 import requests
 
 import territorio_gps
@@ -36,6 +46,9 @@ MAX_KM_LAGO = 8.0          # lago noto piu' lontano considerato
 MAX_KM_ACCESSO_LAGO = 6.0  # punto di accesso al lago piu' lontano citabile
 QUOTA_MIN_MONTAGNA = 500   # sotto questa quota non si cerca la montagna
 RAGGIO_MONTE_KM = 20
+MAX_KM_STAZIONE = 15.0     # stazione ferroviaria piu' lontana citabile (linea d'aria)
+MAX_KM_CASELLO = 40.0      # casello autostradale piu' lontano citabile (linea d'aria)
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 _haversine_km = territorio_gps._haversine_km
 
@@ -84,19 +97,23 @@ def _titolo(nome):
 _PLACES_CACHE = {}
 
 
-def _luoghi(lat, lon, keyword, raggio_m=None, timeout=5):
-    """Nearby Search per parola chiave. Senza raggio: ordinato per distanza
-    (rankby=distance, max 20). Con raggio: ordinato per notorieta' (il default
-    di Google), utile per "la spiaggia piu' importante". Ritorna
+def _luoghi(lat, lon, keyword=None, raggio_m=None, timeout=5, tipo=None):
+    """Nearby Search per parola chiave (e/o tipo Google). Senza raggio: ordinato
+    per distanza (rankby=distance, max 20). Con raggio: ordinato per notorieta'
+    (il default di Google), utile per "la spiaggia piu' importante". Ritorna
     [{nome, lat, lon, rec, types, _dist_km}] oppure [] se Google non risponde."""
     key = _chiave()
     lat, lon = _num(lat), _num(lon)
-    if not key or lat is None or lon is None:
+    if not key or lat is None or lon is None or not (keyword or tipo):
         return []
-    ck = (round(lat, 3), round(lon, 3), keyword, raggio_m)
+    ck = (round(lat, 3), round(lon, 3), keyword, raggio_m, tipo)
     if ck in _PLACES_CACHE:
         return _PLACES_CACHE[ck]
-    params = {"location": f"{lat},{lon}", "keyword": keyword, "language": "it", "key": key}
+    params = {"location": f"{lat},{lon}", "language": "it", "key": key}
+    if keyword:
+        params["keyword"] = keyword
+    if tipo:
+        params["type"] = tipo
     if raggio_m:
         params["radius"] = int(raggio_m)
     else:
@@ -358,11 +375,144 @@ def riga_montagna(lat, lon, quota):
              f"{_titolo(nome)} ({quota_txt} m)", impatto]]
 
 
+# ── Viabilita': centro, stazione ferroviaria, casello ────────────────────────
+
+def _norm(testo):
+    """Minuscolo, senza accenti ne' punteggiatura: per confrontare nomi."""
+    t = unicodedata.normalize("NFKD", str(testo or "")).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9 ]+", " ", t.lower()).strip()
+
+
+_CENTRO_CACHE = {}
+
+
+def centro_comune(comune, provincia=None, timeout=4):
+    """(lat, lon) del centro del comune dal Geocoding Google, oppure None.
+    Si accetta solo un risultato di tipo comune che contiene il nome cercato: un
+    omonimo o un risultato generico non deve diventare "il centro"."""
+    key = _chiave()
+    if not key or not comune:
+        return None
+    ck = (_norm(comune), _norm(provincia))
+    if ck in _CENTRO_CACHE:
+        return _CENTRO_CACHE[ck]
+    esito = None
+    try:
+        indirizzo = f"{comune}, {provincia}, Italia" if provincia else f"{comune}, Italia"
+        resp = requests.get(GOOGLE_GEOCODE_URL,
+                            params={"address": indirizzo, "components": "country:IT", "language": "it", "key": key},
+                            timeout=timeout)
+        if resp.status_code == 200:
+            ris = (resp.json().get("results") or [None])[0]
+            if ris and set(ris.get("types") or []) & {"locality", "administrative_area_level_3"} \
+                    and _norm(comune) in _norm(ris.get("formatted_address")):
+                loc = ris["geometry"]["location"]
+                esito = (loc["lat"], loc["lng"])
+    except Exception as e:
+        print(f"[POI-TERRITORIO] centro comune {comune!r}: {type(e).__name__}: {e}")
+    if esito is not None:
+        _CENTRO_CACHE[ck] = esito
+    return esito
+
+
+def riga_centro(lat, lon, comune, provincia=None):
+    """Distanza dal centro del comune: dice se l'immobile e' in centro o in periferia."""
+    centro = centro_comune(comune, provincia)
+    if not centro:
+        return []
+    if _haversine_km(float(lat), float(lon), centro[0], centro[1]) < 0.15:
+        return [["Centro del comune", "In centro", str(comune), "Alto"]]
+    testo, impatto = distanza_testo(lat, lon, centro[0], centro[1])
+    return [["Centro del comune", testo, str(comune), impatto]]
+
+
+_RE_NON_STAZIONE = re.compile(
+    r"metropolitana|\bmetro\b|\btram\b|funivia|funicolare|cremagliera|autostazione|\bbus\b|ristorant|\bbar\b|"
+    r"hotel|parcheggio|taxi|biglietter|\bbivio\b|\bp\.?c\.?\b|posto di|scalo|raccordo|deposito|officin", re.IGNORECASE)
+
+
+def _nome_stazione(nome):
+    n = _titolo(nome)
+    return n if re.match(r"^stazione\b", n, re.IGNORECASE) else f"Stazione di {n}"
+
+
+def _scegli_stazione(candidati, escludi_nomi=()):
+    """La stazione ferroviaria vera piu' vicina entro MAX_KM_STAZIONE, oppure
+    None. Se coincide con il punto gia' mostrato come "Trasporto pubblico"
+    (stesso nome) non si ripete."""
+    # Si escludono solo i punti gia' mostrati che sono davvero una stazione: una
+    # fermata del bus "Fermata Scalea SS18" non e' la stazione di Scalea.
+    esclusi = [_norm(n) for n in escludi_nomi if n and re.search(r"\bstazione\b", _norm(n))]
+    validi = []
+    for l in candidati:
+        if "train_station" not in (l.get("types") or []):
+            continue
+        if _RE_NON_STAZIONE.search(l["nome"]) or l["_dist_km"] > MAX_KM_STAZIONE:
+            continue
+        nome_n = _norm(l["nome"])
+        if nome_n and any(nome_n in e or (len(e) >= 4 and e in nome_n) for e in esclusi):
+            continue
+        validi.append(l)
+    return min(validi, key=lambda l: l["_dist_km"]) if validi else None
+
+
+def riga_stazione(lat, lon, escludi_nomi=()):
+    st = _scegli_stazione(_luoghi(lat, lon, tipo="train_station"), escludi_nomi)
+    if not st:
+        return []
+    testo, impatto = distanza_testo(lat, lon, st["lat"], st["lon"])
+    return [["Stazione ferroviaria", testo, _nome_stazione(st["nome"]), impatto]]
+
+
+_RE_CASELLO = re.compile(r"\bcasello\b|uscita autostrad|svincolo autostrad", re.IGNORECASE)
+_RE_NON_CASELLO = re.compile(
+    r"distributore|stazione di servizio|area di servizio|autogrill|ristorant|\bbar\b|hotel|motel|parcheggio|"
+    r"autoscuola|telepass|ufficio|\bsede\b|concession|officina|autolavaggio|noleggio|\bs\.?p\.?a\.?\b|\bsrl\b|societ", re.IGNORECASE)
+_TIPI_NON_CASELLO = {"locality", "political", "tourist_attraction", "gas_station", "lodging", "food",
+                     "restaurant", "parking", "store", "car_repair", "car_rental", "car_wash"}
+
+
+def _scegli_casello(candidati):
+    """Il casello/uscita autostradale vero piu' vicino entro MAX_KM_CASELLO.
+    Google restituisce anche localita' omonime ("Casello", tipo locality),
+    distributori e attrazioni che hanno "uscita" nel nome: si scartano per
+    tipo e per nome."""
+    validi = [l for l in candidati
+              if _RE_CASELLO.search(l["nome"]) and not _RE_NON_CASELLO.search(l["nome"])
+              and not (set(l.get("types") or []) & _TIPI_NON_CASELLO)
+              and l["_dist_km"] <= MAX_KM_CASELLO]
+    return min(validi, key=lambda l: l["_dist_km"]) if validi else None
+
+
+def riga_casello(lat, lon):
+    c = _scegli_casello(_luoghi(lat, lon, keyword="casello autostradale"))
+    if not c:
+        return []
+    a = percorso(lat, lon, c["lat"], c["lon"], "driving")
+    # Il punto del casello cade sulla carreggiata: Google puo' agganciarlo nel
+    # senso opposto e allungare il giro fino alla prossima uscita (Ancona
+    # Torrette: 30 km in auto per 8 km in linea d'aria). Un percorso oltre il
+    # doppio della linea d'aria e' un'anomalia: si dichiara la linea d'aria.
+    if a and a[0] / 1000.0 > max(2.0 * c["_dist_km"], c["_dist_km"] + 5):
+        a = None
+    if a:
+        impatto = "Alto" if a[1] <= 10 else "Medio" if a[1] <= 20 else "Basso"
+        testo = f"{fmt_metri(a[0])} · {a[1]} min in auto"
+    else:
+        km = c["_dist_km"]
+        impatto = "Alto" if km <= 8 else "Medio" if km <= 20 else "Basso"
+        testo = f"{fmt_metri(km * 1000)} (linea d'aria)"
+    return [["Casello autostradale", testo, _titolo(c["nome"]), impatto]]
+
+
 # ── Ingresso unico ───────────────────────────────────────────────────────────
 
-def poi_territoriali(lat, lon):
+def poi_territoriali(lat, lon, comune=None, provincia=None, escludi_nomi=(), approssimato=False):
     """Righe extra [[etichetta, distanza, nome, impatto], ...] + contesto
-    {"vicino_mare": bool, "vicino_lago": bool}. Qualunque errore: niente righe."""
+    {"vicino_mare": bool, "vicino_lago": bool}. Qualunque errore: niente righe.
+    comune/provincia: servono per la riga "Centro del comune" (omessa se
+    mancano o se le coordinate sono gia' il centro del comune: `approssimato`).
+    escludi_nomi: nomi gia' mostrati nelle righe fisse, per non ripeterli."""
     righe, ctx = [], {"vicino_mare": False, "vicino_lago": False}
     try:
         if _num(lat) is None or _num(lon) is None:
@@ -371,7 +521,15 @@ def poi_territoriali(lat, lon):
         lago = righe_lago(lat, lon)
         quota = territorio_gps.elevazione_metri(lat, lon)
         monte = riga_montagna(lat, lon, quota)
-        righe = mare + lago + monte
+        viabilita = []
+        for fn in ((lambda: riga_centro(lat, lon, comune, provincia)) if comune and not approssimato else (lambda: []),
+                   lambda: riga_stazione(lat, lon, escludi_nomi),
+                   lambda: riga_casello(lat, lon)):
+            try:
+                viabilita += fn()
+            except Exception as e:   # una riga che fallisce non toglie le altre
+                print(f"[POI-TERRITORIO] viabilita' saltata: {type(e).__name__}: {e}")
+        righe = mare + lago + monte + viabilita
         ctx["vicino_mare"] = bool(mare) and (territorio_gps.distanza_costa_km(lat, lon) or 99) <= 3.0
         ctx["vicino_lago"] = bool(lago) and (lago_piu_vicino(lat, lon, 3.0)[0] is not None)
     except Exception as e:

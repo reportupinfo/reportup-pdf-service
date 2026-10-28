@@ -66,4 +66,17 @@ ind_v, approx_v = dati_form.indirizzo_da_form(d)
 assert ind_v == "Via Giuseppe Mazzini 20, 37121, Verona (VR)" and not approx_v, (ind_v, approx_v)
 # il rigeocoding del backend (solo_comune) ha la precedenza sull'euristica sul testo
 assert dati_form.indirizzo_da_form(d, solo_comune=True)[1] is True
+# via scritta contro via di Google (caso Dapoto 28/10/2026)
+assert not dati_form.via_coerente("Via Valeriano de Bonis", "Via Sabbioneta")
+assert not dati_form.via_coerente("Via Valeriano de Bonis 38", "Via Sabbioneta")
+assert dati_form.via_coerente("Via Valeriano de Bonis", "Via Valeriano de Bonis")
+assert dati_form.via_coerente("via valeriano de bonnis 38", "Via Valeriano de Bonis")   # refuso
+assert dati_form.via_coerente("Via Curzo", "Via Curzio")
+assert dati_form.via_coerente("Via San Giovanni Bosco 5", "Via Giovanni Bosco")
+assert dati_form.via_coerente("Via Dante Alighieri", "Via Dante")
+assert dati_form.via_coerente("Via Valeriano de Bonis", "Via C. de Bonis")               # stessa via, nome abbreviato
+assert not dati_form.via_coerente("Via Roma", "Via Garibaldi")
+assert dati_form.via_coerente("", "Via Roma") and dati_form.via_coerente("Via Roma", "")   # non confrontabili: non si blocca
+assert dati_form.via_e_stradale("Via Valeriano de Bonis") and dati_form.via_e_stradale("Piazza Duomo 3")
+assert not dati_form.via_e_stradale("Contrada San Marco") and not dati_form.via_e_stradale("Localita' Fiumicello")
 print("OK")
