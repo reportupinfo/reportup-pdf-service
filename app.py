@@ -32,6 +32,7 @@ import dati_form
 import territorio_gps
 import territorio_poi
 import descrizione_segmenti
+import qualita_immobile
 import stagionalita_turistica
 import affitti_mercato
 import confronto_affitto
@@ -4215,10 +4216,22 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # il bonus vale in automatico ovunque compaia il prezzo, indipendente
     # dalla fonte (AirROI o stima AI). WiFi/aria condizionata/riscaldamento/
     # bagni non danno incremento — vedi INCREMENTO_PREZZO_PER_DOTAZIONE.
+    # Scostamento di qualità (28/10/2026, vedi qualita_immobile.py): il prezzo
+    # AirROI non dipende dallo stato dell'immobile, quindi sul livello "buono"
+    # (0) si applica -5% / +10% / +20% per arredi base / ristrutturato / lusso.
+    # Si SOMMA all'incremento dotazioni (prezzo AirROI + dotazioni + qualità),
+    # stesso punto unico, quindi vale in automatico su ricavi, tabella mensile,
+    # competitor e scenari, in Base e Strategico. Non compare in nessuna tabella.
+    _livello_q = qualita_immobile.livello_qualita(data.get("stato"))
+    _pct_q = qualita_immobile.adeguamento_pct(data.get("stato"))
+    data["qualita_livello"] = _livello_q
+    data["qualita_pct"] = round(_pct_q * 100)
     if _p_new:
         _mult_dotazioni = _moltiplicatore_dotazioni(data.get("dotazioni_presenti"))
+        _mult_prezzo = _mult_dotazioni + _pct_q
+        if _mult_prezzo != 1:
+            _p_new = round(_p_new * _mult_prezzo)
         if _mult_dotazioni != 1:
-            _p_new = round(_p_new * _mult_dotazioni)
             # Sessione 68: percentuale salvata per il disclaimer nella tabella
             # competitor — spiega al cliente perché "IL TUO IMMOBILE" può
             # differire dalla media della stessa tipologia in tabella.
@@ -4389,7 +4402,12 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         _cam_m = affitti_mercato.numero_da_testo(data.get("camere"), 1)
         if not _sup_m or _sup_m < _cam_m * 20:
             _sup_m = affitti_mercato.superficie_tipica(data.get("tipologia"))
-        _mercato = affitti_mercato.stima_affitto_mercato(_codice_istat_mercato, _sup_m)
+        # Stesso scostamento di qualità del prezzo B&B (qualita_immobile.py): il
+        # canone medio del comune non dipende dallo stato dell'immobile, e senza
+        # lo stesso fattore il confronto B&B contro affitto non sarebbe alla pari.
+        # Fallback sotto (stima da prezzo/notte): il prezzo è già adeguato.
+        _mercato = affitti_mercato.stima_affitto_mercato(_codice_istat_mercato, _sup_m,
+                                                         fattore=1 + _pct_q)
         print(f"[AFFITTO-MERCATO] comune={data.get('comune')!r} "
               f"esito={'trovato' if _mercato else 'non coperto, fallback AirROI'}")
 

@@ -136,9 +136,11 @@ def canone_mq(codice_istat):
     return _carica().get(chiave)
 
 
-def stima_affitto_mercato(codice_istat, superficie):
+def stima_affitto_mercato(codice_istat, superficie, fattore=1.0):
     """
-    Confronto affitto tradizionale = canone/m2 x superficie dichiarata x 12.
+    Confronto affitto tradizionale = canone/m2 x superficie dichiarata x 12,
+    moltiplicato per `fattore` (scostamento di qualita' dell'immobile, 1.0 =
+    livello "buono", vedi qualita_immobile.py).
     Ritorna dict con ricavo/profitto min-medio-max e costi, oppure None se il
     comune non è coperto (il chiamante usa allora il fallback esistente).
     I costi di gestione (assicurazione, IMU, manutenzione) restano al 10% del
@@ -148,7 +150,7 @@ def stima_affitto_mercato(codice_istat, superficie):
     if ris is None or not superficie or superficie <= 0:
         return None
     mn, md, mx = ris
-    ricavo = [round(v * superficie * 12) for v in (mn, md, mx)]
+    ricavo = [round(v * superficie * 12 * fattore) for v in (mn, md, mx)]
     costi = max(500, min(2000, round(ricavo[1] * 0.10)))
     return {
         "ricavo_min": ricavo[0], "ricavo": ricavo[1], "ricavo_max": ricavo[2],
