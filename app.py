@@ -1503,7 +1503,7 @@ def page1(c, D):
     if D.get("_wikipedia_estratto"):
         c.setFont("Helvetica", 5.5)
         c.setFillColor(MUTED)
-        c.drawString(14 * mm, y - 2.5 * mm, "Alcune informazioni territoriali sono tratte da fonti enciclopediche aperte (CC BY-SA).")
+        c.drawString(14 * mm, y - 2.5 * mm, testi_report.CREDITO_FONTI_ENCICLOPEDICHE)
 
 
 def page2(c, D):
@@ -4694,7 +4694,9 @@ def _rimuovi_cifre_economiche_dai_testi(data):
             tolte += n
     for chiave in ("scenario_pess", "scenario_real", "scenario_ott"):
         sc = data.get(chiave)
-        if isinstance(sc, dict):
+        # Sottotitolo e nota scritti dal codice (_ricalcola_scenari_strategico) dichiarano le
+        # ipotesi vere dello scenario, percentuali comprese: non vanno filtrati.
+        if isinstance(sc, dict) and not sc.get("_testo_codice"):
             for campo in ("subtitle", "note"):
                 nuovo, n = _toglie_frasi_con_cifre(sc.get(campo))
                 if n:
@@ -5047,6 +5049,8 @@ def _ricalcola_scenari_strategico(data):
     data["scenario_real"]["note"] = (
         "Ipotesi: i valori dell'analisi economica annuale, cioè prezzo e occupazione stimati sui comparabili "
         "di zona e bonus prenotazioni dirette al 7%.")
+    for _k in ("scenario_pess", "scenario_real", "scenario_ott"):
+        data[_k]["_testo_codice"] = True
     data["scenario_ott"]["subtitle"] = "Gestione ottimizzata, prezzi dinamici, forte presenza sui canali diretti"
     data["scenario_ott"]["note"] = (
         "Ipotesi: occupazione pari al 120% di quella dello scenario realistico (massimo 90%), prezzo al 118%, "

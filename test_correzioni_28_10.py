@@ -53,6 +53,10 @@ for sc in (p, r, o):
 assert "rata del mutuo resta invariata" in p["note"] and "rata del mutuo resta invariata" in o["note"]
 assert "65%" in p["note"] and "120%" in o["note"] and "118%" in o["note"]
 
+# 4b. il filtro cifre che gira dopo NON tocca i testi degli scenari scritti dal codice
+A._rimuovi_cifre_economiche_dai_testi(d)
+assert "65%" in d["scenario_pess"]["note"] and "120%" in d["scenario_ott"]["note"] and "7%" in d["scenario_real"]["note"], d
+
 # 5. etichette scheda: Base (testo del form) e Strategico (codice) leggono la stessa riga
 for stato in ("lusso", "Finiture di lusso e design", "Finiture premium, design"):
     assert A._prepara_etichette_scheda({"stato": stato})["scheda_stato"] == "Finiture di lusso e design"

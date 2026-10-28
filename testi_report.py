@@ -238,3 +238,9 @@ RINGRAZIAMENTO_PARAGRAFI = [
 ]
 
 RINGRAZIAMENTO_FIRMA = "Arch. Salvatore Junior Sica"
+
+
+# ── Credito fonti enciclopediche (Wikipedia, licenza CC BY-SA) ───────────────
+# Chi usa un brano Wikipedia deve citarlo: la frase sul comune e' nella descrizione di
+# Base e Strategico, quindi il credito sta sotto la descrizione in tutti e due.
+CREDITO_FONTI_ENCICLOPEDICHE = "Alcune informazioni territoriali sono tratte da fonti enciclopediche aperte (CC BY-SA)."

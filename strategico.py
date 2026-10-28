@@ -538,6 +538,11 @@ def page2(c, data):
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Descrizione immobile")
     y -= 5*mm
     y = wrap_text(c, data.get('descrizione', ''), 14*mm, y, W - 28*mm, "Helvetica", 8, 5.5*mm)
+    # Stesso credito del Base: la descrizione contiene un brano Wikipedia (CC BY-SA).
+    if data.get('_wikipedia_estratto'):
+        c.setFont("Helvetica", 5.5)
+        c.setFillColor(MUTED)
+        c.drawString(14*mm, y - 2.5*mm, testi_report.CREDITO_FONTI_ENCICLOPEDICHE)
     y -= 8*mm
 
     y = draw_section_header(c, 14*mm, y, W - 28*mm, "Posizione e punti di interesse")
