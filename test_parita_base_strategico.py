@@ -62,3 +62,40 @@ for titolo, desc in tr.fonti_comuni(D, affitti_mercato.fonte_descrizione()):
 assert flusso(tr.disclaimer("Report Base")) in base_riep
 assert flusso(tr.disclaimer("Report Strategico")) in st_riep
 print("OK")
+
+# ── Parita' aggiunte il 28/10/2026 dopo il test Sorrento (Base contro Strategico) ──
+base_occ = flusso(base[1].get_text())
+base_p1 = flusso(base[0].get_text())
+base_ring = base_fonti
+
+# riepilogo: le quattro card del Base sono IDENTICHE nello Strategico
+for titolo, valore, riga1, riga2 in tr.kpi_riepilogo(D):
+    for nome, testo in (("Base", base_riep), ("Strategico", st_riep)):
+        for pezzo in (titolo, valore, riga1, riga2):
+            assert flusso(pezzo) in testo, (nome, pezzo)
+assert flusso(tr.nota_riepilogo("base")) in base_riep
+assert flusso(tr.nota_riepilogo("strategico")) in st_riep
+
+# ringraziamento: stesse parole, stessa firma
+st_ring = st_fonti
+for testo, _corsivo in tr.RINGRAZIAMENTO_PARAGRAFI:
+    assert flusso(testo) in base_ring, ("Base", testo[:40])
+    assert flusso(testo) in st_ring, ("Strategico", testo[:40])
+assert flusso(tr.RINGRAZIAMENTO_TITOLO) in base_ring and flusso(tr.RINGRAZIAMENTO_TITOLO) in st_ring
+
+# nota sotto la curva mensile: stessa nota
+st_occ = testo_pagina_strategico(S.page3)
+assert flusso(tr.disclaimer_curva_mensile()) in base_occ, "Base: nota curva mensile"
+assert flusso(tr.disclaimer_curva_mensile()) in st_occ, "Strategico: nota curva mensile"
+assert "esattamente" not in tr.disclaimer_curva_mensile()
+
+# descrizione e scheda: la stessa riga di descrizione in tutte e due le pagine
+st_p1 = testo_pagina_strategico(S.page1)
+st_p2 = testo_pagina_strategico(S.page2)
+assert flusso(D["descrizione"]) in base_p1, "Base: descrizione"
+assert flusso(D["descrizione"]) in st_p2, "Strategico: descrizione"
+for k in ("scheda_tipologia", "scheda_piano", "scheda_stato", "scheda_epoca", "scheda_camere", "scheda_bagni",
+          "scheda_posti_letto", "scheda_superficie"):
+    assert flusso(str(D[k])) in base_p1, ("Base", k)
+    assert flusso(str(D[k])) in st_p1, ("Strategico", k)
+print("OK parita' 28/10")

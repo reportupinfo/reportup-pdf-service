@@ -33,12 +33,21 @@ ADEGUAMENTO_PREZZO_PER_QUALITA = {
 }
 
 
-def livello_qualita(stato):
-    """Livello ("base" | "buono" | "ristrutturato" | "lusso") dallo stato
-    dichiarato nel form. Il form manda i codici ("base", "lusso"...) oppure il
-    testo ("Finiture di lusso e design", "Ristrutturato e moderno", "Arredi
-    base, funzionale", "Ben tenuto e curato"). Stato mancante o non
-    riconosciuto: "buono", cioe' nessuno scostamento (mai un'ipotesi)."""
+# Etichette dello stato come le scrive il form Base (statoMap): quelle che il
+# cliente legge nella scheda immobile. Il Base le riceve gia' in chiaro, lo
+# Strategico riceve i codici ("lusso"): senza una tabella unica la stessa
+# riga si leggeva "Finiture di lusso e design" nel Base e "Finiture premium,
+# design" nello Strategico (28/10/2026).
+ETICHETTA_PER_QUALITA = {
+    "base": "Arredi base, funzionale",
+    "buono": "Ben tenuto e curato",
+    "ristrutturato": "Ristrutturato e moderno",
+    "lusso": "Finiture di lusso e design",
+}
+
+
+def _livello_riconosciuto(stato):
+    """Livello se lo stato e' riconosciuto, altrimenti None."""
     t = unicodedata.normalize("NFKD", str(stato or "")).encode("ascii", "ignore").decode("ascii").lower()
     t = re.sub(r"[^a-z0-9 ]+", " ", t)
     if re.search(r"lusso|premium|design|finiture", t):
@@ -47,7 +56,25 @@ def livello_qualita(stato):
         return "ristrutturato"
     if re.search(r"\bbase\b|funzional|arredi", t):
         return "base"
-    return "buono"
+    if re.search(r"\bbuono\b|ben tenuto|curato", t):
+        return "buono"
+    return None
+
+
+def etichetta_stato(stato):
+    """Etichetta unica dello stato per la scheda immobile. Uno stato non
+    riconosciuto resta com'e' (mai un'etichetta inventata)."""
+    livello = _livello_riconosciuto(stato)
+    return ETICHETTA_PER_QUALITA[livello] if livello else str(stato or "").strip()
+
+
+def livello_qualita(stato):
+    """Livello ("base" | "buono" | "ristrutturato" | "lusso") dallo stato
+    dichiarato nel form. Il form manda i codici ("base", "lusso"...) oppure il
+    testo ("Finiture di lusso e design", "Ristrutturato e moderno", "Arredi
+    base, funzionale", "Ben tenuto e curato"). Stato mancante o non
+    riconosciuto: "buono", cioe' nessuno scostamento (mai un'ipotesi)."""
+    return _livello_riconosciuto(stato) or "buono"
 
 
 def adeguamento_pct(stato):

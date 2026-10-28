@@ -24,3 +24,16 @@ assert q.adeguamento_pct("buono") == 0.0
 assert q.adeguamento_pct("ristrutturato") == 0.10
 assert q.adeguamento_pct("lusso") == 0.20
 print("OK")
+
+# etichetta unica dello stato (Base e Strategico leggono la stessa riga di scheda)
+for v in ("lusso", "Finiture di lusso e design", "Finiture premium, design", "Lusso — finiture premium, design"):
+    assert q.etichetta_stato(v) == "Finiture di lusso e design", v
+for v in ("ristrutturato", "Ristrutturato e moderno", "Ristrutturato, moderno"):
+    assert q.etichetta_stato(v) == "Ristrutturato e moderno", v
+for v in ("base", "Arredi base, funzionale", "Base — arredi standard, funzionale"):
+    assert q.etichetta_stato(v) == "Arredi base, funzionale", v
+for v in ("buono", "Ben tenuto e curato", "Buono — ben tenuto, curato"):
+    assert q.etichetta_stato(v) == "Ben tenuto e curato", v
+# non riconosciuto: resta com'e', senza etichetta inventata
+assert q.etichetta_stato("Ottimo") == "Ottimo" and q.etichetta_stato("") == "" and q.etichetta_stato(None) == ""
+print("OK etichette")

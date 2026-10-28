@@ -776,14 +776,7 @@ def page3(c, data):
         c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
         c.drawCentredString(px_dot, gy + 4*mm, f"€ {row[2]}")
 
-    disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
-        "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
-        "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
-        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica. "
-        "Il livello annuo di prezzo e occupazione deriva dai dati di mercato su annunci comparabili; "
-        "la distribuzione tra i mesi è una stima e può discostarsi nella tua zona."
-    )
+    disclaimer_prezzi = testi_report.disclaimer_curva_mensile()
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
         textColor=MUTED, leading=7.5, alignment=TA_CENTER,
@@ -915,8 +908,11 @@ def page4_manutenzione(c, data):
         # (classico errore di rappresentazione binaria, es. 572.92*12). Il
         # resto del report mostra sempre euro interi (mai centesimi sparsi),
         # quindi si arrotonda una volta sola qui e si riusa ovunque sotto.
-        impatto_annuo = round(mensile * 12)
-        profitto_dopo = round(data.get('profitto_netto', 0) - mensile * 12)
+        # Primo anno: con un intervento diluito su meno di 12 mesi si paga solo
+        # per i mesi di diluizione (6 mesi x 400 = 2.400, non 12 x 400 = 4.800).
+        mesi_anno = min(12, mesi)
+        impatto_annuo = round(mensile * mesi_anno)
+        profitto_dopo = round(data.get('profitto_netto', 0) - mensile * mesi_anno)
         int_data = [
             ["Voce", "Dettaglio", "Valore"],
             ["Tipo di intervento", label_tipo, ""],
@@ -929,11 +925,11 @@ def page4_manutenzione(c, data):
             ["Costo mensile da sottrarre",
              f"€ {importo:,} / {mesi} mesi = € {mensile:,}/mese".replace(",","."),
              f"- € {mensile:,}".replace(",",".")],
-            ["Impatto annuale sul profitto",
-             f"€ {mensile:,}/mese × 12 mesi".replace(",","."),
+            ["Impatto sul profitto del primo anno",
+             f"€ {mensile:,}/mese × {mesi_anno} mesi".replace(",","."),
              f"- € {impatto_annuo:,}".replace(",",".")],
             ["Profitto netto DOPO intervento",
-             f"€ {data.get('profitto_netto', 0):,} - € {impatto_annuo:,} = nel periodo di diluizione".replace(",","."),
+             f"€ {data.get('profitto_netto', 0):,} - € {impatto_annuo:,} = profitto netto del primo anno".replace(",","."),
              f"€ {profitto_dopo:,}".replace(",",".")],
         ]
 
@@ -1011,7 +1007,9 @@ def page4_manutenzione(c, data):
     mens      = data.get('intervento_mensile', 0)
     # round() qui invece che sul risultato finale: stesso bug float di sopra
     # (mens*12 tipo 6875.039999999999) si propagherebbe a prof_basso/prof_alto.
-    costo_int_anno = round(mens * 12) if has_int else 0
+    # Un intervento diluito su meno di 12 mesi pesa solo per quei mesi.
+    mesi_int_anno = min(12, int(data.get('intervento_mesi', 12) or 12))
+    costo_int_anno = round(mens * mesi_int_anno) if has_int else 0
     # round() e non int(): il troncamento faceva uscire il 20% di 31.828 come
     # 6.365 invece di 6.366, e la riga del profitto ereditava l'euro perso.
     _pm_costo_basso = round(ricavo_lordo * pm_bassa / 100)
@@ -1026,7 +1024,7 @@ def page4_manutenzione(c, data):
     pm_val = opt_val(has_pm,
         f"- \u20ac {_pm_costo_basso:,} / {_pm_costo_alto:,}".replace(",","."))
     int_det = opt_val(has_int,
-        f"\u20ac {mens:,}/mese x 12 = \u20ac {costo_int_anno:,} / anno".replace(",","."))
+        f"\u20ac {mens:,}/mese x {mesi_int_anno} = \u20ac {costo_int_anno:,} nel primo anno".replace(",","."))
     int_val = opt_val(has_int,
         f"- \u20ac {costo_int_anno:,}".replace(",","."))
 
@@ -1164,7 +1162,7 @@ def page4b_moltiplicatori(c, data):
     c.drawString(18*mm, y - 6*mm, "Come leggere questa tabella")
     c.setFont("Helvetica", 7.5)
     c.setFillColor(BLUE_NIGHT)
-    wrap_simple(c, "Impatti calcolati sullo stesso modello già usato per correggere il prezzo/notte reale del tuo immobile (non stime generiche): riflettono l'aumento medio di mercato osservato per ciascuna dotazione, cumulabile se ne aggiungi più di una.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
+    wrap_simple(c, "Impatti calcolati sullo stesso modello già usato per correggere il prezzo/notte reale del tuo immobile (non stime generiche): ogni incremento percentuale si applica al prezzo di mercato di riferimento della zona, riflette l'aumento medio osservato per ciascuna dotazione ed è cumulabile se ne aggiungi più di una.", 18*mm, y - 11*mm, W - 40*mm, "Helvetica", 7.5, 4.5*mm, BLUE_NIGHT)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAG 4 — Analisi economica annuale
@@ -1281,7 +1279,7 @@ def page4(c, data):
         # Accantonamento consigliato, non sottratto dal totale sotto: il
         # segno "-" faceva sembrare che fosse già conteggiato.
         ["FF&E Reserve (manutenzione straord.)",
-         f"€ {fmt_num(ffe)}/anno per arredi e dotazioni (non incluso nel totale)",
+         testi_report.ffe_testo(data),
          fmt_eu(ffe)],
         ["Rata mutuo (se presente)",
          testi_report.mutuo(data)[0],
@@ -2394,7 +2392,7 @@ def page11(c, data):
     y -= 6*mm
 
     # Box ringraziamento
-    box_h = 72*mm
+    box_h = 82*mm
     c.setFillColor(CREAM)
     c.roundRect(14*mm, y - box_h, W - 28*mm, box_h, 3*mm, fill=1, stroke=0)
     c.setStrokeColor(BLUE_PRIMARY)
@@ -2420,16 +2418,10 @@ def page11(c, data):
 
     c.setFont("Helvetica-Bold", 13)
     c.setFillColor(BLUE_NIGHT)
-    c.drawCentredString(W/2, iy, "Grazie per aver scelto ReportUp.")
+    c.drawCentredString(W/2, iy, testi_report.RINGRAZIAMENTO_TITOLO)
     iy -= 9*mm
 
-    paragrafi = [
-        ("Sono l\u2019Arch. Salvatore Junior Sica, e questo report porta con s\u00e9 oltre un decennio di esperienza "
-         "nel settore immobiliare italiano e pi\u00f9 di 30.000 valutazioni effettuate sul territorio nazionale.", False),
-        ("Siamo una piccola realt\u00e0 che sta crescendo, e lo facciamo con calma, con seriet\u00e0 e senza "
-         "scorciatoie. Ogni report che esce porta il nostro nome, e questo per noi non \u00e8 mai un dettaglio.", True),
-        ("Spero che questa analisi ti sia utile e ti aiuti a prendere la decisione giusta per il tuo immobile.", False),
-    ]
+    paragrafi = testi_report.RINGRAZIAMENTO_PARAGRAFI
     for testo, corsivo in paragrafi:
         fn = "Helvetica-Oblique" if corsivo else "Helvetica"
         col = TEAL if corsivo else BLUE_NIGHT
@@ -2455,7 +2447,7 @@ def page11(c, data):
     iy -= 2*mm
     c.setFont("Helvetica-Bold", 11)
     c.setFillColor(BLUE_NIGHT)
-    c.drawCentredString(W/2, iy, "Arch. Salvatore Junior Sica")
+    c.drawCentredString(W/2, iy, testi_report.RINGRAZIAMENTO_FIRMA)
     iy -= 6*mm
     c.setFont("Helvetica", 8)
     c.setFillColor(MUTED)
@@ -2629,17 +2621,10 @@ def page_riepilogo(c, data):
             draw_centred_fit(c, cx + kw/2, y - 21*mm, nota, kw - 3*mm, "Helvetica", 6, min_size=5)
         return y - kh - 6*mm
 
-    # Riga 1 — il cuore economico annuale (scenario realistico).
-    y = card_row([
-        ("PREZZO MEDIO / NOTTE", f"€ {data.get('prezzo_notte_stimato', 0)}", "per notte",
-         f"ADR ponderato € {data.get('adr', 0)}"),
-        ("TASSO DI OCCUPAZIONE", f"{occ_pct}%", "stimato",
-         f"{data.get('notti_anno', 0)} notti/anno"),
-        ("RICAVI TOTALI ANNUI", fmt_eur(data.get('totale_ricavi', 0)), "lordi",
-         f"Con occupazione al {occ_pct}%"),
-        ("PROFITTO NETTO STIMATO", fmt_eur(data.get('profitto_netto', 0)), "netto stimato",
-         f"Margine {data.get('margine_percent', 0)}% sui ricavi"),
-    ], y)
+    # Riga 1: le STESSE quattro card del Base (testi_report.kpi_riepilogo), stessi
+    # titoli, stessi valori, stesse righe. Chi ha il Base e passa allo Strategico
+    # ritrova identico il riepilogo; qui sotto lo Strategico aggiunge le sue.
+    y = card_row(testi_report.kpi_riepilogo(data), y)
 
     # Riga 2 — gli indicatori esclusivi dello Strategico.
     _valore_asset = data.get('valore_mercato') or 0
@@ -2683,9 +2668,7 @@ def page_riepilogo(c, data):
     ], y)
 
     # La nota era una riga sola e usciva dal margine destro della pagina: ora va a capo.
-    y = wrap_simple(c, "Valori orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
-                       "Dove il report presenta tre scenari, qui è riportato sempre quello realistico. "
-                       "Profitto netto al lordo delle imposte (es. cedolare secca).",
+    y = wrap_simple(c, testi_report.nota_riepilogo("strategico"),
                     14*mm, y, W - 28*mm, "Helvetica-Oblique", 6.5, 3.6*mm, color=MUTED)
     y -= 8*mm
 

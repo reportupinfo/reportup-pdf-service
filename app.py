@@ -524,12 +524,17 @@ def _calcola_moltiplicatori_dotazioni(data):
     notti = data.get("notti_anno") or 0
     if not prezzo:
         return
+    # Il prezzo stimato contiene gia' dotazioni e qualita' (somma di incrementi
+    # sul prezzo di mercato): aggiungere una dotazione vale la sua percentuale
+    # sul prezzo di mercato di riferimento, non sul prezzo finale. Applicarla al
+    # prezzo finale gonfiava la tabella di uno stato "lusso" (+20%) di un quarto.
+    prezzo_base = data.get("prezzo_riferimento_mercato") or prezzo
     assenti_norm = {_norm_dotazione(d) for d in (data.get("dotazioni_assenti") or [])}
     righe = []
     for nome, incremento in INCREMENTO_PREZZO_PER_DOTAZIONE.items():
         if nome not in assenti_norm or incremento <= 0:
             continue
-        delta_prezzo = round(prezzo * incremento)
+        delta_prezzo = round(prezzo_base * incremento)
         delta_ricavo = round(delta_prezzo * notti)
         righe.append((nome, f"+{round(incremento*100)}%", delta_prezzo, delta_ricavo))
     righe.sort(key=lambda r: r[3], reverse=True)
@@ -1716,14 +1721,7 @@ def page2(c, D):
         c.setFillColor(BLUE_NIGHT if affidabile else MUTED)
         c.drawCentredString(px_dot, gy + 4 * mm, f"€ {row[2]}")
 
-    disclaimer_prezzi = (
-        "I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
-        "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
-        "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
-        "sommando i 12 mesi si ottiene esattamente il ricavo lordo annuo dell'analisi economica. "
-        "Il livello annuo di prezzo e occupazione deriva dai dati di mercato su annunci comparabili; "
-        "la distribuzione tra i mesi è una stima e può discostarsi nella tua zona."
-    )
+    disclaimer_prezzi = testi_report.disclaimer_curva_mensile()
     style_disclaimer = ParagraphStyle(
         "disclaimerPrezzi", fontName="Helvetica-Oblique", fontSize=6,
         textColor=MUTED, leading=7.5, alignment=TA_CENTER,
@@ -1954,13 +1952,7 @@ def page4(c, D):
     y -= 7 * mm
     kw = (W - 28 * mm - 6 * mm) / 4
     kh = 24 * mm
-    kpis = [
-        ("PREZZO MEDIO / NOTTE", f"€ {D.get('kpi_prezzo', 0)}", "per notte", D.get("kpi_prezzo_range", "")),
-        ("TASSO DI OCCUPAZIONE", f"{D.get('kpi_occupazione', 0)}%", "stimato", D.get("kpi_occ_range", "")),
-        ("POTENZIALE LORDO ANNUO", fmt_eur(D.get("kpi_potenziale", 0)), "all'anno",
-         f"Con occupazione al {D.get('kpi_occupazione', 0)}%"),
-        ("PROFITTO NETTO STIMATO", fmt_eur(D.get("profitto_netto", 0)), "netto stimato", "Dopo costi di gestione"),
-    ]
+    kpis = testi_report.kpi_riepilogo(D)
     for i, (lbl, val, sub, nota) in enumerate(kpis):
         cx = 14 * mm + i * (kw + 2 * mm)
         c.setFillColor(GOLD_LIGHT)
@@ -1984,9 +1976,7 @@ def page4(c, D):
 
     c.setFont("Helvetica-Oblique", 6.5)
     c.setFillColor(MUTED)
-    c.drawString(14 * mm, y,
-                 "Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
-                 "Il profitto netto è al lordo delle imposte (es. cedolare secca).")
+    c.drawString(14 * mm, y, testi_report.nota_riepilogo("base"))
     y -= 7 * mm
 
     _avviso = D.get("avviso_normativo")
@@ -2121,17 +2111,10 @@ def page5(c, D):
 
     c.setFont("Helvetica-Bold", 13)
     c.setFillColor(BLUE_NIGHT)
-    c.drawCentredString(W / 2, iy, "Grazie per aver scelto ReportUp.")
+    c.drawCentredString(W / 2, iy, testi_report.RINGRAZIAMENTO_TITOLO)
     iy -= 9 * mm
 
-    paragrafi = [
-        ("Sono l'Arch. Salvatore Junior Sica, e questo report porta con sé oltre un decennio di esperienza "
-         "nel settore immobiliare italiano e più di 30.000 valutazioni effettuate sul territorio nazionale.", False),
-        ("ReportUp nasce da un'idea semplice: rendere accessibile a chiunque l'analisi professionale che "
-         "fino a ieri era riservata solo a chi poteva permettersi una consulenza privata.", False),
-        ("Ogni report che esce porta il nostro nome, e questo per noi non è mai un dettaglio.", True),
-        ("Spero che questa analisi ti sia utile e ti aiuti a prendere la decisione giusta per il tuo immobile.", False),
-    ]
+    paragrafi = testi_report.RINGRAZIAMENTO_PARAGRAFI
     max_w_testo = box_w - 20 * mm
     for testo, corsivo in paragrafi:
         fn = "Helvetica-Oblique" if corsivo else "Helvetica"
@@ -2285,16 +2268,12 @@ _LABEL_TIPOLOGIA = {
 }
 _LABEL_PIANO = {
     "terra":  "Piano terra",
-    "1-3":    "1° – 3° piano",
+    "1-3":    "1°–3° piano",
     "alto":   "Piano alto (4°+)",
     "attico": "Attico / Mansarda",
 }
-_LABEL_STATO = {
-    "base":          "Arredi base, funzionale",
-    "buono":         "Ben tenuto e curato",
-    "ristrutturato": "Ristrutturato, moderno",
-    "lusso":         "Finiture premium, design",
-}
+# Lo stato (4 livelli) ha una tabella unica in qualita_immobile.ETICHETTA_PER_QUALITA:
+# stessa etichetta nel Base (che riceve il testo) e nello Strategico (che riceve il codice).
 _LABEL_EPOCA = {
     "pre1960":  "Ante 1960",
     "anni60":   "Anni '60",
@@ -2374,7 +2353,7 @@ def _etichetta_scheda(valore, mappa):
 def _prepara_etichette_scheda(data):
     data["scheda_tipologia"] = _etichetta_scheda(data.get("tipologia"), _LABEL_TIPOLOGIA)
     data["scheda_piano"]     = _etichetta_scheda(data.get("piano"), _LABEL_PIANO)
-    data["scheda_stato"]     = _etichetta_scheda(data.get("stato"), _LABEL_STATO)
+    data["scheda_stato"]     = qualita_immobile.etichetta_stato(data.get("stato"))
     data["scheda_epoca"]     = _etichetta_scheda(data.get("epoca"), _LABEL_EPOCA)
     data["scheda_camere"]      = _frase_camere(data.get("camere", "")).capitalize()
     data["scheda_bagni"]       = _concorda_numero(data.get("bagni", ""), "bagno", "bagni")
@@ -3049,8 +3028,10 @@ def _applica_poi_stabili(data):
         # quello che questo passaggio vuole sostituire.
         righe[idx] = riga if riga else ["\u2014", "\u2014", "\u2014"]
     righe[4] = aeroporto_row(lat, lon)
-    if str(data.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
-        righe[1] = ["—", "—", "—"]
+    # "Comune di riferimento" (slot 1): nel Base e' sempre vuoto (il JSON lo costruisce il
+    # codice, senza IA); nello Strategico lo riempiva l'IA con un comune e una distanza
+    # non verificati, che finivano anche nella descrizione. Vuoto in tutti e due.
+    righe[1] = ["—", "—", "—"]
     data["poi"] = righe
 
 
@@ -4166,6 +4147,10 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     data["qualita_livello"] = _livello_q
     data["qualita_pct"] = round(_pct_q * 100)
     if _p_new:
+        # Prezzo di mercato di riferimento, prima di dotazioni e qualita': su di
+        # lui lavorano gli incrementi (additivi), anche quelli ipotetici della
+        # tabella "Moltiplicatori di valore" dello Strategico.
+        data["prezzo_riferimento_mercato"] = _p_new
         _mult_dotazioni = _moltiplicatore_dotazioni(data.get("dotazioni_presenti"))
         _mult_prezzo = _mult_dotazioni + _pct_q
         if _mult_prezzo != 1:
@@ -4431,6 +4416,11 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     if not data.get("regione_normativa") and _record_comune:
         data["regione_normativa"] = _record_comune.get("regione", "")
 
+    # FF&E Reserve: 2% del ricavo lordo, calcolato qui. Il prompt Strategico
+    # contiene il segnaposto 372 (2% di 18.600) e il PDF lo stampava identico su
+    # ogni immobile, anche con ricavi di 63.000.
+    data["ffe_reserve"] = testi_report.ffe_reserve(data)
+
     return data
 
 
@@ -4619,7 +4609,10 @@ _REGOLA_NIENTE_CIFRE_NEI_TESTI = (
 )
 
 
-_CAMPI_ANALISI_STRATEGICO = ("descrizione", "analisi_posizione", "analisi_condizione",
+# NON contiene "descrizione": la descrizione e' costruita dal codice (uguale al Base,
+# genera_descrizione_standard) e l'editor IA non deve riscriverla ne' il filtro
+# cifre accorciarla (tolta la frase "con 15.956 abitanti (dati ISTAT)", 28/10/2026).
+_CAMPI_ANALISI_STRATEGICO = ("analisi_posizione", "analisi_condizione",
                              "analisi_potenzialita", "analisi_raccomandazione")
 
 
@@ -5035,25 +5028,29 @@ def _ricalcola_scenari_strategico(data):
     # tiene il 7% del Base, l'ottimistico ("forte presenza su canali diretti")
     # il 10%, estremo alto della forbice 5-10% dichiarata nella tabella.
     data["scenario_pess"] = {**(data.get("scenario_pess") or {}), "label": "PESSIMISTICO", **_scenario(0.65, 0.80, 0.0)}
-    # Il testo dell'AI sul pessimistico a volte dice che "non raggiunge neppure
-    # il break-even" anche con profitto netto positivo (Firenze: 20.918 euro):
-    # una frase che il numero stampato accanto smentisce. Con profitto > 0 la
-    # frase viene sostituita con una formulazione vera.
-    _pess = data["scenario_pess"]
-    if _pess.get("profitto_netto", 0) > 0:
-        import re as _re_be
-        for _k in ("note", "nota", "descrizione", "dettaglio"):
-            _tx = _pess.get(_k)
-            if isinstance(_tx, str) and "break-even" in _tx.lower():
-                _pess[_k] = _re_be.sub(
-                    r"[^.]*break-even[^.]*\.",
-                    "In questo scenario il profitto resta positivo ma molto sotto le aspettative.",
-                    _tx, flags=_re_be.IGNORECASE)
     data["scenario_real"] = {**(data.get("scenario_real") or {}), "label": "REALISTICO",
         "occupazione": _occ_r, "notti": _notti_r, "prezzo_medio": _prezzo_r,
         "ricavi_lordi": _totale_ricavi_r, "costi_totali": _totale_costi_r,
         "profitto_netto": data.get("profitto_netto") or 0}
     data["scenario_ott"] = {**(data.get("scenario_ott") or {}), "label": "OTTIMISTICO", **_scenario(1.20, 1.18, 0.10)}
+
+    # Sottotitolo e nota di ogni scenario li scrive il codice, non l'IA: l'IA non
+    # conosce i numeri e scriveva frasi che il numero accanto smentiva ("leggermente
+    # al di sotto della rata del mutuo" con un profitto di 56.000 euro e una rata di
+    # 7.200). Le note dichiarano le IPOTESI vere usate nel calcolo.
+    _nota_mutuo = " La rata del mutuo resta invariata." if _mutuo_annuo_r else ""
+    data["scenario_pess"]["subtitle"] = "Avvio lento, poca visibilità, prezzo sotto il mercato"
+    data["scenario_pess"]["note"] = (
+        "Ipotesi: occupazione pari al 65% di quella dello scenario realistico, prezzo all'80%, nessuna "
+        "prenotazione diretta. I costi variabili si riducono con i ricavi." + _nota_mutuo)
+    data["scenario_real"]["subtitle"] = "Gestione ordinaria, in linea con i comparabili di zona"
+    data["scenario_real"]["note"] = (
+        "Ipotesi: i valori dell'analisi economica annuale, cioè prezzo e occupazione stimati sui comparabili "
+        "di zona e bonus prenotazioni dirette al 7%.")
+    data["scenario_ott"]["subtitle"] = "Gestione ottimizzata, prezzi dinamici, forte presenza sui canali diretti"
+    data["scenario_ott"]["note"] = (
+        "Ipotesi: occupazione pari al 120% di quella dello scenario realistico (massimo 90%), prezzo al 118%, "
+        "prenotazioni dirette al 10%. I costi variabili crescono con i ricavi." + _nota_mutuo)
 
 
 # Festività e ponti italiani per mese: sono fatti di calendario, non materia
@@ -5234,8 +5231,9 @@ def _poi_strategico_in_formato_base(data):
     # (deterministico, non AI) e slot "Comune di riferimento" vuoto quando
     # l'immobile è già in un capoluogo o in una grande città.
     righe_base.append(aeroporto_row(data.get("lat"), data.get("long")))
-    if str(data.get("categoria") or "").strip().lower() in ("capoluogo", "grande_citta"):
-        righe_base[1] = ["—", "—", "—"]
+    # Slot 1 vuoto come nel Base (vedi _applica_poi_stabili): il comune di riferimento
+    # scritto dall'IA non e' un dato verificato.
+    righe_base[1] = ["—", "—", "—"]
 
     data["poi"] = righe_base
     return data

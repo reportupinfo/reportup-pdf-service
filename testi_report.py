@@ -168,3 +168,73 @@ def fonti_comuni(D, desc_affitto_mercato):
         ("Punti di interesse e distanze",
          "Google Maps Platform - distanze e tempi di percorrenza a piedi e in auto. I tempi indicati sono stime."),
     ]
+
+
+# ── Curva mensile (nota sotto la tabella dell'occupazione stagionale) ────────
+
+def disclaimer_curva_mensile():
+    """Stessa nota in Base e Strategico. Prima diceva "esattamente il ricavo
+    lordo annuo" ma prezzo e occupazione mensili sono mostrati interi: chi somma
+    le righe trova uno scarto di poche decine di euro."""
+    return ("I mesi in evidenza (i 3 più vicini alla data del report) sono quelli su cui la stima è più affidabile; "
+            "i mesi più lontani possono variare (tipicamente al rialzo) avvicinandosi al periodo di riferimento. "
+            "Prezzo e occupazione mensili sono calibrati sul prezzo medio e sulle notti annue del report: "
+            "sommando i 12 mesi si ottiene il ricavo lordo annuo dell'analisi economica, a meno di piccoli "
+            "arrotondamenti (prezzi e percentuali sono mostrati senza decimali). "
+            "Il livello annuo di prezzo e occupazione deriva dai dati di mercato su annunci comparabili; "
+            "la distribuzione tra i mesi è una stima e può discostarsi nella tua zona.")
+
+
+# ── FF&E Reserve (solo Strategico) ───────────────────────────────────────────
+# Accantonamento per la manutenzione straordinaria di arredi e dotazioni:
+# 2% del ricavo lordo, lo stesso rapporto del segnaposto che prima finiva
+# stampato identico su ogni report ("372") qualunque fosse l'immobile.
+FFE_RESERVE_PCT = 2
+
+
+def ffe_reserve(D):
+    return round(D.get("ricavo_lordo", 0) * FFE_RESERVE_PCT / 100)
+
+
+def ffe_testo(D):
+    return (f"{FFE_RESERVE_PCT}% x {eur(D.get('ricavo_lordo', 0))} = {eur(ffe_reserve(D))}/anno "
+            "per arredi e dotazioni (non incluso nel totale)")
+
+
+# ── Riepilogo indicatori ─────────────────────────────────────────────────────
+
+def kpi_riepilogo(D):
+    """Le quattro card oro in comune tra Base e Strategico: (titolo, valore,
+    riga 1, riga 2). Lo Strategico ne aggiunge altre sotto, non le riscrive."""
+    return [
+        ("PREZZO MEDIO / NOTTE", f"€ {D.get('kpi_prezzo', 0)}", "per notte", D.get("kpi_prezzo_range", "")),
+        ("TASSO DI OCCUPAZIONE", f"{D.get('kpi_occupazione', 0)}%", "stimato", D.get("kpi_occ_range", "")),
+        ("POTENZIALE LORDO ANNUO", eur(D.get("kpi_potenziale", 0)), "all'anno",
+         f"Con occupazione al {D.get('kpi_occupazione', 0)}%"),
+        ("PROFITTO NETTO STIMATO", eur(D.get("profitto_netto", 0)), "netto stimato", "Dopo costi di gestione"),
+    ]
+
+
+def nota_riepilogo(prodotto):
+    testo = ("Valori medi orientativi calcolati sui dati inseriti e sulle medie di mercato della zona. "
+             "Il profitto netto è al lordo delle imposte (es. cedolare secca).")
+    if prodotto == "strategico":
+        testo += " Dove il report presenta tre scenari, qui è riportato sempre quello realistico."
+    return testo
+
+
+# ── Ringraziamento finale ────────────────────────────────────────────────────
+
+RINGRAZIAMENTO_TITOLO = "Grazie per aver scelto ReportUp."
+
+# (testo, corsivo)
+RINGRAZIAMENTO_PARAGRAFI = [
+    ("Sono l'Arch. Salvatore Junior Sica, e questo report porta con sé oltre un decennio di esperienza "
+     "nel settore immobiliare italiano e più di 30.000 valutazioni effettuate sul territorio nazionale.", False),
+    ("ReportUp nasce da un'idea semplice: rendere accessibile a chiunque l'analisi professionale che "
+     "fino a ieri era riservata solo a chi poteva permettersi una consulenza privata.", False),
+    ("Ogni report che esce porta il nostro nome, e questo per noi non è mai un dettaglio.", True),
+    ("Spero che questa analisi ti sia utile e ti aiuti a prendere la decisione giusta per il tuo immobile.", False),
+]
+
+RINGRAZIAMENTO_FIRMA = "Arch. Salvatore Junior Sica"
