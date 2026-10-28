@@ -236,7 +236,7 @@ def build_piano_finanziario_bytes(data, cliente="", indirizzo="", ordine="", dat
     t.protection = LOCKED
     r += 1
     wm = ws.cell(row=r, column=1,
-                 value=f"{cliente} — {indirizzo} — ordine {ordine} — {data_str}".strip(" —"))
+                 value=" — ".join(p for p in (cliente, indirizzo, f"ordine {ordine}" if ordine else "", data_str) if p))
     wm.font = Font(italic=True, size=8, color="999999")
     wm.protection = LOCKED
     ws.merge_cells(f"A{r}:C{r}")
