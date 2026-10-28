@@ -108,6 +108,8 @@ FRASI_INTERVENTO = {
 
 # Dotazioni di base: se mancano, si dice in un'unica frase.
 DOTAZIONI_BASE = ("WiFi", "Aria condizionata", "Riscaldamento")
+ARTICOLO_DOTAZIONE_BASE = {"WiFi": "il WiFi", "Aria condizionata": "l'aria condizionata",
+                           "Riscaldamento": "il riscaldamento"}
 FRASE_DOTAZIONI_BASE = ("Tra le dotazioni di base {verbo} {elenco}: senza di {pronome} l'annuncio può restare "
                         "escluso dalle ricerche filtrate per dotazione e le recensioni ne risentono.")
 
@@ -136,12 +138,14 @@ FRASE_PERCENTILI_UGUALI = ("Prezzo e occupazione stimati si collocano entrambi {
 FRASE_PERCENTILI_DIVERSI = ("Il prezzo stimato si colloca {banda_p} della zona e l'occupazione stimata "
                             "{banda_o} (annunci comparabili AirROI, pag. {pag}).")
 FRASI_CONCORRENZA = {
-    "alta": ("Il {pct}% degli annunci comparabili è gestito da professionisti: il mercato è presidiato e "
+    "alta": ("{Il_pct} degli annunci comparabili è gestito da professionisti: il mercato è presidiato e "
              "foto, descrizione e rapidità di risposta fanno la differenza."),
     "mista": ("Gli annunci comparabili sono gestiti in parte da professionisti ({pct}%) e in parte da "
               "privati: un servizio curato resta un vantaggio."),
-    "bassa": ("Solo il {pct}% degli annunci comparabili è gestito da professionisti: uno standard di "
+    "bassa": ("Solo {il_pct} degli annunci comparabili è gestito da professionisti: uno standard di "
               "servizio curato è un vantaggio competitivo."),
+    "nessuna": ("Nessun annuncio comparabile è gestito da professionisti: uno standard di servizio curato "
+                "è un vantaggio competitivo."),
 }
 
 # Leve: scelte dai dati, massimo tre, in questo ordine di priorita'.
@@ -240,6 +244,13 @@ def _num(v, default=0.0):
         return default
 
 
+def _il_pct(n):
+    """"il 12%", "l'11%", "l'8%", "l'80%": articolo corretto davanti alla percentuale."""
+    n = int(round(n))
+    apostrofo = n in (8, 11, 18) or 80 <= n <= 89
+    return f"l'{n}%" if apostrofo else f"il {n}%"
+
+
 def _eur(n):
     return f"€ {ds.migliaia(round(n))}"
 
@@ -277,7 +288,8 @@ def elenco_mesi(indici):
     parti = []
     for g in gruppi:
         if len(g) >= 2:
-            parti.append(f"da {MESI[g[0]]} a {MESI[g[-1]]}")
+            a = "ad" if MESI[g[-1]].startswith("a") else "a"
+            parti.append(f"da {MESI[g[0]]} {a} {MESI[g[-1]]}")
         else:
             parti.append(MESI[g[0]])
     return _elenco(parti)
@@ -529,7 +541,7 @@ def _condizione(f):
 
     base_mancanti = [a for a in DOTAZIONI_BASE if a in f.assenti]
     if base_mancanti:
-        elenco = _elenco(a if a == "WiFi" else a.lower() for a in base_mancanti)
+        elenco = _elenco(ARTICOLO_DOTAZIONE_BASE[a] for a in base_mancanti)
         uno = len(base_mancanti) == 1
         frasi.append((1, FRASE_DOTAZIONI_BASE.format(elenco=elenco, verbo="manca" if uno else "mancano",
                                                      pronome="essa" if uno else "esse")))
@@ -561,8 +573,10 @@ def _potenzialita(f):
             frasi.append((1, FRASE_PERCENTILI_DIVERSI.format(banda_p=bp, banda_o=bo, pag=PAG_COMPETITOR)))
     pct = f.pct_prof
     if isinstance(pct, (int, float)) and not isinstance(pct, bool):
-        chiave = "alta" if pct >= 60 else "mista" if pct >= 30 else "bassa"
-        frasi.append((2, FRASI_CONCORRENZA[chiave].format(pct=int(round(pct)))))
+        chiave = "alta" if pct >= 60 else "mista" if pct >= 30 else "bassa" if round(pct) > 0 else "nessuna"
+        il = _il_pct(pct)
+        frasi.append((2, FRASI_CONCORRENZA[chiave].format(pct=int(round(pct)), il_pct=il,
+                                                          Il_pct=il[:1].upper() + il[1:])))
     frasi.append((0, FRASE_LEVE.format(elenco="; ".join(f"({i}) {l}" for i, l in enumerate(f.leve, 1)))))
     frasi.append((0, FRASE_SCENARIO_OTTIMISTICO.format(pag=PAG_SCENARI)))
     return _composizione(frasi, LIMITE_POTENZIALITA)

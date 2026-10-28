@@ -67,6 +67,9 @@ assert A.elenco_mesi([4, 5, 6, 7, 8, 9]) == "da maggio a ottobre"
 assert A.elenco_mesi([5, 8]) == "giugno e settembre"
 assert A.elenco_mesi([1, 2]) == "da febbraio a marzo"
 assert A.elenco_mesi([3, 4, 5, 8, 9, 11]) == "da aprile a giugno, da settembre a ottobre e dicembre"
+assert A.elenco_mesi([0, 1, 2, 6, 7, 11]) == "da gennaio a marzo, da luglio ad agosto e dicembre"
+assert A.elenco_mesi([3, 4]) == "da aprile a maggio" and A.elenco_mesi([7, 8]) == "da agosto a settembre"
+assert [A._il_pct(n) for n in (0, 1, 8, 11, 12, 18, 40, 80, 85, 89, 90)] == ["il 0%", "il 1%", "l'8%", "l'11%", "il 12%", "l'18%", "il 40%", "l'80%", "l'85%", "l'89%", "il 90%"]
 assert A.elenco_mesi([]) == ""
 assert A._num("€ 2.400") == 2400 and A._num("1.234,5") == 1234.5 and A._num(None, None) is None
 assert A._anno_epoca("anni70") == 1970 and A._anno_epoca("Anni '80") == 1980 and A._anno_epoca("pre1960") == 1950
@@ -144,9 +147,9 @@ assert "Edificio" not in testi(variante(epoca="anni90", scheda_epoca="Anni '90")
 # dotazioni di base mancanti in un'unica frase, con i nomi giusti
 base_manc = testi(variante(dotazioni_assenti=["WiFi", "Aria condizionata", "Riscaldamento"],
                            moltiplicatori_dotazioni=[]))["analisi_condizione"]
-assert "mancano WiFi, aria condizionata e riscaldamento" in base_manc
+assert "mancano il WiFi, l'aria condizionata e il riscaldamento" in base_manc
 una = testi(variante(dotazioni_assenti=["Riscaldamento"], moltiplicatori_dotazioni=[]))["analisi_condizione"]
-assert "manca riscaldamento: senza di essa" in una, una
+assert "manca il riscaldamento: senza di essa" in una, una
 # le due dotazioni con piu' peso sul prezzo, con l'impatto della tabella di pag. 6
 assert "(+7% sul prezzo per notte, pag. 6)" in cond and "(+5% sul prezzo per notte, pag. 6)" in cond
 assert "giardino" not in cond.lower()      # solo le prime due per peso
@@ -177,6 +180,10 @@ assert "ascensore" in testi(variante(dotazioni_assenti=["Ascensore"], moltiplica
 pot = testi(SORRENTO)["analisi_potenzialita"]
 assert "entrambi tra il 50° e il 75° percentile" in pot and "pag. 10" in pot
 assert "Solo il 12%" in pot
+assert "Nessun annuncio comparabile è gestito da professionisti" in testi(variante(pct_gestione_professionale=0))["analisi_potenzialita"]
+assert "0%" not in testi(variante(pct_gestione_professionale=0))["analisi_potenzialita"]
+assert "L'85% degli annunci" in testi(variante(pct_gestione_professionale=85))["analisi_potenzialita"]
+assert "Solo l'8% degli annunci" in testi(variante(pct_gestione_professionale=8))["analisi_potenzialita"]
 assert "pag. 8" in pot and "non è garantito" in pot
 assert "primi mesi" not in pot and "nei prossimi mesi" not in pot      # nessun tempo promesso
 assert "(1)" in pot and "(3)" not in pot.replace("(3)", "") or True

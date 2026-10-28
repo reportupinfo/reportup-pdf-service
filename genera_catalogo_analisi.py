@@ -93,6 +93,7 @@ voce("H2", "fasce diverse", A.FRASE_PERCENTILI_DIVERSI)
 voce("H3", "gestione professionale ≥60% degli annunci comparabili", A.FRASI_CONCORRENZA["alta"])
 voce("H4", "gestione professionale 30-59%", A.FRASI_CONCORRENZA["mista"])
 voce("H5", "gestione professionale <30%", A.FRASI_CONCORRENZA["bassa"])
+voce("H6", "nessun annuncio comparabile gestito da professionisti (0%)", A.FRASI_CONCORRENZA["nessuna"])
 righe.append("**Leve** (massimo tre, in quest'ordine di priorità; la frase di apertura è «Le leve con più effetto sui tuoi dati sono: (1) …; (2) …»):")
 righe.append("")
 nomi_l = {"dotazioni": "mancano wifi / aria / riscaldamento / lavatrice / cucina", "prezzo": "prezzo stimato sotto la mediana di zona",
