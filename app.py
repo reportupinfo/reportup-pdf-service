@@ -32,6 +32,7 @@ import dati_form
 import territorio_gps
 import territorio_poi
 import descrizione_segmenti
+import analisi_personale
 import qualita_immobile
 import testi_report
 import stagionalita_turistica
@@ -4616,6 +4617,14 @@ _CAMPI_ANALISI_STRATEGICO = ("analisi_posizione", "analisi_condizione",
                              "analisi_potenzialita", "analisi_raccomandazione")
 
 
+def _campi_analisi_da_ripulire(data):
+    """Le quattro analisi di pag. 14 sono scritte dal codice (analisi_personale.py,
+    28/10/2026): cifre e frasi vengono dal calcolo, quindi ne' l'editor IA ne' il
+    filtro cifre le toccano. Se il modulo e' fallito il flag non c'e' e restano i
+    testi dell'IA, ripuliti come prima."""
+    return () if data.get("_analisi_da_codice") else _CAMPI_ANALISI_STRATEGICO
+
+
 def _scheda_fatti_verificati(data):
     """Solo fatti qualitativi per l'editor: zona, punti di interesse, avviso
     normativo. NIENTE numeri di calcolo (regola 6/10/2026: l'IA non tocca la
@@ -4683,10 +4692,11 @@ def _rimuovi_cifre_economiche_dai_testi(data):
     percentuali o prezzi (esclusi i dati di legge/tariffari) viene tolta. Si
     applica dopo l'editor, quindi anche se l'editor sbaglia o non gira."""
     tolte = 0
-    for campo in _CAMPI_ANALISI_STRATEGICO:
+    campi = _campi_analisi_da_ripulire(data)
+    for campo in campi:
         if data.get(campo):
             data[campo] = _solo_italiano(data[campo])
-    for campo in _CAMPI_ANALISI_STRATEGICO:
+    for campo in campi:
         orig = str(data.get(campo) or "")
         nuovo, n = _toglie_frasi_con_cifre(orig)
         if n and len(nuovo) >= 40:
@@ -4745,9 +4755,11 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
     if not ANTHROPIC_API_KEY:
         return
 
-    originali = {k: str(data.get(k) or "").strip() for k in _CAMPI_ANALISI_STRATEGICO}
+    campi = _campi_analisi_da_ripulire(data)
+    originali = {k: str(data.get(k) or "").strip() for k in campi}
     piano = [b for b in (data.get("piano_90") or []) if isinstance(b, dict)]
-    if not any(originali.values()):
+    # Con le analisi scritte dal codice resta da ripulire il solo piano 90 giorni.
+    if not any(originali.values()) and not (data.get("_analisi_da_codice") and piano):
         return
 
     payload_in = {
@@ -4823,7 +4835,7 @@ def _riscrivi_testi_con_numeri_reali(data, timeout=60):
     # tornato vuoto o di tipo sbagliato non deve cancellare l'originale.
     aggiornati = []
     analisi_nuove = nuovo.get("analisi") or {}
-    for campo in _CAMPI_ANALISI_STRATEGICO:
+    for campo in campi:
         testo = analisi_nuove.get(campo)
         if isinstance(testo, str) and len(testo.strip()) >= 40:
             data[campo] = testo.strip()
@@ -5347,6 +5359,16 @@ def generate_strategico():
         _calcola_valore_asset(data)
         _calcola_intervento_mensile(data)
         data["pm_perc_bassa"], data["pm_perc_alta"] = 15, 20
+
+        # Analisi personale (pag. 14): frasi fisse scelte da fatti misurati, senza IA
+        # (analisi_personale.py, 28/10/2026). Dopo tutti i calcoli perche' cita
+        # importi, percentili e impatti gia' definitivi. Se fallisce restano i testi
+        # dell'IA (flag assente) e l'editor li ripulisce come prima.
+        try:
+            data.update(analisi_personale.genera_analisi(data))
+            data["_analisi_da_codice"] = True
+        except Exception as _e:
+            print(f"[ANALISI-PERSONALE] fallback ai testi IA: {type(_e).__name__}: {_e}")
 
         # ULTIMO PASSO PRIMA DEL PDF, e deve restare l'ultimo: riallinea i
         # testi liberi ai numeri appena calcolati. Spostarlo piu' su vorrebbe
