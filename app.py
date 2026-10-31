@@ -2726,7 +2726,10 @@ _COSTI_PER_TIPOLOGIA = [
 
 
 def _costi_per_tipologia(tipologia):
-    t = str(tipologia or "").strip().lower()
+    # "_" -> " ": lo Strategico manda il codice ("grande_unita"), il Base l'etichetta.
+    # Senza la normalizzazione la grande unita' dello Strategico cadeva su "grande"
+    # (appartamento grande: 50 euro a cambio, margine 81%, valore asset 1,57 milioni).
+    t = str(tipologia or "").strip().lower().replace("_", " ")
     for frammento, pulizie, biancheria, utenze, manutenzione in _COSTI_PER_TIPOLOGIA:
         if frammento in t:
             return pulizie, biancheria, utenze, manutenzione
@@ -3173,7 +3176,7 @@ def genera_descrizione_standard(data):
     nessuna frase."""
     ds = descrizione_segmenti
     categoria   = str(data.get("categoria") or "comune_minore").strip().lower()
-    tipologia   = str(data.get("tipologia", "Immobile"))
+    tipologia   = _etichetta_scheda(data.get("tipologia", "Immobile"), _LABEL_TIPOLOGIA)
     indirizzo   = str(data.get("indirizzo", ""))
     comune      = str(data.get("comune", ""))
     zona        = str(data.get("zona", "") or "")

@@ -31,6 +31,9 @@ assert A._bagni_deterministici("villa", "3+") == "3+"
 
 # --- costi: la grande unita' ha i suoi, l'appartamento grande i suoi ---
 assert A._costi_per_tipologia("Grande unità") == (210, 2500, 6000, 3000)
+assert A._costi_per_tipologia("grande_unita") == (210, 2500, 6000, 3000)   # codice dello Strategico
+assert A._costi_per_tipologia("appartamento_grande") == (50, 480, 1700, 650)
+assert A._costi_per_tipologia("stanza_doppia") == (25, 225, 600, 220)
 assert A._costi_per_tipologia("Appartamento 4+ locali") == (50, 480, 1700, 650)
 assert A._costi_per_tipologia("Villa / Casa indipendente") == (70, 600, 2650, 900)
 
