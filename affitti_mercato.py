@@ -39,7 +39,6 @@ _SOGLIA_PROVINCIALE = 3       # stessa coppia min/max su >=3 comuni = dato provi
 # Superficie tipica per tipologia, usata solo se la superficie dichiarata è
 # vuota o non plausibile.
 _SUPERFICIE_TIPICA = [
-    ("grande unit", 300),   # PRIMA: "grande" matcha anche l'appartamento grande
     ("villa", 180), ("casa indipendente", 180),
     ("appartamento", 110), ("4+", 110), ("grande", 110),
     ("trilocale", 85), ("bilocale", 60), ("doppia", 45),
@@ -51,7 +50,7 @@ _SUPERFICIE_TIPICA = [
 # canone medio al m2 del comune non e' confrontabile oltre una certa metratura
 # (31/10/2026, caso Corato: 750 m2 x 7,73 EUR/m2 = 74 mila EUR l'anno). Regola
 # nazionale, nessuna eccezione per comune: 200 m2, oppure 40 m2 per camera se
-# sono di piu' (la grande unita' da 8 camere sale a 320).
+# sono di piu'.
 MQ_TETTO_MINIMO = 200
 MQ_TETTO_PER_CAMERA = 40
 

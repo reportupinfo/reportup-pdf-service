@@ -258,10 +258,6 @@ def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, valuta="�
     """
     if not prezzo_immobile:
         return None
-    if _e_grande_unita(tipologia):
-        # Nessuna tipologia di mercato e' paragonabile a 8 camere: i rapporti
-        # fissi darebbero un "monolocale" a 400 euro. Solo la riga "IL TUO IMMOBILE".
-        return []
     bucket_immobile = _bucket_competitor(tipologia)
     base = prezzo_immobile / RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket_immobile]
     righe = []
@@ -1066,14 +1062,6 @@ def _moltiplicatore_dotazioni(dotazioni_presenti):
 # vince (es. "casa indipendente" prima di eventuali match parziali).
 _TIPOLOGIA_MAP = [
     # (frammento_tipologia, camere, posti_default)
-    # "Grande unità" (31/10/2026, richiesta di Salvatore dopo il feedback Corato):
-    # affittacamere / casa con tante camere, distinta dalla villa. Convenzione
-    # fissa: 8 camere, 16 posti letto (2 per camera), 8 bagni (uno per camera).
-    # Il frammento e' "grande unit" (senza la a accentata) cosi' matcha sia
-    # l'etichetta del Base ("Grande unità") sia il codice dello Strategico
-    # ("grande_unita"). Va PRIMA di tutto: "grande" compare anche in
-    # "appartamento grande".
-    ("grande unit", 8, 16),
     # I frammenti sono confrontati in minuscolo con `in`: mettere i più
     # specifici PRIMA dei più generici. Le etichette reali inviate dai form
     # sono "Monolocale", "Stanza doppia", "Bilocale", "Trilocale",
@@ -1120,28 +1108,12 @@ def _camere_deterministiche(tipologia, camere_ai):
     return camere_ai
 
 
-def _e_grande_unita(tipologia):
-    return "grande unit" in str(tipologia or "").strip().lower().replace("_", " ")
-
-
-def _bagni_deterministici(tipologia, bagni):
-    """Grande unità: un bagno per camera (convenzione, vedi _TIPOLOGIA_MAP). Il
-    form arriva a "3+", che per 8 camere darebbe ad AirROI un'unità incoerente
-    (8 camere, 3 bagni). Per le altre tipologie il valore dichiarato resta."""
-    if _e_grande_unita(tipologia):
-        return str(_match_tipologia(tipologia)[0])
-    return bagni
-
-
 def _posti_letto_default(tipologia, posti_esistente=None):
     """Ritorna il numero di posti letto di default per la tipologia dichiarata.
-    Grande unità: sempre 16 (il form si ferma a "6+", troppo poco per 8 camere).
     Se l'utente ha già fornito un valore di posti letto (posti_esistente),
     quello vince SEMPRE: il default serve solo come fallback quando il campo
     è vuoto/assente. Se la tipologia non è riconosciuta e non c'è un valore
     esistente, ritorna posti_esistente così com'è (nessun default inventato)."""
-    if _e_grande_unita(tipologia):
-        return str(_match_tipologia(tipologia)[1])
     if posti_esistente not in (None, "", "0"):
         return posti_esistente
     m = _match_tipologia(tipologia)
@@ -2316,7 +2288,6 @@ _LABEL_TIPOLOGIA = {
     "trilocale":           "Trilocale",
     "appartamento_grande": "Appartamento 4+ locali",
     "villa":               "Villa / Casa indipendente",
-    "grande_unita":        "Grande unità",
 }
 _LABEL_PIANO = {
     "terra":  "Piano terra",
@@ -2707,15 +2678,6 @@ _COSTI_PER_TIPOLOGIA = [
     # Sessione 69 (29/8/2026): utenze rialzate, erano sottostimate. Elettricita'
     # scalata per tipologia sui dati reali di Salvatore (bilocale 50€/mese,
     # villa 200€/mese) + 20€/mese internet fisso su tutte le tipologie.
-    # Grande unità (31/10/2026): convenzione, da validare con i dati reali di
-    # Salvatore. Camere vendute una per una = piu' cambi e piu' pulizie che in una
-    # villa affittata intera: 210 euro a cambio (circa 26 per camera), biancheria
-    # 2.500, utenze 6.000 (8 camere contro 4), manutenzione 3.000. Con i valori
-    # iniziali (120 / 1.200 / 5.000 / 1.800) il margine usciva al 75% e il valore
-    # come asset a 1,57 milioni. Ora circa 68%. Restano esclusi personale e
-    # gestione: li copre l'avviso sui servizi extra. PRIMA di tutto: "grande"
-    # matcha anche "appartamento grande".
-    ("grande unit", 210, 2500, 6000, 3000),
     ("villa", 70, 600, 2650, 900), ("casa indipendente", 70, 600, 2650, 900),
     ("appartamento", 50, 480, 1700, 650), ("4+", 50, 480, 1700, 650), ("grande", 50, 480, 1700, 650),
     ("trilocale", 45, 400, 1200, 500),
@@ -2726,9 +2688,7 @@ _COSTI_PER_TIPOLOGIA = [
 
 
 def _costi_per_tipologia(tipologia):
-    # "_" -> " ": lo Strategico manda il codice ("grande_unita"), il Base l'etichetta.
-    # Senza la normalizzazione la grande unita' dello Strategico cadeva su "grande"
-    # (appartamento grande: 50 euro a cambio, margine 81%, valore asset 1,57 milioni).
+    # "_" -> " ": lo Strategico manda il codice ("appartamento_grande"), il Base l'etichetta.
     t = str(tipologia or "").strip().lower().replace("_", " ")
     for frammento, pulizie, biancheria, utenze, manutenzione in _COSTI_PER_TIPOLOGIA:
         if frammento in t:
@@ -4110,7 +4070,6 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # scritto dall'AI PRIMA di mandarlo ad AirROI, così la stima di prezzo
     # e la scheda immobile mostrata usano lo stesso numero corretto.
     data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
-    data["bagni"] = _bagni_deterministici(data.get("tipologia"), data.get("bagni"))
 
     # Posti letto: se il form non ha inviato un valore (campo vuoto), usa il
     # default per tipologia dalla mappa unica (Sessione 75). Se l'utente ha
