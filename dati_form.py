@@ -24,7 +24,9 @@ _MARCATORE_JSON = "Restituisci ESATTAMENTE questo oggetto JSON"
 # di sommarle. Nessuna cifra inventata.
 TESTO_COSTI_NON_INCLUSI = (
     "Non inclusi: spese condominiali, riscaldamento, imposte e tasse (IMU, TARI, redditi): "
-    "non stimabili in modo affidabile per ogni immobile, vanno sommati a parte."
+    "non stimabili in modo affidabile per ogni immobile, vanno sommati a parte. "
+    "Si segnala che per le strutture che offrono servizi extra (colazione, spa, palestra, bar, ristorante a pagamento) "
+    "l'analisi non è standardizzabile: per una valutazione su misura scrivi a reportup.info@gmail.com."
 )
 
 

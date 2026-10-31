@@ -85,7 +85,7 @@ def tabella_confronto(D, larghezza):
         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"), ("TEXTCOLOR", (0, 1), (-1, -1), _BLUE_NIGHT),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_WHITE, _CREAM]),
         ("GRID", (0, 0), (-1, -1), 0.25, _BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("TEXTCOLOR", (3, 1), (3, 1), _TEAL if ok_ric else _RED), ("FONTNAME", (3, 1), (3, 1), "Helvetica-Bold"),
         ("FONTNAME", (3, 2), (3, 2), "Helvetica-Bold"),
@@ -116,5 +116,10 @@ def nota_ricavi(D, html=False):
 def disclaimer_mercato(D):
     """Testo da stampare sotto la tabella, solo per comuni da affitti_mercato."""
     if D.get("fonte_affitto_tradizionale") == "mercato_reale":
-        return affitti_mercato.DISCLAIMER
+        testo = affitti_mercato.DISCLAIMER
+        if D.get("affitto_mq_tetto") and D.get("affitto_mq_dichiarati"):
+            testo += (f" Il confronto è calcolato su {int(D['affitto_mq_tetto'])} m² e non sui "
+                      f"{int(D['affitto_mq_dichiarati'])} m² dichiarati: oltre questa superficie il canone medio "
+                      "al m² del comune non è più confrontabile con un immobile di quelle dimensioni.")
+        return testo
     return None

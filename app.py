@@ -258,6 +258,10 @@ def _costruisci_competitor_deterministico(prezzo_immobile, tipologia, valuta="�
     """
     if not prezzo_immobile:
         return None
+    if _e_grande_unita(tipologia):
+        # Nessuna tipologia di mercato e' paragonabile a 8 camere: i rapporti
+        # fissi darebbero un "monolocale" a 400 euro. Solo la riga "IL TUO IMMOBILE".
+        return []
     bucket_immobile = _bucket_competitor(tipologia)
     base = prezzo_immobile / RATIO_PREZZO_TIPOLOGIA_COMPETITOR[bucket_immobile]
     righe = []
@@ -1062,6 +1066,14 @@ def _moltiplicatore_dotazioni(dotazioni_presenti):
 # vince (es. "casa indipendente" prima di eventuali match parziali).
 _TIPOLOGIA_MAP = [
     # (frammento_tipologia, camere, posti_default)
+    # "Grande unità" (31/10/2026, richiesta di Salvatore dopo il feedback Corato):
+    # affittacamere / casa con tante camere, distinta dalla villa. Convenzione
+    # fissa: 8 camere, 16 posti letto (2 per camera), 8 bagni (uno per camera).
+    # Il frammento e' "grande unit" (senza la a accentata) cosi' matcha sia
+    # l'etichetta del Base ("Grande unità") sia il codice dello Strategico
+    # ("grande_unita"). Va PRIMA di tutto: "grande" compare anche in
+    # "appartamento grande".
+    ("grande unit", 8, 16),
     # I frammenti sono confrontati in minuscolo con `in`: mettere i più
     # specifici PRIMA dei più generici. Le etichette reali inviate dai form
     # sono "Monolocale", "Stanza doppia", "Bilocale", "Trilocale",
@@ -1108,12 +1120,28 @@ def _camere_deterministiche(tipologia, camere_ai):
     return camere_ai
 
 
+def _e_grande_unita(tipologia):
+    return "grande unit" in str(tipologia or "").strip().lower().replace("_", " ")
+
+
+def _bagni_deterministici(tipologia, bagni):
+    """Grande unità: un bagno per camera (convenzione, vedi _TIPOLOGIA_MAP). Il
+    form arriva a "3+", che per 8 camere darebbe ad AirROI un'unità incoerente
+    (8 camere, 3 bagni). Per le altre tipologie il valore dichiarato resta."""
+    if _e_grande_unita(tipologia):
+        return str(_match_tipologia(tipologia)[0])
+    return bagni
+
+
 def _posti_letto_default(tipologia, posti_esistente=None):
     """Ritorna il numero di posti letto di default per la tipologia dichiarata.
+    Grande unità: sempre 16 (il form si ferma a "6+", troppo poco per 8 camere).
     Se l'utente ha già fornito un valore di posti letto (posti_esistente),
     quello vince SEMPRE: il default serve solo come fallback quando il campo
     è vuoto/assente. Se la tipologia non è riconosciuta e non c'è un valore
     esistente, ritorna posti_esistente così com'è (nessun default inventato)."""
+    if _e_grande_unita(tipologia):
+        return str(_match_tipologia(tipologia)[1])
     if posti_esistente not in (None, "", "0"):
         return posti_esistente
     m = _match_tipologia(tipologia)
@@ -1844,7 +1872,7 @@ def page3(c, D):
         ("ROWBACKGROUNDS", (0, 2), (-1, 4), [WHITE, CREAM]),
         ("ROWBACKGROUNDS", (0, 6), (-1, 11), [WHITE, CREAM]),
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
         ("LEFTPADDING", (0, 0), (-1, -1), 5), ("ALIGN", (2, 0), (2, -1), "RIGHT"),
         ("BACKGROUND", (0, 1), (-1, 1), TEAL_LIGHT), ("TEXTCOLOR", (0, 1), (0, 1), TEAL),
         ("FONTNAME", (0, 1), (0, 1), "Helvetica-Bold"),
@@ -1934,7 +1962,9 @@ def page4(c, D):
     y = draw_section_header(c, 14 * mm, y, W - 28 * mm,
                             f"Analisi competitor{_suffisso_comp}")
     y -= 3 * mm
-    draw_section_subtitle(c, 14 * mm, y, "Stima per tipologia: rapporti medi di prezzo rispetto al tuo immobile (non sono singoli annunci)")
+    draw_section_subtitle(c, 14 * mm, y, "Stima per tipologia: rapporti medi di prezzo rispetto al tuo immobile (non sono singoli annunci)"
+                          if D.get("competitor") else
+                          "Per le grandi unità non esistono tipologie di mercato paragonabili: si mostra la sola stima del tuo immobile")
     y -= 6 * mm
     comp_data = [[f"Tipologia{_suffisso_comp}", "Prezzo med."]]
     for row in D.get("competitor", []):
@@ -2286,6 +2316,7 @@ _LABEL_TIPOLOGIA = {
     "trilocale":           "Trilocale",
     "appartamento_grande": "Appartamento 4+ locali",
     "villa":               "Villa / Casa indipendente",
+    "grande_unita":        "Grande unità",
 }
 _LABEL_PIANO = {
     "terra":  "Piano terra",
@@ -2674,6 +2705,11 @@ _COSTI_PER_TIPOLOGIA = [
     # Sessione 69 (29/8/2026): utenze rialzate, erano sottostimate. Elettricita'
     # scalata per tipologia sui dati reali di Salvatore (bilocale 50€/mese,
     # villa 200€/mese) + 20€/mese internet fisso su tutte le tipologie.
+    # Grande unità (31/10/2026): convenzione = circa il doppio della villa
+    # (8 camere contro 4) con pulizie un po' meno che doppie per cambio. Da
+    # validare con i dati reali di Salvatore. PRIMA di tutto: "grande" matcha
+    # anche "appartamento grande".
+    ("grande unit", 120, 1200, 5000, 1800),
     ("villa", 70, 600, 2650, 900), ("casa indipendente", 70, 600, 2650, 900),
     ("appartamento", 50, 480, 1700, 650), ("4+", 50, 480, 1700, 650), ("grande", 50, 480, 1700, 650),
     ("trilocale", 45, 400, 1200, 500),
@@ -3146,7 +3182,7 @@ def genera_descrizione_standard(data):
     if any(isinstance(r, (list, tuple)) and len(r) > 3 for r in poi):
         poi = []
 
-    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera"])
+    genere_femminile = any(t in tipologia.lower() for t in ["villa", "casa", "stanza", "camera", "unità", "unita"])
     situata = "situata" if genere_femminile else "situato"
 
     def _fmt_dotazione(d):
@@ -4065,6 +4101,7 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
     # scritto dall'AI PRIMA di mandarlo ad AirROI, così la stima di prezzo
     # e la scheda immobile mostrata usano lo stesso numero corretto.
     data["camere"] = _camere_deterministiche(data.get("tipologia"), data.get("camere"))
+    data["bagni"] = _bagni_deterministici(data.get("tipologia"), data.get("bagni"))
 
     # Posti letto: se il form non ha inviato un valore (campo vuoto), usa il
     # default per tipologia dalla mappa unica (Sessione 75). Se l'utente ha
@@ -4376,6 +4413,16 @@ def _arricchisci_report_deterministico(data, lat=None, long=None, generare_descr
         _cam_m = affitti_mercato.numero_da_testo(data.get("camere"), 1)
         if not _sup_m or _sup_m < _cam_m * 20:
             _sup_m = affitti_mercato.superficie_tipica(data.get("tipologia"))
+        else:
+            # Tetto sui m2 (31/10/2026): il canone al m2 del comune viene da annunci
+            # di appartamenti e case normali; moltiplicato per 750 m2 dava 74 mila
+            # euro l'anno di affitto per un casale di campagna (Corato) e un
+            # "B&B in perdita" di 53 mila. Oltre il tetto il confronto usa il tetto.
+            _tetto_mq = affitti_mercato.superficie_massima(_cam_m)
+            if _sup_m > _tetto_mq:
+                data["affitto_mq_dichiarati"] = round(_sup_m)
+                data["affitto_mq_tetto"] = _tetto_mq
+                _sup_m = _tetto_mq
         # Stesso scostamento di qualità del prezzo B&B (qualita_immobile.py): il
         # canone medio del comune non dipende dallo stato dell'immobile, e senza
         # lo stesso fattore il confronto B&B contro affitto non sarebbe alla pari.
