@@ -2437,7 +2437,9 @@ _WIKI_SEZIONI_PER_CATEGORIA = {
     "costiero":            ["Spiagge", "Territorio", "Turismo", "Sagre", "Tradizioni", "Cultura"],
     "lacuale":             ["Turismo", "Sport", "Territorio", "Sagre", "Tradizioni", "Cultura"],
     "montano":             ["Sport", "Turismo", "Sci", "Trekking", "Territorio", "Sagre", "Tradizioni"],  # NOTE: vedi anche stagionalita_turistica.py per la curva bimodale sci+estate
-    "residenziale_minore": ["Sagre", "Tradizioni", "Cultura", "Economia", "Prodotti tipici", "Gastronomia"],
+    # "Economia" per ultima (31/10/2026): a Corato usciva "i terreni fertili sono pochi,
+    # la murgia e' piu' fredda e meno favorita", poco adatto a un soggiorno.
+    "residenziale_minore": ["Sagre", "Tradizioni", "Cultura", "Prodotti tipici", "Gastronomia", "Economia"],
 }
 
 
@@ -2705,11 +2707,15 @@ _COSTI_PER_TIPOLOGIA = [
     # Sessione 69 (29/8/2026): utenze rialzate, erano sottostimate. Elettricita'
     # scalata per tipologia sui dati reali di Salvatore (bilocale 50€/mese,
     # villa 200€/mese) + 20€/mese internet fisso su tutte le tipologie.
-    # Grande unità (31/10/2026): convenzione = circa il doppio della villa
-    # (8 camere contro 4) con pulizie un po' meno che doppie per cambio. Da
-    # validare con i dati reali di Salvatore. PRIMA di tutto: "grande" matcha
-    # anche "appartamento grande".
-    ("grande unit", 120, 1200, 5000, 1800),
+    # Grande unità (31/10/2026): convenzione, da validare con i dati reali di
+    # Salvatore. Camere vendute una per una = piu' cambi e piu' pulizie che in una
+    # villa affittata intera: 210 euro a cambio (circa 26 per camera), biancheria
+    # 2.500, utenze 6.000 (8 camere contro 4), manutenzione 3.000. Con i valori
+    # iniziali (120 / 1.200 / 5.000 / 1.800) il margine usciva al 75% e il valore
+    # come asset a 1,57 milioni. Ora circa 68%. Restano esclusi personale e
+    # gestione: li copre l'avviso sui servizi extra. PRIMA di tutto: "grande"
+    # matcha anche "appartamento grande".
+    ("grande unit", 210, 2500, 6000, 3000),
     ("villa", 70, 600, 2650, 900), ("casa indipendente", 70, 600, 2650, 900),
     ("appartamento", 50, 480, 1700, 650), ("4+", 50, 480, 1700, 650), ("grande", 50, 480, 1700, 650),
     ("trilocale", 45, 400, 1200, 500),
