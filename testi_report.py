@@ -207,12 +207,68 @@ def kpi_riepilogo(D):
     """Le quattro card oro in comune tra Base e Strategico: (titolo, valore,
     riga 1, riga 2). Lo Strategico ne aggiunge altre sotto, non le riscrive."""
     return [
-        ("PREZZO MEDIO / NOTTE", f"€ {D.get('kpi_prezzo', 0)}", "per notte", D.get("kpi_prezzo_range", "")),
+        ("PREZZO MEDIO / NOTTE", f"€ {D.get('kpi_prezzo', 0)}", "per notte (intera unità)", D.get("kpi_prezzo_range", "")),
         ("TASSO DI OCCUPAZIONE", f"{D.get('kpi_occupazione', 0)}%", "stimato", D.get("kpi_occ_range", "")),
         ("POTENZIALE LORDO ANNUO", eur(D.get("kpi_potenziale", 0)), "all'anno",
          f"Con occupazione al {D.get('kpi_occupazione', 0)}%"),
         ("PROFITTO NETTO STIMATO", eur(D.get("profitto_netto", 0)), "netto stimato", "Dopo costi di gestione"),
     ]
+
+
+def _percentuale_aggiustamenti_prezzo(D):
+    """Somma (in punti) di dotazioni e stato dichiarato sul prezzo di mercato:
+    gli stessi due addendi che app.py somma per formare il prezzo/notte."""
+    return round((D.get("dotazioni_bonus_pct") or 0) + (D.get("qualita_pct") or 0))
+
+
+def nota_range_prezzo(D):
+    """Spiega perche' il prezzo/notte puo' stare fuori dal "Range zona".
+    Il range e' il P25-P75 reale di AirROI, cioe' il prezzo di mercato PRIMA di
+    dotazioni e stato dichiarato; il prezzo mostrato li include (+13% giardino,
+    parcheggio, lavatrice, cucina e +10% ristrutturato = +23%). Caso Corato
+    30/10/2026: "€ 193" accanto a "Range zona: € 121-192", senza nessuna
+    spiegazione, e il cliente lo ha letto come un numero gonfiato.
+    La nota compare solo quando e' vero che e' l'aggiustamento a portare fuori
+    dal range un prezzo di mercato che dentro il range ci stava; negli altri
+    casi (prezzo di mercato gia' fuori range) non si afferma nulla."""
+    pp = D.get("percentili_prezzo")
+    prezzo = D.get("kpi_prezzo")
+    riferimento = D.get("prezzo_riferimento_mercato")
+    if not (isinstance(pp, dict) and pp.get("p25") and pp.get("p75") and prezzo and riferimento):
+        return None
+    pct = _percentuale_aggiustamenti_prezzo(D)
+    if pct == 0:
+        return None
+    p25, p75 = pp["p25"], pp["p75"]
+    if not (p25 <= riferimento <= p75) or p25 <= prezzo <= p75:
+        return None
+    verso = "supera" if prezzo > p75 else "è sotto"
+    segno = f"+{pct}" if pct > 0 else f"{pct}"
+    return (f"Il tuo prezzo ({eur(prezzo)}) {verso} il range di zona perché include {segno}% per dotazioni e "
+            f"stato dichiarati; il range è il prezzo di mercato di base, prima di questi aggiustamenti.")
+
+
+def nota_unita_prezzo(D):
+    """Il prezzo/notte e' sempre quello dell'INTERA unita' (con i posti letto
+    dichiarati), mai della singola camera. Chi gestisce un B&B a camere (caso
+    Corato 30/10/2026) confrontava il nostro € 193 con il suo prezzo a camera."""
+    posti = str(D.get("posti_letto") or "").strip()
+    if posti and posti not in ("0", "Non specificato"):
+        posti_txt = D.get("scheda_posti_letto") or f"{posti} posti letto"
+        unita = f"all'intera unità ({posti_txt})"
+    else:
+        unita = "all'intera unità"
+    return (f"Il prezzo per notte si riferisce {unita}, non alla singola camera; "
+            "se affitti a camere il confronto va fatto sul totale delle camere vendute.")
+
+
+def note_riepilogo_extra(D):
+    """Righe di nota sotto le card del riepilogo, uguali in Base e Strategico."""
+    note = [nota_unita_prezzo(D)]
+    n = nota_range_prezzo(D)
+    if n:
+        note.append(n)
+    return note
 
 
 def nota_riepilogo(prodotto):

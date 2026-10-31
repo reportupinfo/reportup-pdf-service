@@ -1779,7 +1779,7 @@ def page3(c, D):
     sit_label = testi_report.etichetta_situazione(D)
     sit_cards = [
         ("Situazione", sit_label, BLUE_PRIMARY, HexColor("#E3F2FA")),
-        ("Prezzo stimato/notte", f"\u20ac {p}", TEAL, TEAL_LIGHT),
+        ("Prezzo/notte (intera unità)", f"\u20ac {p}", TEAL, TEAL_LIGHT),
         ("Occupazione stimata", f"{occ_pct}%", GOLD, GOLD_LIGHT),
         ("Notti/anno stimate", f"{notti}", BLUE_NIGHT, CREAM),
     ]
@@ -1993,7 +1993,12 @@ def page4(c, D):
     c.setFont("Helvetica-Oblique", 6.5)
     c.setFillColor(MUTED)
     c.drawString(14 * mm, y, testi_report.nota_riepilogo("base"))
-    y -= 7 * mm
+    y -= 3.6 * mm
+    # Unità del prezzo (intera unità, non camera) e, se serve, perché il prezzo
+    # sta fuori dal range di zona: stesse righe dello Strategico (testi_report).
+    for _nota in testi_report.note_riepilogo_extra(D):
+        y = draw_wrapped_text(c, _nota, 14 * mm, y, W - 28 * mm, "Helvetica-Oblique", 6.5, 3.4 * mm, MUTED)
+    y -= 3.5 * mm
 
     _avviso = D.get("avviso_normativo")
     if _avviso:
@@ -2366,9 +2371,22 @@ def _etichetta_scheda(valore, mappa):
     return mappa.get(grezzo.lower().replace(" ", "_"), grezzo)
 
 
+def _etichetta_piano(valore):
+    """Piano della scheda, anche su più livelli (villa con piano terra e primo
+    piano: caso Corato 30/10/2026, il form accettava una sola voce). Lo
+    Strategico manda i codici separati da virgola ("terra,1-3"), il Base il
+    testo già in chiaro: i codici si traducono e si uniscono con " + ", il
+    testo in chiaro (nessuna virgola) passa com'è."""
+    grezzo = str(valore or "").strip()
+    if "," not in grezzo:
+        return _etichetta_scheda(grezzo, _LABEL_PIANO)
+    parti = [_etichetta_scheda(p, _LABEL_PIANO) for p in grezzo.split(",") if p.strip()]
+    return " + ".join(parti)
+
+
 def _prepara_etichette_scheda(data):
     data["scheda_tipologia"] = _etichetta_scheda(data.get("tipologia"), _LABEL_TIPOLOGIA)
-    data["scheda_piano"]     = _etichetta_scheda(data.get("piano"), _LABEL_PIANO)
+    data["scheda_piano"]     = _etichetta_piano(data.get("piano"))
     data["scheda_stato"]     = qualita_immobile.etichetta_stato(data.get("stato"))
     data["scheda_epoca"]     = _etichetta_scheda(data.get("epoca"), _LABEL_EPOCA)
     data["scheda_camere"]      = _frase_camere(data.get("camere", "")).capitalize()
@@ -2563,6 +2581,8 @@ def _estrai_sezione_wikipedia(titolo, nome_sezione, timeout=3):
 _RE_WIKI_NON_ACCETTABILE = re.compile(
     r"autostrad|strada statale|strade statali|\bSS\s?\d+|\bSP\s?\d+|\bA\d{1,2}\b|\d\s?°|\bkm\s?\d+\b|"
     r"\bcoordinate\b|\bsuperficie di\b|\bpopolazione\b|\babitanti\b|"
+    r"\bmensile\b|\bsettimanale\b|\bquotidiano\b|\bperiodico\b|\bgiornale\b|\btestata\b|\bemittente\b|"
+    r"\bedit[oa]\b|\bradiofonic|\btelevisiv|"
     r"\{\||\|\}|wikitable|class=|cellpadding|cellspacing|style=|\|", re.IGNORECASE)
 
 

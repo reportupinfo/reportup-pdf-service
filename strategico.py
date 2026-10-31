@@ -1210,7 +1210,7 @@ def page4(c, data):
     sit_label = testi_report.etichetta_situazione(data)
     sit_cards = [
         ("Situazione",           sit_label,  BLUE_PRIMARY, HexColor("#E3F2FA")),
-        ("Prezzo stimato/notte", f"\u20ac {p}",  TEAL,         TEAL_LIGHT),
+        ("Prezzo/notte (intera unità)", f"\u20ac {p}",  TEAL,         TEAL_LIGHT),
         ("Occupazione stimata",  f"{occ_pct}%",  GOLD,         GOLD_LIGHT),
         ("Notti/anno stimate",   f"{notti}",     BLUE_NIGHT,   CREAM),
     ]
@@ -2688,6 +2688,8 @@ def page_riepilogo(c, data):
     # La nota era una riga sola e usciva dal margine destro della pagina: ora va a capo.
     y = wrap_simple(c, testi_report.nota_riepilogo("strategico"),
                     14*mm, y, W - 28*mm, "Helvetica-Oblique", 6.5, 3.6*mm, color=MUTED)
+    for _nota in testi_report.note_riepilogo_extra(data):
+        y = wrap_simple(c, _nota, 14*mm, y, W - 28*mm, "Helvetica-Oblique", 6.5, 3.6*mm, color=MUTED)
     y -= 8*mm
 
     # Disclaimer legale: lo stesso testo del Base (testi_report.disclaimer).
